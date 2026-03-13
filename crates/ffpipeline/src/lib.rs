@@ -1,2 +1,2 @@
-mod error;
-mod probe;
+pub mod error;
+pub mod probe;

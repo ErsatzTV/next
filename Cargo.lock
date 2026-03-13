@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "ersatztv-channel"
 version = "0.1.0"
+dependencies = [
+ "ffpipeline",
+]
 
 [[package]]
 name = "ersatztv-lineup"

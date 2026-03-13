@@ -1,3 +1,5 @@
+use std::fmt::Formatter;
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::FFPipelineError;
@@ -6,7 +8,19 @@ pub struct ProbeResult {
     json: String,
 }
 
+impl std::fmt::Display for ProbeResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.json)
+    }
+}
+
 pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
+    // TODO: this only works for local files; probing remote inputs should eventually work, too
+    let buf: PathBuf = path.into();
+    if !buf.exists() {
+        return Err(FFPipelineError::ProbeFailed);
+    }
+
     let output = Command::new("ffprobe")
         .args([
             "-hide_banner",

@@ -5,3 +5,6 @@ members = [
   "crates/lineup"
 ]
 resolver = "3"
+
+[workspace.dependencies]
+ffpipeline = { path = "crates/ffpipeline" }
