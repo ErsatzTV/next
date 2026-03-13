@@ -8,3 +8,5 @@ resolver = "3"
 
 [workspace.dependencies]
 ffpipeline = { path = "crates/ffpipeline" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
