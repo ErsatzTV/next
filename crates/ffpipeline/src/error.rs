@@ -14,4 +14,3 @@ impl std::fmt::Display for FFPipelineError {
 }
 
 impl std::error::Error for FFPipelineError {}
-

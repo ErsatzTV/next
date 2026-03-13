@@ -1,5 +1,4 @@
 use std::fmt::Formatter;
-use std::path::PathBuf;
 use std::process::Command;
 
 use crate::error::FFPipelineError;
@@ -15,12 +14,6 @@ impl std::fmt::Display for ProbeResult {
 }
 
 pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
-    // TODO: this only works for local files; probing remote inputs should eventually work, too
-    let buf: PathBuf = path.into();
-    if !buf.exists() {
-        return Err(FFPipelineError::ProbeFailed);
-    }
-
     let output = Command::new("ffprobe")
         .args([
             "-hide_banner",
@@ -41,5 +34,5 @@ pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
 
     String::from_utf8(output.stdout)
         .map_err(|_| FFPipelineError::ProbeFailed)
-        .and_then(|s| Ok(ProbeResult { json: s }))
+        .map(|s| ProbeResult { json: s })
 }
