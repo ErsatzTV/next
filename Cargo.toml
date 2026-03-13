@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "crates/ffpipeline",
+  "crates/channel",
+  "crates/lineup"
+]
+resolver = "3"
