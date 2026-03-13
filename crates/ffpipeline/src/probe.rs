@@ -5,41 +5,38 @@ use crate::error::FFPipelineError;
 
 use serde::Deserialize;
 
-pub enum ProbeResultStreamType {
-    Audio,
-    Video,
+pub struct ProbeResultVideoStream {
+    pub stream_index: u32,
+    pub codec: String,
+    pub height: u32,
+    pub width: u32,
 }
 
-impl std::fmt::Display for ProbeResultStreamType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProbeResultStreamType::Audio => write!(f, "audio"),
-            ProbeResultStreamType::Video => write!(f, "video"),
-        }
-    }
+pub struct ProbeResultAudioStream {
+    pub stream_index: u32,
+    pub codec: String,
 }
 
-pub struct ProbeResultStream {
-    stream_index: u32,
-    stream_type: ProbeResultStreamType,
-    stream_codec: String,
+pub enum ProbeResultStream {
+    Video(ProbeResultVideoStream),
+    Audio(ProbeResultAudioStream)
 }
 
 impl std::fmt::Display for ProbeResultStream {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.stream_type {
-            ProbeResultStreamType::Audio => {
+        match self {
+            ProbeResultStream::Audio(a) => {
                 write!(
                     f,
-                    "{}: {} ({})",
-                    self.stream_index, self.stream_type, self.stream_codec
+                    "{}: audio ({})",
+                    a.stream_index, a.codec
                 )
             }
-            ProbeResultStreamType::Video => {
+            ProbeResultStream::Video(v) => {
                 write!(
                     f,
-                    "{}: {} ({})",
-                    self.stream_index, self.stream_type, self.stream_codec
+                    "{}: video ({})",
+                    v.stream_index, v.codec
                 )
             }
         }
@@ -47,7 +44,7 @@ impl std::fmt::Display for ProbeResultStream {
 }
 
 pub struct ProbeResult {
-    streams: Vec<ProbeResultStream>,
+    pub streams: Vec<ProbeResultStream>,
 }
 
 impl std::fmt::Display for ProbeResult {
@@ -120,16 +117,16 @@ pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
 
 fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStream> {
     match output_stream.codec_type.to_lowercase().as_str() {
-        "audio" => Some(ProbeResultStream {
+        "audio" => Some(ProbeResultStream::Audio(ProbeResultAudioStream {
             stream_index: output_stream.index,
-            stream_type: ProbeResultStreamType::Audio,
-            stream_codec: output_stream.codec_name.clone(),
-        }),
-        "video" => Some(ProbeResultStream {
+            codec: output_stream.codec_name.clone()
+        })),
+        "video" => Some(ProbeResultStream::Video(ProbeResultVideoStream {
             stream_index: output_stream.index,
-            stream_type: ProbeResultStreamType::Video,
-            stream_codec: output_stream.codec_name.clone(),
-        }),
+            codec: output_stream.codec_name.clone(),
+            height: output_stream.height?,
+            width: output_stream.width?,
+        })),
         _ => None,
     }
 }
