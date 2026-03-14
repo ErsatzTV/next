@@ -15,6 +15,7 @@ pub struct ProbeResultVideoStream {
 pub struct ProbeResultAudioStream {
     pub stream_index: u32,
     pub codec: String,
+    pub channels: u32,
 }
 
 pub enum ProbeResultStream {
@@ -28,15 +29,15 @@ impl std::fmt::Display for ProbeResultStream {
             ProbeResultStream::Audio(a) => {
                 write!(
                     f,
-                    "{}: audio ({})",
-                    a.stream_index, a.codec
+                    "{}: audio ({} - {} channels)",
+                    a.stream_index, a.codec, a.channels
                 )
             }
             ProbeResultStream::Video(v) => {
                 write!(
                     f,
-                    "{}: video ({})",
-                    v.stream_index, v.codec
+                    "{}: video ({} - {}x{})",
+                    v.stream_index, v.codec, v.width, v.height
                 )
             }
         }
@@ -69,6 +70,7 @@ struct ProbeOutputStream {
     codec_name: String,
     height: Option<u32>,
     width: Option<u32>,
+    channels: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -119,7 +121,8 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
     match output_stream.codec_type.to_lowercase().as_str() {
         "audio" => Some(ProbeResultStream::Audio(ProbeResultAudioStream {
             stream_index: output_stream.index,
-            codec: output_stream.codec_name.clone()
+            codec: output_stream.codec_name.clone(),
+            channels: output_stream.channels?,
         })),
         "video" => Some(ProbeResultStream::Video(ProbeResultVideoStream {
             stream_index: output_stream.index,
