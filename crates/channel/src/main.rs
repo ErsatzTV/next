@@ -1,25 +1,26 @@
+mod error;
+
 use ffpipeline::probe;
 
-pub fn main() {
+use crate::error::ChannelError;
+
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), ChannelError> {
     // TODO: find current item from playout JSON; for now, read as arg
-    let path = std::env::args().nth(1);
+    let path = std::env::args()
+        .nth(1)
+        .ok_or(ChannelError::PlayoutJsonUnsupported)?;
 
     // probe current item
-    match path {
-        Some(path) => match probe::probe(path.as_str()) {
-            Err(err) => {
-                eprintln!("{err}");
-                std::process::exit(1);
-            }
-            Ok(result) => {
-                println!("{result}");
-            }
-        },
-        None => {
-            eprintln!("playout JSON is not yet supported; pass video file as arg");
-            std::process::exit(1);
-        }
-    }
+    let result = probe::probe(path.as_str())?;
+    println!("{result}");
+    Ok(())
 
     // TODO: generate pipeline
 

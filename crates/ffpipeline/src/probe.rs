@@ -20,7 +20,7 @@ pub struct ProbeResultAudioStream {
 
 pub enum ProbeResultStream {
     Video(ProbeResultVideoStream),
-    Audio(ProbeResultAudioStream)
+    Audio(ProbeResultAudioStream),
 }
 
 impl std::fmt::Display for ProbeResultStream {
