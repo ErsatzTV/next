@@ -114,7 +114,7 @@ pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
             let streams: Vec<ProbeResultStream> =
                 output.streams.iter().flat_map(output_to_result).collect();
             Ok(ProbeResult {
-                path: path.to_string(),
+                path: path.to_owned(),
                 streams,
             })
         }

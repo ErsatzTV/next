@@ -7,10 +7,10 @@ pub enum LogLevel {
     Error,
 }
 
-impl std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl LogLevel {
+    fn as_arg(&self) -> String {
         match self {
-            LogLevel::Error => write!(f, "error"),
+            LogLevel::Error => String::from("error"),
         }
     }
 }
@@ -25,10 +25,79 @@ pub enum GlobalOption {
 impl GlobalOption {
     fn as_arg(&self) -> Vec<String> {
         match self {
-            GlobalOption::Threads(count) => vec!["-threads".to_string(), count.to_string()],
-            GlobalOption::NoStdIn => vec!["-nostdin".to_string()],
-            GlobalOption::HideBanner => vec!["-hide_banner".to_string()],
-            GlobalOption::LogLevel(level) => vec!["-loglevel".to_string(), level.to_string()],
+            GlobalOption::Threads(count) => vec![String::from("-threads"), count.to_string()],
+            GlobalOption::NoStdIn => vec![String::from("-nostdin")],
+            GlobalOption::HideBanner => vec![String::from("-hide_banner")],
+            GlobalOption::LogLevel(level) => vec![String::from("-loglevel"), level.as_arg()],
+        }
+    }
+}
+
+pub enum OutputFormat {
+    Hls,
+}
+
+impl OutputFormat {
+    fn as_arg(&self) -> Vec<String> {
+        match self {
+            OutputFormat::Hls => [
+                "-f",
+                "hls",
+                "-hls_time",
+                "4",
+                "-hls_list_size",
+                "0",
+                "-segment_list_flags",
+                "+live",
+                "-hls_segment_type",
+                "mpegts",
+            ]
+            .map(String::from)
+            .to_vec(),
+        }
+    }
+}
+
+pub enum AudioCodec {
+    Copy,
+}
+
+impl AudioCodec {
+    fn as_arg(&self) -> Vec<String> {
+        match self {
+            AudioCodec::Copy => vec![String::from("-acodec"), String::from("copy")],
+        }
+    }
+}
+
+pub enum VideoCodec {
+    Copy,
+}
+
+impl VideoCodec {
+    fn as_arg(&self) -> Vec<String> {
+        match self {
+            VideoCodec::Copy => vec![String::from("-vcodec"), String::from("copy")],
+        }
+    }
+}
+
+pub enum OutputOption {
+    Format(OutputFormat),
+    VideoCodec(VideoCodec),
+    AudioCodec(AudioCodec),
+    Duration(std::time::Duration),
+}
+
+impl OutputOption {
+    fn as_arg(&self) -> Vec<String> {
+        match self {
+            OutputOption::Format(format) => format.as_arg(),
+            OutputOption::VideoCodec(codec) => codec.as_arg(),
+            OutputOption::AudioCodec(codec) => codec.as_arg(),
+            OutputOption::Duration(duration) => {
+                vec![String::from("-t"), format!("{}s", duration.as_secs_f64())]
+            }
         }
     }
 }
@@ -37,13 +106,19 @@ pub enum PipelineInput {
     Video(String),
 }
 
+pub struct PipelineOutput {
+    path: String,
+}
+
 pub struct Pipeline {
     global_options: Vec<GlobalOption>,
     inputs: Vec<PipelineInput>,
+    output_options: Vec<OutputOption>,
+    output: PipelineOutput,
 }
 
 impl Pipeline {
-    fn full(probe_result: ProbeResult) -> Pipeline {
+    fn full(probe_result: ProbeResult, output: String) -> Pipeline {
         Pipeline {
             global_options: vec![
                 GlobalOption::Threads(0),
@@ -52,6 +127,13 @@ impl Pipeline {
                 GlobalOption::LogLevel(LogLevel::Error),
             ],
             inputs: vec![PipelineInput::Video(probe_result.path)],
+            output_options: vec![
+                OutputOption::AudioCodec(AudioCodec::Copy),
+                OutputOption::VideoCodec(VideoCodec::Copy),
+                OutputOption::Format(OutputFormat::Hls),
+                OutputOption::Duration(std::time::Duration::from_secs(30)),
+            ],
+            output: PipelineOutput { path: output },
         }
     }
 
@@ -62,9 +144,15 @@ impl Pipeline {
 
         for input in &self.inputs {
             match input {
-                PipelineInput::Video(path) => result.extend(["-i".to_string(), path.clone()]),
+                PipelineInput::Video(path) => result.extend([String::from("-i"), path.to_owned()]),
             }
         }
+
+        // TODO: filter_complex
+
+        result.extend(self.output_options.iter().flat_map(|o| o.as_arg()));
+
+        result.extend([self.output.path.to_owned()]);
 
         result
     }
@@ -76,6 +164,9 @@ impl std::fmt::Display for Pipeline {
     }
 }
 
-pub fn generate_pipeline(probe_result: ProbeResult) -> Result<Pipeline, FFPipelineError> {
-    Ok(Pipeline::full(probe_result))
+pub fn generate_pipeline(
+    probe_result: ProbeResult,
+    output: String,
+) -> Result<Pipeline, FFPipelineError> {
+    Ok(Pipeline::full(probe_result, output))
 }

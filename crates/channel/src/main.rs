@@ -23,8 +23,9 @@ fn run() -> Result<(), ChannelError> {
     println!("{probe_result}");
     println!();
 
-    // TODO: generate pipeline
-    let pipeline_result = pipeline::generate_pipeline(probe_result)?;
+    // generate pipeline
+    let pipeline_result =
+        pipeline::generate_pipeline(probe_result, String::from("/tmp/hls/live.m3u8"))?;
     println!("pipeline result:");
     println!("{pipeline_result}");
     println!();
