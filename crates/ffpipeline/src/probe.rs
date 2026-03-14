@@ -45,6 +45,7 @@ impl std::fmt::Display for ProbeResultStream {
 }
 
 pub struct ProbeResult {
+    pub path: String,
     pub streams: Vec<ProbeResultStream>,
 }
 
@@ -112,7 +113,10 @@ pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
         Ok(output) => {
             let streams: Vec<ProbeResultStream> =
                 output.streams.iter().flat_map(output_to_result).collect();
-            Ok(ProbeResult { streams })
+            Ok(ProbeResult {
+                path: path.to_string(),
+                streams,
+            })
         }
     }
 }

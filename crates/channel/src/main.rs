@@ -1,6 +1,6 @@
 mod error;
 
-use ffpipeline::probe;
+use ffpipeline::{pipeline, probe};
 
 use crate::error::ChannelError;
 
@@ -18,11 +18,17 @@ fn run() -> Result<(), ChannelError> {
         .ok_or(ChannelError::PlayoutJsonUnsupported)?;
 
     // probe current item
-    let result = probe::probe(path.as_str())?;
-    println!("{result}");
-    Ok(())
+    let probe_result = probe::probe(path.as_str())?;
+    println!("probe result:");
+    println!("{probe_result}");
+    println!();
 
     // TODO: generate pipeline
+    let pipeline_result = pipeline::generate_pipeline(probe_result)?;
+    println!("pipeline result:");
+    println!("{pipeline_result}");
+    println!();
 
     // TODO: stream current item
+    Ok(())
 }
