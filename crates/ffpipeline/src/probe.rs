@@ -1,9 +1,9 @@
 use std::fmt::Formatter;
 use std::process::Command;
 
-use crate::error::FFPipelineError;
-
 use serde::Deserialize;
+
+use crate::error::FFPipelineError;
 
 pub struct ProbeResultVideoStream {
     pub stream_index: u32,
