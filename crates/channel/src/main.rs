@@ -55,7 +55,16 @@ fn run() -> Result<(), ChannelError> {
             println!("{pipeline_result}");
             println!();
 
-            // TODO: stream current item
+            // stream current item
+            let ffmpeg_output = std::process::Command::new("ffmpeg")
+                .args(pipeline_result.args())
+                .output()
+                .map_err(|_| ChannelError::StreamFailure)?;
+
+            if !ffmpeg_output.status.success() {
+                return Err(ChannelError::StreamFailure);
+            }
+
             Ok(())
         }
         _ => Err(ChannelError::PlayoutJsonLocalSourceRequired),

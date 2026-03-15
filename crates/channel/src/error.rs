@@ -12,6 +12,7 @@ pub enum ChannelError {
     PlayoutJsonSingleSourceRequired,
     PlayoutJsonLocalSourceRequired,
     PipelineError(FFPipelineError),
+    StreamFailure,
 }
 
 impl From<PlayoutError> for ChannelError {
@@ -47,6 +48,7 @@ impl std::fmt::Display for ChannelError {
                 write!(f, "only local sources are supported as playout items")
             }
             ChannelError::PipelineError(err) => write!(f, "{err}"),
+            ChannelError::StreamFailure => write!(f, "stream failed"),
         }
     }
 }
