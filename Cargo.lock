@@ -6,12 +6,21 @@ version = 4
 name = "ersatztv-channel"
 version = "0.1.0"
 dependencies = [
+ "ersatztv-playout",
  "ffpipeline",
 ]
 
 [[package]]
 name = "ersatztv-lineup"
 version = "0.1.0"
+
+[[package]]
+name = "ersatztv-playout"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "ffpipeline"

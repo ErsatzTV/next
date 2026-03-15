@@ -68,7 +68,7 @@ impl std::fmt::Display for ProbeResult {
 struct ProbeOutputStream {
     index: u32,
     codec_type: String,
-    codec_name: String,
+    codec_name: Option<String>,
     height: Option<u32>,
     width: Option<u32>,
     channels: Option<u32>,
@@ -125,12 +125,12 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
     match output_stream.codec_type.to_lowercase().as_str() {
         "audio" => Some(ProbeResultStream::Audio(ProbeResultAudioStream {
             stream_index: output_stream.index,
-            codec: output_stream.codec_name.clone(),
+            codec: output_stream.codec_name.clone().unwrap_or(String::from("unknown")),
             channels: output_stream.channels?,
         })),
         "video" => Some(ProbeResultStream::Video(ProbeResultVideoStream {
             stream_index: output_stream.index,
-            codec: output_stream.codec_name.clone(),
+            codec: output_stream.codec_name.clone().unwrap_or(String::from("unknown")),
             height: output_stream.height?,
             width: output_stream.width?,
         })),

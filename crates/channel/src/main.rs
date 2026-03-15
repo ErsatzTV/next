@@ -1,5 +1,6 @@
 mod error;
 
+use ersatztv_playout::playout::PlayoutItemSource;
 use ffpipeline::{pipeline, probe};
 
 use crate::error::ChannelError;
@@ -12,24 +13,45 @@ fn main() {
 }
 
 fn run() -> Result<(), ChannelError> {
-    // TODO: find current item from playout JSON; for now, read as arg
+    // get playout JSON path
     let path = std::env::args()
         .nth(1)
-        .ok_or(ChannelError::PlayoutJsonUnsupported)?;
+        .ok_or(ChannelError::PlayoutJsonRequired)?;
 
-    // probe current item
-    let probe_result = probe::probe(path.as_str())?;
-    println!("probe result:");
-    println!("{probe_result}");
-    println!();
+    // load playout JSON
+    let playout_result = ersatztv_playout::playout::load(path.as_str())?;
 
-    // generate pipeline
-    let pipeline_result =
-        pipeline::generate_pipeline(probe_result, String::from("/tmp/hls/live.m3u8"))?;
-    println!("pipeline result:");
-    println!("{pipeline_result}");
-    println!();
+    // find current item
+    let current_item = playout_result
+        .playout
+        .items
+        .iter()
+        .nth(0)
+        .ok_or(ChannelError::PlayoutJsonNoItem)?;
 
-    // TODO: stream current item
-    Ok(())
+    let current_source = current_item
+        .source
+        .clone()
+        .ok_or(ChannelError::PlayoutJsonSingleSourceRequired)?;
+
+    match current_source {
+        PlayoutItemSource::Local { path } => {
+            // probe current item
+            let probe_result = probe::probe(path.as_str())?;
+            println!("probe result:");
+            println!("{probe_result}");
+            println!();
+
+            // generate pipeline
+            let pipeline_result =
+                pipeline::generate_pipeline(probe_result, String::from("/tmp/hls/live.m3u8"))?;
+            println!("pipeline result:");
+            println!("{pipeline_result}");
+            println!();
+
+            // TODO: stream current item
+            Ok(())
+        }
+        _ => Err(ChannelError::PlayoutJsonLocalSourceRequired),
+    }
 }
