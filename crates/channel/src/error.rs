@@ -6,6 +6,7 @@ use ffpipeline::error::FFPipelineError;
 pub enum ChannelError {
     ChannelConfigRequired,
     ChannelConfigFailure(String),
+    ChannelConfigOutputFolderRequired,
     PlayoutJsonLoadFailure(PlayoutError),
     PlayoutJsonNoItem,
     PlayoutJsonSingleSourceRequired,
@@ -31,6 +32,9 @@ impl std::fmt::Display for ChannelError {
             ChannelError::ChannelConfigRequired => write!(f, "channel config is required as arg"),
             ChannelError::ChannelConfigFailure(err) => {
                 write!(f, "unable to load channel config: {err}")
+            }
+            ChannelError::ChannelConfigOutputFolderRequired => {
+                write!(f, "channel config output folder is required")
             }
             ChannelError::PlayoutJsonLoadFailure(err) => write!(f, "{err}"),
             ChannelError::PlayoutJsonNoItem => {

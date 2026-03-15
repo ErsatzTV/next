@@ -39,9 +39,18 @@ fn run() -> Result<(), ChannelError> {
             println!("{probe_result}");
             println!();
 
+            let output_folder = std::path::Path::new(&channel_config.output.folder);
+            let output_file = output_folder
+                .join("live.m3u8")
+                .into_os_string()
+                .into_string()
+                .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+
+            empty_folder(output_folder)
+                .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+
             // generate pipeline
-            let pipeline_result =
-                pipeline::generate_pipeline(probe_result, String::from("/tmp/hls/live.m3u8"))?;
+            let pipeline_result = pipeline::generate_pipeline(probe_result, output_file)?;
             println!("pipeline result:");
             println!("{pipeline_result}");
             println!();
@@ -99,4 +108,21 @@ fn get_current_item(
     Err(ChannelError::ChannelConfigFailure(String::from(
         "found no files",
     )))
+}
+
+fn empty_folder(output_folder: &std::path::Path) -> Result<(), std::io::Error> {
+    let entries = std::fs::read_dir(output_folder)?;
+    for entry in entries {
+        let entry = entry?;
+        if let Ok(file_type) = entry.file_type() {
+            if file_type.is_dir() {
+                empty_folder(&entry.path())?;
+                std::fs::remove_dir(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+    }
+
+    Ok(())
 }

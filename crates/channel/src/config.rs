@@ -5,10 +5,16 @@ use crate::error::ChannelError;
 #[derive(Deserialize)]
 pub struct ChannelConfig {
     pub playout: PlayoutConfig,
+    pub output: OutputConfig,
 }
 
 #[derive(Deserialize)]
 pub struct PlayoutConfig {
+    pub folder: String,
+}
+
+#[derive(Deserialize)]
+pub struct OutputConfig {
     pub folder: String,
 }
 
