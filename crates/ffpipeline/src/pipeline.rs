@@ -119,6 +119,11 @@ pub struct Pipeline {
 
 impl Pipeline {
     fn full(probe_result: ProbeResult, output: String) -> Pipeline {
+        let duration = match probe_result.duration {
+            Some(probed_duration) => probed_duration.min(std::time::Duration::from_secs(30)),
+            None => std::time::Duration::from_secs(30),
+        };
+
         Pipeline {
             global_options: vec![
                 GlobalOption::Threads(0),
@@ -131,7 +136,7 @@ impl Pipeline {
                 OutputOption::AudioCodec(AudioCodec::Copy),
                 OutputOption::VideoCodec(VideoCodec::Copy),
                 OutputOption::Format(OutputFormat::Hls),
-                OutputOption::Duration(std::time::Duration::from_secs(30)),
+                OutputOption::Duration(duration),
             ],
             output: PipelineOutput { path: output },
         }

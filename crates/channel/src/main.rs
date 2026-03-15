@@ -25,8 +25,7 @@ fn run() -> Result<(), ChannelError> {
     let current_item = playout_result
         .playout
         .items
-        .iter()
-        .nth(0)
+        .first()
         .ok_or(ChannelError::PlayoutJsonNoItem)?;
 
     let current_source = current_item

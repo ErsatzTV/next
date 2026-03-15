@@ -1,5 +1,6 @@
 use std::fmt::Formatter;
 use std::process::Command;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -47,10 +48,15 @@ impl std::fmt::Display for ProbeResultStream {
 pub struct ProbeResult {
     pub path: String,
     pub streams: Vec<ProbeResultStream>,
+    pub duration: Option<Duration>,
 }
 
 impl std::fmt::Display for ProbeResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(duration) = self.duration {
+            writeln!(f, "duration: {}s", duration.as_secs_f64())?;
+        }
+
         write!(
             f,
             "{}",
@@ -75,8 +81,14 @@ struct ProbeOutputStream {
 }
 
 #[derive(Deserialize)]
+struct ProbeOutputFormat {
+    duration: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ProbeOutput {
     streams: Vec<ProbeOutputStream>,
+    format: ProbeOutputFormat,
 }
 
 pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
@@ -113,9 +125,17 @@ pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
         Ok(output) => {
             let streams: Vec<ProbeResultStream> =
                 output.streams.iter().flat_map(output_to_result).collect();
+
+            let duration = output
+                .format
+                .duration
+                .and_then(|s| s.parse::<f64>().ok())
+                .map(Duration::from_secs_f64);
+
             Ok(ProbeResult {
                 path: path.to_owned(),
                 streams,
+                duration,
             })
         }
     }
@@ -125,12 +145,18 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
     match output_stream.codec_type.to_lowercase().as_str() {
         "audio" => Some(ProbeResultStream::Audio(ProbeResultAudioStream {
             stream_index: output_stream.index,
-            codec: output_stream.codec_name.clone().unwrap_or(String::from("unknown")),
+            codec: output_stream
+                .codec_name
+                .clone()
+                .unwrap_or(String::from("unknown")),
             channels: output_stream.channels?,
         })),
         "video" => Some(ProbeResultStream::Video(ProbeResultVideoStream {
             stream_index: output_stream.index,
-            codec: output_stream.codec_name.clone().unwrap_or(String::from("unknown")),
+            codec: output_stream
+                .codec_name
+                .clone()
+                .unwrap_or(String::from("unknown")),
             height: output_stream.height?,
             width: output_stream.width?,
         })),
