@@ -4,7 +4,8 @@ use ersatztv_playout::error::PlayoutError;
 use ffpipeline::error::FFPipelineError;
 
 pub enum ChannelError {
-    PlayoutJsonRequired,
+    ChannelConfigRequired,
+    ChannelConfigFailure(String),
     PlayoutJsonLoadFailure(PlayoutError),
     PlayoutJsonNoItem,
     PlayoutJsonSingleSourceRequired,
@@ -27,7 +28,10 @@ impl From<FFPipelineError> for ChannelError {
 impl std::fmt::Display for ChannelError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChannelError::PlayoutJsonRequired => write!(f, "playout JSON is required as arg"),
+            ChannelError::ChannelConfigRequired => write!(f, "channel config is required as arg"),
+            ChannelError::ChannelConfigFailure(err) => {
+                write!(f, "unable to load channel config: {err}")
+            }
             ChannelError::PlayoutJsonLoadFailure(err) => write!(f, "{err}"),
             ChannelError::PlayoutJsonNoItem => {
                 write!(f, "unable to find current item in playout JSON")

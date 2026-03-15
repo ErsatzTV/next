@@ -115,7 +115,7 @@ pub fn probe(path: &str) -> Result<ProbeResult, FFPipelineError> {
 
     //println!("{raw_output}");
 
-    let deserialized = serde_json::from_str::<ProbeOutput>(raw_output.as_str());
+    let deserialized = serde_json::from_str::<ProbeOutput>(&raw_output);
 
     match deserialized {
         Err(err) => {

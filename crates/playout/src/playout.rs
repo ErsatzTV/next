@@ -49,7 +49,7 @@ pub struct PlayoutLoadResult {
     // TODO: start, finish
 }
 
-pub fn load(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
+pub fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
     let file = File::open(path).map_err(|e| PlayoutError::PlayoutJsonLoadError(e.to_string()))?;
     let reader = BufReader::new(file);
 

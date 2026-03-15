@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 ffpipeline = { workspace = true }
 ersatztv-playout = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
