@@ -107,24 +107,31 @@ impl VaapiCapabilities {
     }
 
     pub fn can_decode(&self, codec: &str, profile: &str, bit_depth: u8) -> bool {
-        Self::profiles_for(codec, profile, bit_depth)
+        Self::decode_profile_for(codec, profile, bit_depth)
             .iter()
             .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_VLD)))
     }
 
-    // TODO: does this need to be a vec?
-    fn profiles_for(codec: &str, profile: &str, _bit_depth: u8) -> Vec<VAProfile> {
+    fn decode_profile_for(codec: &str, profile: &str, _bit_depth: u8) -> Option<VAProfile> {
         match (codec, profile) {
-            ("h264", "main" | "77") => vec![VA_PROFILE_H264_MAIN],
-            ("h264", "high" | "100" | "high 10" | "110") => vec![VA_PROFILE_H264_HIGH],
+            ("h264", "main" | "77") => Some(VA_PROFILE_H264_MAIN),
+            ("h264", "high" | "100" | "high 10" | "110") => Some(VA_PROFILE_H264_HIGH),
             ("h264", "baseline constrained" | "constrained baseline" | "578") => {
-                vec![VA_PROFILE_H264_CONSTRAINED_BASELINE]
+                Some(VA_PROFILE_H264_CONSTRAINED_BASELINE)
             }
-            ("mpeg2video", "main" | "4") => vec![VA_PROFILE_MPEG2_MAIN],
-            ("mpeg2video", "simple" | "5") => vec![VA_PROFILE_MPEG2_SIMPLE],
-            ("hevc", "main" | "1") => vec![VA_PROFILE_HEVC_MAIN],
-            ("hevc", "main 10" | "2") => vec![VA_PROFILE_HEVC_MAIN10],
-            _ => vec![],
+            ("mpeg2video", "main" | "4") => Some(VA_PROFILE_MPEG2_MAIN),
+            ("mpeg2video", "simple" | "5") => Some(VA_PROFILE_MPEG2_SIMPLE),
+            ("vc1", "simple" | "0") => Some(VA_PROFILE_VC1_SIMPLE),
+            ("vc1", "main" | "1") => Some(VA_PROFILE_VC1_MAIN),
+            ("vc1", "advanced" | "3") => Some(VA_PROFILE_VC1_ADVANCED),
+            ("hevc", "main" | "1") => Some(VA_PROFILE_HEVC_MAIN),
+            ("hevc", "main 10" | "2") => Some(VA_PROFILE_HEVC_MAIN10),
+            ("vp9", "profile 0" | "0") => Some(VA_PROFILE_VP9_PROFILE0),
+            ("vp9", "profile 1" | "1") => Some(VA_PROFILE_VP9_PROFILE1),
+            ("vp9", "profile 2" | "2") => Some(VA_PROFILE_VP9_PROFILE2),
+            ("vp9", "profile 3" | "3") => Some(VA_PROFILE_VP9_PROFILE3),
+            ("av1", "main" | "0") => Some(VA_PROFILE_AV1_PROFILE0),
+            _ => None,
         }
     }
 
