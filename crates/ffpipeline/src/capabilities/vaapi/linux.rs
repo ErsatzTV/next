@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::ffi::CStr;
+use std::ffi::{CStr, c_uint};
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 
@@ -94,10 +94,68 @@ impl VaapiCapabilities {
             }
         }
 
+        let mut vpp_pixel_formats = HashSet::new();
+
+        if supported.contains(&(VA_PROFILE_NONE, VA_ENTRYPOINT_VIDEO_PROC)) {
+            let mut config_id: VAConfigID = 0;
+            let status = unsafe {
+                vaCreateConfig(
+                    display,
+                    VA_PROFILE_NONE,
+                    VA_ENTRYPOINT_VIDEO_PROC,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut config_id,
+                )
+            };
+
+            if status == VA_STATUS_SUCCESS {
+                let mut num_attrs: c_uint = 0;
+                let status = unsafe {
+                    vaQuerySurfaceAttributes(
+                        display,
+                        config_id,
+                        std::ptr::null_mut(),
+                        &mut num_attrs,
+                    )
+                };
+
+                if status == VA_STATUS_SUCCESS && num_attrs > 0 {
+                    let mut attrs =
+                        unsafe { vec![std::mem::zeroed::<VASurfaceAttrib>(); num_attrs as usize] };
+                    let status = unsafe {
+                        vaQuerySurfaceAttributes(
+                            display,
+                            config_id,
+                            attrs.as_mut_ptr(),
+                            &mut num_attrs,
+                        )
+                    };
+
+                    if status == VA_STATUS_SUCCESS {
+                        for attr in &attrs[..num_attrs as usize] {
+                            if attr.type_ == VA_SURFACE_ATTRIB_PIXEL_FORMAT
+                                && (attr.flags & VA_SURFACE_ATTRIB_GETTABLE as u32) != 0
+                                && attr.value.value_type == VA_GENERIC_VALUE_TYPE_INTEGER
+                            {
+                                vpp_pixel_formats.insert(unsafe { attr.value.value.i } as u32);
+                            }
+                        }
+                    }
+                }
+            }
+
+            unsafe { vaDestroyConfig(display, config_id) };
+        }
+
         unsafe {
             vaTerminate(display);
         }
 
-        Ok(VaapiCapabilities { vendor, supported })
+        Ok(VaapiCapabilities {
+            vendor,
+            supported,
+            vpp_pixel_formats,
+        })
     }
 }

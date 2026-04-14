@@ -1,7 +1,6 @@
-use std::ffi::c_char;
-use std::ffi::c_int;
+use std::ffi::{c_char, c_int, c_uint, c_void};
 
-use crate::{VADisplay, VAEntrypoint, VAProfile, VAStatus};
+use crate::{VAConfigID, VADisplay, VAEntrypoint, VAProfile, VAStatus, VASurfaceAttrib};
 
 unsafe extern "C" {
     pub fn vaGetDisplayDRM(fd: c_int) -> VADisplay;
@@ -31,5 +30,23 @@ unsafe extern "C" {
         profile: VAProfile,
         entrypoint_list: *mut VAEntrypoint,
         num_entrypoints: *mut c_int,
+    ) -> VAStatus;
+
+    pub fn vaCreateConfig(
+        dpy: VADisplay,
+        profile: VAProfile,
+        entrypoint: VAEntrypoint,
+        attrib_list: *mut c_void,
+        num_attribs: c_int,
+        config_id: *mut VAConfigID,
+    ) -> VAStatus;
+
+    pub fn vaDestroyConfig(dpy: VADisplay, config_id: VAConfigID) -> VAStatus;
+
+    pub fn vaQuerySurfaceAttributes(
+        dpy: VADisplay,
+        config: VAConfigID,
+        attrib_list: *mut VASurfaceAttrib,
+        num_attribs: *mut c_uint,
     ) -> VAStatus;
 }

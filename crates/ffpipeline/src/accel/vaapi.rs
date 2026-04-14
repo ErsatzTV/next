@@ -132,6 +132,10 @@ impl HwAccel for Vaapi {
             _ => PixelFormat::Nv12,
         }
     }
+
+    fn supports_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
+        self.capabilities.vpp_supports_format(pixel_format)
+    }
 }
 
 #[derive(Clone)]

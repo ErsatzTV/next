@@ -80,7 +80,7 @@ impl FilterChain {
         for filter in &self.filters {
             match filter {
                 PipelineFilter::Video(video_filter) => {
-                    let best = match accel {
+                    let mut best = match accel {
                         Some(a) => a.best_filter(video_filter, ffmpeg_info),
                         _ => video_filter.clone(),
                     };
@@ -100,11 +100,39 @@ impl FilterChain {
                             download.apply_to(&mut current_state);
                             resolved.push(PipelineFilter::Video(download));
                         } else {
-                            let upload = VideoFilter::HwUpload {
-                                target_surface: required.clone(),
+                            let is_format_supported = match accel {
+                                Some(a) => a.supports_pixel_format(&current_state.pixel_format),
+                                None => true,
                             };
-                            upload.apply_to(&mut current_state);
-                            resolved.push(PipelineFilter::Video(upload))
+
+                            if is_format_supported {
+                                let upload = VideoFilter::HwUpload {
+                                    target_surface: required.clone(),
+                                };
+                                upload.apply_to(&mut current_state);
+                                resolved.push(PipelineFilter::Video(upload))
+                            } else {
+                                let can_convert_down = current_state.pixel_format.bit_depth() == 10
+                                    && encoder_pixel_format
+                                        .as_ref()
+                                        .is_some_and(|pf| pf.bit_depth() == 8);
+
+                                if can_convert_down {
+                                    let format = VideoFilter::Format {
+                                        format: PixelFormat::Yuv420p,
+                                    };
+                                    format.apply_to(&mut current_state);
+                                    resolved.push(PipelineFilter::Video(format));
+
+                                    let upload = VideoFilter::HwUpload {
+                                        target_surface: required,
+                                    };
+                                    upload.apply_to(&mut current_state);
+                                    resolved.push(PipelineFilter::Video(upload));
+                                } else {
+                                    best = video_filter.clone();
+                                }
+                            }
                         }
                     }
 

@@ -17,6 +17,9 @@ pub trait HwAccel {
     fn frame_surface(&self) -> FrameSurface;
     fn init_hw_device(&self) -> Vec<String>;
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat;
+    fn supports_pixel_format(&self, _pixel_format: &PixelFormat) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +127,13 @@ impl HwAccel for HardwareAccel {
             Self::Qsv(a) => a.output_format(source_pixel_format),
             Self::Vaapi(a) => a.output_format(source_pixel_format),
             Self::VideoToolbox(a) => a.output_format(source_pixel_format),
+        }
+    }
+
+    fn supports_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
+        match self {
+            Self::Vaapi(a) => a.supports_pixel_format(pixel_format),
+            _ => true,
         }
     }
 }

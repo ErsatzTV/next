@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use libva_sys::*;
 
+use crate::pipeline::PixelFormat;
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(not(target_os = "linux"))]
@@ -11,9 +13,18 @@ mod stub;
 pub struct VaapiCapabilities {
     pub(crate) vendor: String,
     pub(crate) supported: HashSet<(i32, i32)>,
+    pub(crate) vpp_pixel_formats: HashSet<u32>,
 }
 
 impl VaapiCapabilities {
+    pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
+        let fourcc = match pixel_format {
+            PixelFormat::Nv12 | PixelFormat::Yuv420p => VA_FOURCC_NV12,
+            PixelFormat::P010le | PixelFormat::Yuv420p10le => VA_FOURCC_P010,
+        };
+        self.vpp_pixel_formats.contains(&fourcc)
+    }
+
     pub fn can_decode(&self, codec: &str, profile: &str, bit_depth: u8) -> bool {
         Self::decode_profile_for(codec, profile, bit_depth)
             .iter()
