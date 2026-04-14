@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 dyn-clone = { workspace = true }
 libva-sys = { workspace = true }
+libvpl-sys = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

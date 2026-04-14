@@ -124,9 +124,21 @@ impl HardwareAccel {
             HardwareAccel::Cuda => Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
                 ffpipeline::accel::cuda::Cuda,
             )),
-            HardwareAccel::Qsv => Some(ffpipeline::hw_accel::HardwareAccel::Qsv(
-                ffpipeline::accel::qsv::Qsv,
-            )),
+            HardwareAccel::Qsv => {
+                let capabilities = ffpipeline::capabilities::qsv::QsvCapabilities::probe();
+                match capabilities {
+                    Ok(capabilities) => {
+                        log::debug!("detected QSV capabilities: {:?}", capabilities);
+                        Some(ffpipeline::hw_accel::HardwareAccel::Qsv(
+                            ffpipeline::accel::qsv::Qsv { capabilities },
+                        ))
+                    }
+                    Err(e) => {
+                        log::error!("failed to probe QSV capabilities: {}", e);
+                        None
+                    }
+                }
+            }
             HardwareAccel::Vaapi => {
                 if let Some(vaapi_device) = &channel_config.normalization.video.vaapi_device
                     && let Some(vaapi_driver) = &channel_config.normalization.video.vaapi_driver
@@ -157,7 +169,10 @@ impl HardwareAccel {
                                     },
                                 ))
                             }
-                            _ => None,
+                            Err(e) => {
+                                log::error!("failed to probe VAAPI capabilities: {}", e);
+                                None
+                            }
                         }
                     } else {
                         log::error!(

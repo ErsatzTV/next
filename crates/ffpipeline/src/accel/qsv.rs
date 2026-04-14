@@ -1,3 +1,4 @@
+use crate::capabilities::qsv::QsvCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
@@ -7,7 +8,9 @@ use crate::video_codec::VideoCodec;
 use crate::video_filter::{HwVideoFilter, VideoFilter};
 
 #[derive(Debug, Clone)]
-pub struct Qsv;
+pub struct Qsv {
+    pub capabilities: QsvCapabilities,
+}
 
 impl HwAccel for Qsv {
     fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter {
@@ -23,6 +26,25 @@ impl HwAccel for Qsv {
             }
             _ => video_filter.clone(),
         }
+    }
+
+    fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
+        let format = match codec {
+            "h264" => Some(VideoFormat::H264),
+            "hevc" => Some(VideoFormat::Hevc),
+            _ => None,
+        };
+
+        if let Some(format) = format {
+            self.capabilities
+                .can_decode(&format, pixel_format.bit_depth())
+        } else {
+            false
+        }
+    }
+
+    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        self.capabilities.can_encode(format, bit_depth)
     }
 
     fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec {
@@ -87,6 +109,10 @@ impl HwAccel for Qsv {
             10 => PixelFormat::P010le,
             _ => PixelFormat::Nv12,
         }
+    }
+
+    fn supports_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
+        self.capabilities.vpp_supports_format(pixel_format)
     }
 }
 

@@ -31,7 +31,7 @@ pub enum AudioFormat {
 #[derive(Debug, Clone, Copy)]
 pub struct Kbps(pub u32);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VideoFormat {
     H264,
     Hevc,

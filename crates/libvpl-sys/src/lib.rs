@@ -14,6 +14,15 @@ pub const MFX_ERR_NOT_FOUND: mfxStatus = -9;
 
 pub const MFX_VARIANT_VALUE_TYPE_U32: u32 = 4;
 
+pub const MFX_IMPL_HARDWARE: i32 = 0x0002;
+
+pub const MFX_FOURCC_NV12: u32 = u32::from_ne_bytes(*b"NV12");
+pub const MFX_FOURCC_P010: u32 = u32::from_ne_bytes(*b"P010");
+
+pub const MFX_CODEC_AVC: u32 = u32::from_ne_bytes(*b"AVC ");
+pub const MFX_CODEC_HEVC: u32 = u32::from_ne_bytes(*b"HEVC");
+pub const MFX_CODEC_AV1: u32 = u32::from_ne_bytes(*b"AV1 ");
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union mfxVariantValue {

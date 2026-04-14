@@ -14,4 +14,6 @@ pub enum FFPipelineError {
     VideoInputIsRequired,
     #[error("error detecting vaapi capabilities: {0}")]
     VaapiCapabilitiesError(String),
+    #[error("error detecting qsv capabilities: {0}")]
+    QsvCapabilitiesError(String),
 }

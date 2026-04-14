@@ -21,6 +21,7 @@ ersatztv-playout = { path = "crates/ersatztv-playout" }
 ffpipeline = { path = "crates/ffpipeline" }
 filetime = "0.2"
 libva-sys = { path = "crates/libva-sys" }
+libvpl-sys = { path = "crates/libvpl-sys" }
 log = "0.4"
 pkg-config = "0.3"
 rand = { version = "0.10", features = ["thread_rng"] }

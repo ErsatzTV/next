@@ -154,6 +154,7 @@ impl HwAccel for HardwareAccel {
 
     fn supports_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
         match self {
+            Self::Qsv(a) => a.supports_pixel_format(pixel_format),
             Self::Vaapi(a) => a.supports_pixel_format(pixel_format),
             _ => true,
         }

@@ -379,6 +379,7 @@ version = "0.1.0"
 dependencies = [
  "dyn-clone",
  "libva-sys",
+ "libvpl-sys",
  "log",
  "serde",
  "serde_json",
