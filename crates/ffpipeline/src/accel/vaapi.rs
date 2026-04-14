@@ -95,8 +95,6 @@ impl HwAccel for Vaapi {
         vec![
             String::from("-hwaccel"),
             String::from("vaapi"),
-            String::from("-vaapi_device"),
-            self.device.clone(),
             String::from("-hwaccel_output_format"),
             String::from("vaapi"),
         ]
@@ -114,8 +112,10 @@ impl HwAccel for Vaapi {
         "vaapi"
     }
 
-    fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        None
+    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+        Some(VideoFilter::Hardware(Box::new(FormatVaapi {
+            format: pixel_format.clone(),
+        })))
     }
 
     fn frame_surface(&self) -> FrameSurface {
@@ -123,7 +123,7 @@ impl HwAccel for Vaapi {
     }
 
     fn init_hw_device(&self) -> Vec<String> {
-        Vec::new()
+        vec![String::from("-vaapi_device"), self.device.clone()]
     }
 
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
@@ -211,5 +211,29 @@ impl HwVideoFilter for PadVaapi {
         self.size
             .as_ref()
             .map(|s| format!("pad_vaapi={}:{}:-1:-1:color=black", s.width, s.height))
+    }
+}
+
+#[derive(Clone)]
+struct FormatVaapi {
+    format: PixelFormat,
+}
+
+impl HwVideoFilter for FormatVaapi {
+    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
+        // called before this is used
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = self.format.clone();
+    }
+
+    fn required_surface(&self) -> FrameSurface {
+        FrameSurface::Vaapi
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("scale_vaapi=format={}", self.format.as_arg()))
     }
 }
