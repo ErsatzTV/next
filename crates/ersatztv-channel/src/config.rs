@@ -140,13 +140,21 @@ impl HardwareAccel {
                             );
 
                         match capabilities {
-                            Ok(capabilities) => Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
-                                ffpipeline::accel::vaapi::Vaapi {
-                                    device: vaapi_device.to_str()?.to_owned(),
-                                    driver: vaapi_driver.clone().into(),
-                                    capabilities,
-                                },
-                            )),
+                            Ok(capabilities) => {
+                                log::debug!(
+                                    "detected {} VAAPI entrypoints using {}",
+                                    capabilities.count(),
+                                    capabilities.vendor()
+                                );
+
+                                Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
+                                    ffpipeline::accel::vaapi::Vaapi {
+                                        device: vaapi_device.to_str()?.to_owned(),
+                                        driver: vaapi_driver.clone().into(),
+                                        capabilities,
+                                    },
+                                ))
+                            }
                             _ => None,
                         }
                     } else {

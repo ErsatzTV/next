@@ -106,17 +106,33 @@ impl VaapiCapabilities {
         Ok(VaapiCapabilities { vendor, supported })
     }
 
-    pub fn can_decode(&self, codec: &str, bit_depth: u8) -> bool {
-        Self::profiles_for(codec, bit_depth)
+    pub fn can_decode(&self, codec: &str, profile: &str, bit_depth: u8) -> bool {
+        Self::profiles_for(codec, profile, bit_depth)
             .iter()
             .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_VLD)))
     }
 
-    // TODO: also need source profile
-    fn profiles_for(codec: &str, bit_depth: u8) -> Vec<VAProfile> {
-        match (codec, bit_depth) {
-            ("h264", 8) => vec![VA_PROFILE_H264_MAIN],
+    // TODO: does this need to be a vec?
+    fn profiles_for(codec: &str, profile: &str, _bit_depth: u8) -> Vec<VAProfile> {
+        match (codec, profile) {
+            ("h264", "main" | "77") => vec![VA_PROFILE_H264_MAIN],
+            ("h264", "high" | "100" | "high 10" | "110") => vec![VA_PROFILE_H264_HIGH],
+            ("h264", "baseline constrained" | "constrained baseline" | "578") => {
+                vec![VA_PROFILE_H264_CONSTRAINED_BASELINE]
+            }
+            ("mpeg2video", "main" | "4") => vec![VA_PROFILE_MPEG2_MAIN],
+            ("mpeg2video", "simple" | "5") => vec![VA_PROFILE_MPEG2_SIMPLE],
+            ("hevc", "main" | "1") => vec![VA_PROFILE_HEVC_MAIN],
+            ("hevc", "main 10" | "2") => vec![VA_PROFILE_HEVC_MAIN10],
             _ => vec![],
         }
+    }
+
+    pub fn vendor(&self) -> &str {
+        &self.vendor
+    }
+
+    pub fn count(&self) -> usize {
+        self.supported.len()
     }
 }

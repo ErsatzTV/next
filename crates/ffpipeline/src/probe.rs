@@ -11,6 +11,7 @@ use crate::frame_rate::FrameRate;
 pub struct ProbeResultVideoStream {
     pub stream_index: u32,
     pub codec: String,
+    pub profile: String,
     pub height: u32,
     pub width: u32,
     pub frame_rate: FrameRate,
@@ -91,6 +92,7 @@ struct ProbeOutputStream {
     index: u32,
     codec_type: String,
     codec_name: Option<String>,
+    profile: Option<String>,
     height: Option<u32>,
     width: Option<u32>,
     channels: Option<u32>,
@@ -219,7 +221,11 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
             codec: output_stream
                 .codec_name
                 .clone()
-                .unwrap_or(String::from("unknown")),
+                .map_or(String::from("unknown"), |c| c.to_lowercase()),
+            profile: output_stream
+                .profile
+                .clone()
+                .map_or(String::new(), |p| p.to_lowercase()),
             height: output_stream.height?,
             width: output_stream.width?,
             pix_fmt: output_stream.pix_fmt.clone()?,

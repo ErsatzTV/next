@@ -23,7 +23,12 @@ impl VideoDecoder {
 
         match &output_settings.accel {
             Some(accel) => {
-                if Self::can_hw_decode(accel, &video_stream.codec, &video_stream.pix_fmt) {
+                if Self::can_hw_decode(
+                    accel,
+                    &video_stream.codec,
+                    &video_stream.profile,
+                    &video_stream.pix_fmt,
+                ) {
                     VideoDecoder::HardwareAccel {
                         accel: accel.clone(),
                     }
@@ -66,7 +71,7 @@ impl VideoDecoder {
         }
     }
 
-    fn can_hw_decode(accel: &HardwareAccel, codec: &str, pix_fmt: &str) -> bool {
-        accel.can_decode(codec, &PixelFormat::parse(pix_fmt))
+    fn can_hw_decode(accel: &HardwareAccel, codec: &str, profile: &str, pix_fmt: &str) -> bool {
+        accel.can_decode(codec, profile, &PixelFormat::parse(pix_fmt))
     }
 }

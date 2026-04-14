@@ -7,7 +7,7 @@ use crate::video_filter::VideoFilter;
 
 pub trait HwAccel {
     fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter;
-    fn can_decode(&self, codec: &str, pixel_format: &PixelFormat) -> bool;
+    fn can_decode(&self, codec: &str, profile: &str, pixel_format: &PixelFormat) -> bool;
     fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec;
     fn decoder_arg(&self) -> Vec<String>;
     fn decoder_filters(&self) -> Vec<PipelineFilter>;
@@ -37,12 +37,12 @@ impl HwAccel for HardwareAccel {
         }
     }
 
-    fn can_decode(&self, codec: &str, pixel_format: &PixelFormat) -> bool {
+    fn can_decode(&self, codec: &str, profile: &str, pixel_format: &PixelFormat) -> bool {
         match self {
-            Self::Cuda(a) => a.can_decode(codec, pixel_format),
-            Self::Qsv(a) => a.can_decode(codec, pixel_format),
-            Self::Vaapi(a) => a.can_decode(codec, pixel_format),
-            Self::VideoToolbox(a) => a.can_decode(codec, pixel_format),
+            Self::Cuda(a) => a.can_decode(codec, profile, pixel_format),
+            Self::Qsv(a) => a.can_decode(codec, profile, pixel_format),
+            Self::Vaapi(a) => a.can_decode(codec, profile, pixel_format),
+            Self::VideoToolbox(a) => a.can_decode(codec, profile, pixel_format),
         }
     }
 

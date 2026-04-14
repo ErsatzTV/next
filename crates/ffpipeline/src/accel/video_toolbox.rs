@@ -13,7 +13,7 @@ impl HwAccel for VideoToolbox {
         video_filter.clone()
     }
 
-    fn can_decode(&self, codec: &str, pixel_format: &PixelFormat) -> bool {
+    fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         match pixel_format.bit_depth() {
             10 => matches!(codec, "hevc"),
             8 => matches!(codec, "h264" | "hevc"),

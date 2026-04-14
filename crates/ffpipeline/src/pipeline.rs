@@ -83,7 +83,7 @@ impl PixelFormat {
         }
     }
 
-    pub(crate) fn bit_depth(&self) -> u32 {
+    pub(crate) fn bit_depth(&self) -> u8 {
         match self {
             PixelFormat::Yuv420p | PixelFormat::Nv12 => 8,
             PixelFormat::Yuv420p10le | PixelFormat::P010le => 10,

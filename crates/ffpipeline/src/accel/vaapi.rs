@@ -56,12 +56,20 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn can_decode(&self, codec: &str, pixel_format: &PixelFormat) -> bool {
-        match pixel_format.bit_depth() {
-            10 => matches!(codec, "hevc"),
-            8 => self.capabilities.can_decode(codec, 8), // matches!(codec, "h264" | "hevc" | "mpeg2video"),
-            _ => false,
+    fn can_decode(&self, codec: &str, profile: &str, pixel_format: &PixelFormat) -> bool {
+        let result = self
+            .capabilities
+            .can_decode(codec, profile, pixel_format.bit_depth());
+
+        if !result {
+            log::debug!(
+                "VAAPI does not support decoding {}/{}, will use software decoder",
+                codec,
+                profile
+            );
         }
+
+        result
     }
 
     fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec {
