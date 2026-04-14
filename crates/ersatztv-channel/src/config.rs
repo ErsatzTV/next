@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
 
@@ -70,6 +70,8 @@ impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
 #[derive(Deserialize, Clone)]
 pub struct VideoNormalizationConfig {
     pub format: Option<VideoFormat>,
+    #[serde(default, deserialize_with = "deserialize_bit_depth")]
+    pub bit_depth: Option<u8>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub bitrate_kbps: Option<u32>,
@@ -199,6 +201,14 @@ impl ChannelConfig {
         let mut channel_config: ChannelConfig = toml::from_str(&config_string)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
+        if channel_config.normalization.video.format.is_some()
+            && channel_config.normalization.video.bit_depth.is_none()
+        {
+            return Err(ChannelError::ChannelConfigFailure(String::from(
+                "bit_depth is required when normalizing video",
+            )));
+        }
+
         // expand playout folder
         let playout_folder = PathBuf::from(&channel_config.playout.folder);
         let mut expanded_playout_folder =
@@ -232,5 +242,15 @@ impl ChannelConfig {
 
     pub fn number(&self) -> &str {
         &self.number
+    }
+}
+
+fn deserialize_bit_depth<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u8>, D::Error> {
+    let bit_depth = Option::<u8>::deserialize(d)?;
+    match bit_depth {
+        Some(n) if ![8, 10].contains(&n) => {
+            Err(serde::de::Error::custom("bit_depth must be 8 or 10"))
+        }
+        other => Ok(other),
     }
 }

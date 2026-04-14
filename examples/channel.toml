@@ -34,6 +34,9 @@ channels = 2
 # supported formats are `h264` and `hevc`
 format = "hevc"
 
+# when not stream copying,
+bit_depth = 10
+
 # video will be scaled and padded when width *and* height are both set
 width = 1920
 

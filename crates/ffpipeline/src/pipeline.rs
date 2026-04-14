@@ -213,9 +213,9 @@ impl Pipeline {
             .as_ref()
             .map(|s| s.square_pixel_size(&initial_state));
 
-        let preferred_pixel_format = match initial_state.pixel_format.bit_depth() {
-            10 => video_codec.preferred_pixel_format_10bit.clone(),
-            8 => video_codec.preferred_pixel_format_8bit.clone(),
+        let preferred_pixel_format = match final_output_settings.bit_depth {
+            Some(10) => video_codec.preferred_pixel_format_10bit.clone(),
+            Some(8) => video_codec.preferred_pixel_format_8bit.clone(),
             _ => None,
         };
 

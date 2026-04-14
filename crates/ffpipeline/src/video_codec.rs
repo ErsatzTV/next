@@ -21,16 +21,16 @@ impl VideoCodec {
     pub const LIBX264: VideoCodec = VideoCodec {
         codec_name: "libx264",
         options: &[],
-        preferred_pixel_format_8bit: None,
-        preferred_pixel_format_10bit: None,
+        preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
+        preferred_pixel_format_10bit: Some(PixelFormat::Yuv420p10le),
         is_hardware: false,
     };
 
     pub const LIBX265: VideoCodec = VideoCodec {
         codec_name: "libx265",
         options: &["-tag:v", "hvc1", "-x265-params", "log-level=error"],
-        preferred_pixel_format_8bit: None,
-        preferred_pixel_format_10bit: None,
+        preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
+        preferred_pixel_format_10bit: Some(PixelFormat::Yuv420p10le),
         is_hardware: false,
     };
 
