@@ -181,10 +181,15 @@ impl Pipeline {
             final_output_settings.accel.as_ref(),
             final_output_settings.video_format,
         ) {
-            (Some(a), Some(format))
-                if a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)) =>
-            {
-                a.codec_for_format(&format)
+            (Some(a), Some(format)) => {
+                if a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)) {
+                    a.codec_for_format(&format)
+                } else {
+                    match format {
+                        VideoFormat::H264 => VideoCodec::LIBX264,
+                        VideoFormat::Hevc => VideoCodec::LIBX265,
+                    }
+                }
             }
             (None, Some(VideoFormat::H264)) => VideoCodec::LIBX264,
             (None, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
@@ -229,9 +234,13 @@ impl Pipeline {
             video_codec: video_codec.clone(),
             pts_offset: final_output_settings.pts_offset,
             media_frame_rate: video_stream.frame_rate.to_owned(),
-            preferred_surface: match final_output_settings.accel.as_ref() {
-                Some(a) => a.frame_surface(),
-                _ => FrameSurface::System,
+            preferred_surface: if video_codec.is_hardware {
+                match final_output_settings.accel.as_ref() {
+                    Some(a) => a.frame_surface(),
+                    _ => FrameSurface::System,
+                }
+            } else {
+                FrameSurface::System
             },
             preferred_pixel_format,
         };
