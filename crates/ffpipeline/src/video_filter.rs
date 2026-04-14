@@ -105,6 +105,11 @@ impl VideoFilter {
         match self {
             VideoFilter::HwUpload { target_surface } => {
                 state.surface = target_surface.clone();
+                state.pixel_format = match &state.pixel_format {
+                    PixelFormat::Yuv420p => PixelFormat::Nv12,
+                    PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                    other => other.clone(),
+                }
             }
             VideoFilter::HwDownload {
                 target_pixel_format,
