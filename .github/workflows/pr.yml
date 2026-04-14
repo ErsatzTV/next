@@ -60,11 +60,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install cross-compilation tools
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
-          package: libva-dev libvpl-dev
+          # Only install libvpl-dev on x86_64 Linux
+          package: >-
+            libva-dev
+            ${{ matrix.target == 'linux-x64' && 'libvpl-dev' || '' }}
 
       - name: Build
         run: cargo build --locked --workspace --all-features --target ${{ matrix.rust_target }}
