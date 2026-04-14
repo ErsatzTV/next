@@ -119,7 +119,7 @@ impl FilterChain {
 
                                 if can_convert_down {
                                     let format = VideoFilter::Format {
-                                        format: PixelFormat::Yuv420p,
+                                        format: PixelFormat::Nv12,
                                     };
                                     format.apply_to(&mut current_state);
                                     resolved.push(PipelineFilter::Video(format));
