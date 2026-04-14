@@ -22,12 +22,23 @@ pub const MFX_IMPLCAPS_IMPLDESCSTRUCTURE: u32 = 1;
 
 pub const MFX_CODEC_AVC: u32 = u32::from_ne_bytes(*b"AVC ");
 pub const MFX_CODEC_HEVC: u32 = u32::from_ne_bytes(*b"HEVC");
+pub const MFX_CODEC_MPEG2: u32 = u32::from_ne_bytes(*b"MPG2");
+pub const MFX_CODEC_VC1: u32 = u32::from_ne_bytes(*b"VC1 ");
+pub const MFX_CODEC_VP8: u32 = u32::from_ne_bytes(*b"VP8 ");
+pub const MFX_CODEC_VP9: u32 = u32::from_ne_bytes(*b"VP9 ");
+pub const MFX_CODEC_AV1: u32 = u32::from_ne_bytes(*b"AV1 ");
 
 // H.264 profiles (subset used for bit-depth detection)
 pub const MFX_PROFILE_AVC_HIGH10: u32 = 110;
 
 // HEVC profiles (subset used for bit-depth detection)
 pub const MFX_PROFILE_HEVC_MAIN10: u32 = 2;
+
+// VP9 10-bit profiles (Profile 2 = 10/12-bit 4:2:0, Profile 3 = 10/12-bit 4:4:4)
+pub const MFX_PROFILE_VP9_2: u32 = 2;
+pub const MFX_PROFILE_VP9_3: u32 = 3;
+
+// AV1: Main profile supports 8 and 10-bit, so treat any profile as potentially 10-bit capable
 
 #[repr(C)]
 #[derive(Copy, Clone)]

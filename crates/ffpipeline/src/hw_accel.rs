@@ -21,7 +21,7 @@ pub trait HwAccel {
             _ => false,
         }
     }
-    fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec;
+    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec>;
     fn decoder_arg(&self) -> Vec<String>;
     fn decoder_filters(&self) -> Vec<PipelineFilter>;
     fn envs(&self) -> Vec<(String, String)>;
@@ -71,7 +71,7 @@ impl HwAccel for HardwareAccel {
         }
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec {
+    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
         match self {
             Self::Cuda(a) => a.codec_for_format(format),
             Self::Qsv(a) => a.codec_for_format(format),

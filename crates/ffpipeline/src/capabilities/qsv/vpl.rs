@@ -49,10 +49,23 @@ impl QsvCapabilities {
                 let dec = &*(base.add(IMPL_DESC_DEC_OFFSET) as *const mfxDecoderDescription);
                 let enc = &*(base.add(IMPL_DESC_ENC_OFFSET) as *const mfxEncoderDescription);
 
-                for format in [VideoFormat::H264, VideoFormat::Hevc] {
+                for format in [
+                    VideoFormat::Av1,
+                    VideoFormat::H264,
+                    VideoFormat::Hevc,
+                    VideoFormat::Mpeg2Video,
+                    VideoFormat::Vc1,
+                    VideoFormat::Vp8,
+                    VideoFormat::Vp9,
+                ] {
                     let codec_id = match format {
+                        VideoFormat::Av1 => MFX_CODEC_AV1,
                         VideoFormat::H264 => MFX_CODEC_AVC,
                         VideoFormat::Hevc => MFX_CODEC_HEVC,
+                        VideoFormat::Mpeg2Video => MFX_CODEC_MPEG2,
+                        VideoFormat::Vc1 => MFX_CODEC_VC1,
+                        VideoFormat::Vp8 => MFX_CODEC_VP8,
+                        VideoFormat::Vp9 => MFX_CODEC_VP9,
                     };
 
                     if decoder_has_codec(dec, codec_id) {
@@ -154,6 +167,9 @@ fn is_10bit_profile(codec_id: u32, profile: u32) -> bool {
     match codec_id {
         id if id == MFX_CODEC_AVC => profile == MFX_PROFILE_AVC_HIGH10,
         id if id == MFX_CODEC_HEVC => profile == MFX_PROFILE_HEVC_MAIN10,
+        id if id == MFX_CODEC_VP9 => matches!(profile, MFX_PROFILE_VP9_2 | MFX_PROFILE_VP9_3),
+        // av1 main profile covers 8 and 10-bit
+        id if id == MFX_CODEC_AV1 => true,
         _ => false,
     }
 }

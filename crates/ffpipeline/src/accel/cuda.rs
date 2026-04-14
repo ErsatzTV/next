@@ -32,22 +32,23 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec {
+    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => VideoCodec {
+            VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_nvenc",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 is_hardware: true,
-            },
-            VideoFormat::Hevc => VideoCodec {
+            }),
+            VideoFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_nvenc",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 is_hardware: true,
-            },
+            }),
+            _ => None,
         }
     }
 
