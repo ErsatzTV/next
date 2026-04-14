@@ -1,3 +1,7 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
 use std::ffi::c_void;
 
 pub type mfxStatus = i32;
@@ -85,13 +89,13 @@ unsafe extern "C" {
 
     pub fn MFXUnload(loader: mfxLoader);
     pub fn MFXClose(session: mfxSession) -> mfxStatus;
-    
+
     pub fn MFXVideoDECODE_Query(
         session: mfxSession,
         in_param: *mut mfxVideoParam,
         out_param: *mut mfxVideoParam,
     ) -> mfxStatus;
-    
+
     pub fn MFXVideoENCODE_Query(
         session: mfxSession,
         in_param: *mut mfxVideoParam,
