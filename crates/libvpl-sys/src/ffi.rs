@@ -14,20 +14,20 @@ unsafe extern "C" {
         value: mfxVariant,
     ) -> mfxStatus;
 
-    pub fn MFXCreateSession(loader: mfxLoader, index: u32, session: *mut mfxSession) -> mfxStatus;
+    /// Enumerate available implementations and return capability descriptions.
+    ///
+    /// Pass `MFX_IMPLCAPS_IMPLDESCSTRUCTURE` as `format` to get a pointer to
+    /// `mfxImplDescription` back via `desc`. The caller must release it with
+    /// `MFXDispReleaseImplDescription` when done.
+    pub fn MFXEnumImplementations(
+        loader: mfxLoader,
+        index: u32,
+        format: u32, // mfxImplCapsDeliveryFormat
+        desc: *mut mfxHDL,
+    ) -> mfxStatus;
+
+    /// Release a capability description handle returned by `MFXEnumImplementations`.
+    pub fn MFXDispReleaseImplDescription(loader: mfxLoader, hdl: mfxHDL) -> mfxStatus;
 
     pub fn MFXUnload(loader: mfxLoader);
-    pub fn MFXClose(session: mfxSession) -> mfxStatus;
-
-    pub fn MFXVideoDECODE_Query(
-        session: mfxSession,
-        in_param: *mut mfxVideoParam,
-        out_param: *mut mfxVideoParam,
-    ) -> mfxStatus;
-
-    pub fn MFXVideoENCODE_Query(
-        session: mfxSession,
-        in_param: *mut mfxVideoParam,
-        out_param: *mut mfxVideoParam,
-    ) -> mfxStatus;
 }

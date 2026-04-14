@@ -7,21 +7,27 @@ use std::ffi::c_void;
 pub type mfxStatus = i32;
 pub type mfxLoader = *mut c_void;
 pub type mfxConfig = *mut c_void;
-pub type mfxSession = *mut c_void;
+pub type mfxHDL = *mut c_void;
 
 pub const MFX_ERR_NONE: mfxStatus = 0;
-pub const MFX_ERR_NOT_FOUND: mfxStatus = -9;
 
-pub const MFX_VARIANT_VALUE_TYPE_U32: u32 = 4;
+/// mfxVariant.Type value for u32 payload
+pub const MFX_VARIANT_TYPE_U32: u32 = 5;
 
-pub const MFX_IMPL_HARDWARE: i32 = 0x0002;
+/// mfxImplType: hardware implementation (used with MFXSetConfigFilterProperty)
+pub const MFX_IMPL_TYPE_HARDWARE: u32 = 2;
 
-pub const MFX_FOURCC_NV12: u32 = u32::from_ne_bytes(*b"NV12");
-pub const MFX_FOURCC_P010: u32 = u32::from_ne_bytes(*b"P010");
+/// mfxImplCapsDeliveryFormat: return mfxImplDescription struct
+pub const MFX_IMPLCAPS_IMPLDESCSTRUCTURE: u32 = 1;
 
 pub const MFX_CODEC_AVC: u32 = u32::from_ne_bytes(*b"AVC ");
 pub const MFX_CODEC_HEVC: u32 = u32::from_ne_bytes(*b"HEVC");
-pub const MFX_CODEC_AV1: u32 = u32::from_ne_bytes(*b"AV1 ");
+
+// H.264 profiles (subset used for bit-depth detection)
+pub const MFX_PROFILE_AVC_HIGH10: u32 = 110;
+
+// HEVC profiles (subset used for bit-depth detection)
+pub const MFX_PROFILE_HEVC_MAIN10: u32 = 2;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -46,50 +52,82 @@ pub struct mfxVariant {
     pub Data: mfxVariantValue,
 }
 
+/// Opaque version word shared by all mfx*Description structs (2 bytes).
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct mfxFrameInfo {
-    pub reserved: [u32; 4],
-    pub FourCC: u32,
-    pub Width: u16,
-    pub Height: u16,
-    pub CropX: u16,
-    pub CropY: u16,
-    pub CropW: u16,
-    pub CropH: u16,
-    pub FrameRateExtN: u32,
-    pub FrameRateExtD: u32,
-    pub reserved2: u16,
-    pub AspectRatioW: u16,
-    pub AspectRatioH: u16,
-    pub PicStruct: u16,
-    pub ChromaFormat: u16,
-    pub reserved3: u16,
+pub struct mfxStructVersion {
+    pub Version: u16,
 }
 
+/// Top-level decoder capability list returned inside mfxImplDescription.
+///
+/// Layout verified against bindings.rs (size 32, Codecs at offset 24).
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct mfxVideoParam {
-    pub reserved: [u32; 2],
-    pub mfx: mfxInfoMFX,
-    pub AsyncDepth: u16,
-    pub ExtParam: *mut *mut c_void,
-    pub NumExtParam: u16,
-    pub reserved2: u16,
+pub struct mfxDecoderDescription {
+    pub Version: mfxStructVersion,
+    pub reserved: [u16; 7],
+    pub NumCodecs: u16,
+    // 6 bytes implicit padding (repr(C) aligns *mut to 8)
+    pub Codecs: *mut mfxDecoderDescription_decoder,
 }
 
+/// Per-codec entry inside mfxDecoderDescription (size 32).
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct mfxInfoMFX {
-    pub reserved: [u32; 7],
-    pub LowPower: u16,
-    pub BRCType: u16,
-    pub FrameInfo: mfxFrameInfo,
-    pub CodecId: u32,
-    pub CodecProfile: u16,
-    pub CodecLevel: u16,
-    pub NumThread: u16,
-    pub reserved2: [u16; 3],
+pub struct mfxDecoderDescription_decoder {
+    pub CodecID: u32,
+    pub reserved: [u16; 8],
+    pub MaxcodecLevel: u16,
+    pub NumProfiles: u16,
+    pub Profiles: *mut mfxDecoderDescription_decoder_decprofile,
+}
+
+/// Per-profile entry for a decoder codec (size 32).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxDecoderDescription_decoder_decprofile {
+    pub Profile: u32,
+    pub reserved: [u16; 7],
+    pub NumMemTypes: u16,
+    // 4 bytes implicit padding
+    pub MemDesc: *mut c_void,
+}
+
+/// Top-level encoder capability list returned inside mfxImplDescription.
+///
+/// Layout verified against bindings.rs (size 32, Codecs at offset 24).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxEncoderDescription {
+    pub Version: mfxStructVersion,
+    pub reserved: [u16; 7],
+    pub NumCodecs: u16,
+    // 6 bytes implicit padding
+    pub Codecs: *mut mfxEncoderDescription_encoder,
+}
+
+/// Per-codec entry inside mfxEncoderDescription (size 32).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxEncoderDescription_encoder {
+    pub CodecID: u32,
+    pub MaxcodecLevel: u16,
+    pub BiDirectionalPrediction: u16,
+    pub reserved: [u16; 7],
+    pub NumProfiles: u16,
+    pub Profiles: *mut mfxEncoderDescription_encoder_encprofile,
+}
+
+/// Per-profile entry for an encoder codec (size 32).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxEncoderDescription_encoder_encprofile {
+    pub Profile: u32,
+    pub reserved: [u16; 7],
+    pub NumMemTypes: u16,
+    // 4 bytes implicit padding
+    pub MemDesc: *mut c_void,
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
