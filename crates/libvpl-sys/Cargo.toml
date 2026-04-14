@@ -1,0 +1,7 @@
+[package]
+name = "libvpl-sys"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+pkg-config = { workspace = true }

@@ -1,0 +1,70 @@
+name: Pull Request
+on:
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - run: rustup update stable
+      - run: rustup update nightly
+      - run: rustup show active-toolchain
+      - run: rustup component add clippy
+      - run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+
+      - name: Install development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libva-dev libvpl-dev
+
+      - run: cargo +nightly fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
+
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+            rust_target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: linux-x64
+            rust_target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: linux-arm
+            rust_target: armv7-unknown-linux-gnueabihf
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v6
+
+      - run: rustup update stable
+      - run: rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross-compilation tools
+        if: runner.os != 'Windows'
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.rust_target }}
+          package: libva-dev libvpl-dev
+
+      - name: Build
+        run: cargo build --locked --workspace --all-features --target ${{ matrix.rust_target }}

@@ -58,7 +58,7 @@ jobs:
 
       - name: Install libva development headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libva-dev
+        run: sudo apt-get update && sudo apt-get install -y libva-dev libvpl-dev
 
       - run: cargo +nightly fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
@@ -109,7 +109,7 @@ jobs:
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
-          package: libva-dev
+          package: libva-dev libvpl-dev
 
       - name: Build
         shell: bash
