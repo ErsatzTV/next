@@ -342,7 +342,7 @@ impl ChannelSession {
             audio_buffer: audio_norm.buffer_kbps.map(Kbps),
             audio_channels: audio_norm.channels,
             video_format: video_norm.format.clone().map(VideoFormat::from),
-            bit_depth: video_norm.bit_depth, 
+            bit_depth: video_norm.bit_depth,
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),
             video_buffer: video_norm.buffer_kbps.map(Kbps),
             video_size,
