@@ -5,6 +5,3 @@ edition = "2024"
 
 [build-dependencies]
 pkg-config = { workspace = true }
-
-[target.'cfg(windows)'.build-dependencies]
-vcpkg = "0.2"

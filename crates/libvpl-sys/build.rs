@@ -4,17 +4,10 @@ fn main() {
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
 
         if target_os == "windows" {
-            #[cfg(target_os = "windows")]
-            {
-                if vcpkg::probe_package("vpl").is_ok() {
-                    return;
-                }
-            }
-
-            pkg_config::Config::new()
-                .atleast_version("2.0")
-                .probe("vpl")
-                .expect("oneVPL (vpl) not found.");
+            let dir = std::env::var("VPL_DIR")
+                .expect("VPL_DIR must be set to the libvpl install prefix on Windows");
+            println!("cargo:rustc-link-search=native={dir}/lib");
+            println!("cargo:rustc-link-lib=vpl");
         } else {
             pkg_config::Config::new()
                 .atleast_version("2.0")

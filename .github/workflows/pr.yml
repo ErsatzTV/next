@@ -61,7 +61,12 @@ jobs:
 
       - name: Install oneVPL (Windows)
         if: matrix.os == 'windows-latest'
-        run: vcpkg install vpl:x64-windows
+        run: |
+          git clone --depth 1 https://github.com/intel/libvpl.git C:\libvpl-src
+          cmake -S C:\libvpl-src -B C:\libvpl-build -DCMAKE_INSTALL_PREFIX=C:\libvpl -DBUILD_TESTS=OFF
+          cmake --build C:\libvpl-build --config Release
+          cmake --install C:\libvpl-build --config Release
+          echo "VPL_DIR=C:\libvpl" >> $env:GITHUB_ENV
 
       - name: Install cross-compilation tools
         if: runner.os == 'Linux'
