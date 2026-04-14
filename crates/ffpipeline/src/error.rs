@@ -12,4 +12,6 @@ pub enum FFPipelineError {
     AudioInputIsRequired,
     #[error("video input is required")]
     VideoInputIsRequired,
+    #[error("error detecting vaapi capabilities: {0}")]
+    VaapiCapabilitiesError(String),
 }

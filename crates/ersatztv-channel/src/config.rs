@@ -130,12 +130,25 @@ impl HardwareAccel {
                     && let Some(vaapi_driver) = &channel_config.normalization.video.vaapi_driver
                 {
                     if vaapi_device.exists() {
-                        Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
-                            ffpipeline::accel::vaapi::Vaapi {
-                                device: vaapi_device.to_str()?.to_owned(),
-                                driver: vaapi_driver.clone().into(),
-                            },
-                        ))
+                        let pipeline_driver: ffpipeline::accel::vaapi::VaapiDriver =
+                            vaapi_driver.clone().into();
+
+                        let capabilities =
+                            ffpipeline::capabilities::vaapi::VaapiCapabilities::probe(
+                                vaapi_device.to_str()?,
+                                pipeline_driver.to_string().as_str(),
+                            );
+
+                        match capabilities {
+                            Ok(capabilities) => Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
+                                ffpipeline::accel::vaapi::Vaapi {
+                                    device: vaapi_device.to_str()?.to_owned(),
+                                    driver: vaapi_driver.clone().into(),
+                                    capabilities,
+                                },
+                            )),
+                            _ => None,
+                        }
                     } else {
                         log::error!(
                             "`vaapi_device` does not exist! channel will not use hardware accel"

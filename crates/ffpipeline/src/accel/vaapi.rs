@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 
+use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
@@ -29,6 +30,7 @@ impl Display for VaapiDriver {
 pub struct Vaapi {
     pub device: String,
     pub driver: VaapiDriver,
+    pub capabilities: VaapiCapabilities,
 }
 
 impl HwAccel for Vaapi {
@@ -57,7 +59,7 @@ impl HwAccel for Vaapi {
     fn can_decode(&self, codec: &str, pixel_format: &PixelFormat) -> bool {
         match pixel_format.bit_depth() {
             10 => matches!(codec, "hevc"),
-            8 => matches!(codec, "h264" | "hevc" | "mpeg2video"),
+            8 => self.capabilities.can_decode(codec, 8), // matches!(codec, "h264" | "hevc" | "mpeg2video"),
             _ => false,
         }
     }

@@ -2,6 +2,7 @@ pub mod accel;
 pub mod audio_codec;
 pub mod audio_decoder;
 pub mod audio_filter;
+pub mod capabilities;
 pub mod error;
 pub mod ffmpeg_info;
 pub mod filter_chain;
