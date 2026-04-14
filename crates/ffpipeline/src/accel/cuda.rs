@@ -6,7 +6,7 @@ use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ForceOriginalAspectRatio, HwVideoFilter, VideoFilter};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Cuda;
 
 impl HwAccel for Cuda {

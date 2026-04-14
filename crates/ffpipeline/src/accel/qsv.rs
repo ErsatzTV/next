@@ -6,7 +6,7 @@ use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{HwVideoFilter, VideoFilter};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Qsv;
 
 impl HwAccel for Qsv {

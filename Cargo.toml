@@ -12,12 +12,12 @@ resolver = "3"
 [workspace.dependencies]
 axum = "0.8"
 clap = { version = "4.6", features = ["derive"] }
-dyn-clone = { version = "1.0" }
+dyn-clone = "1.0"
 env_logger = "0.11"
 ersatztv-core = { path = "crates/ersatztv-core" }
 ersatztv-playout = { path = "crates/ersatztv-playout" }
 ffpipeline = { path = "crates/ffpipeline" }
-filetime = { version = "0.2" }
+filetime = "0.2"
 log = "0.4"
 rand = { version = "0.10", features = ["thread_rng"] }
 serde = { version = "1", features = ["derive"] }
@@ -28,7 +28,7 @@ thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing", "serde"] }
 tokio = { version = "1.50", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "1"
-tower = { version = "0.5" }
+tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 uuid = { version = "1.23", features = ["v4"] }
 walkdir = "2.5"

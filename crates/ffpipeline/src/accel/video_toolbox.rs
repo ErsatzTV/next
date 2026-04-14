@@ -5,7 +5,7 @@ use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct VideoToolbox;
 
 impl HwAccel for VideoToolbox {

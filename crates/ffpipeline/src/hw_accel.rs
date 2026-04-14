@@ -19,7 +19,7 @@ pub trait HwAccel {
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat;
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum HardwareAccel {
     Cuda(accel::cuda::Cuda),
     Qsv(accel::qsv::Qsv),

@@ -8,7 +8,7 @@ use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ForceOriginalAspectRatio, HwVideoFilter, VideoFilter};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum VaapiDriver {
     Ihd,
     I965,
@@ -25,7 +25,7 @@ impl Display for VaapiDriver {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Vaapi {
     pub device: String,
     pub driver: VaapiDriver,
