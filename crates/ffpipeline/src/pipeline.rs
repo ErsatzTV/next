@@ -177,22 +177,18 @@ impl Pipeline {
             _ => AudioCodec::Copy,
         };
 
+        // TODO: add target profile to config
         let video_codec = match (
             final_output_settings.accel.as_ref(),
             final_output_settings.video_format,
         ) {
-            (Some(a), Some(format)) => {
-                if a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)) {
-                    a.codec_for_format(&format)
-                } else {
-                    match format {
-                        VideoFormat::H264 => VideoCodec::LIBX264,
-                        VideoFormat::Hevc => VideoCodec::LIBX265,
-                    }
-                }
+            (Some(a), Some(format))
+                if a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)) =>
+            {
+                a.codec_for_format(&format)
             }
-            (None, Some(VideoFormat::H264)) => VideoCodec::LIBX264,
-            (None, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
+            (_, Some(VideoFormat::H264)) => VideoCodec::LIBX264,
+            (_, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
             _ => VideoCodec::COPY,
         };
 
