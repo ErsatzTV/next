@@ -104,6 +104,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install oneVPL (Windows)
+        if: matrix.os == 'windows-latest'
+        run: vcpkg install vpl:x64-windows
+
       - name: Install cross-compilation tools
         if: runner.os == 'Linux'
         uses: taiki-e/setup-cross-toolchain-action@v1
