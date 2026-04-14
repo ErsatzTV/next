@@ -60,8 +60,6 @@ pub struct mfxStructVersion {
 }
 
 /// Top-level decoder capability list returned inside mfxImplDescription.
-///
-/// Layout verified against bindings.rs (size 32, Codecs at offset 24).
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct mfxDecoderDescription {
@@ -95,8 +93,6 @@ pub struct mfxDecoderDescription_decoder_decprofile {
 }
 
 /// Top-level encoder capability list returned inside mfxImplDescription.
-///
-/// Layout verified against bindings.rs (size 32, Codecs at offset 24).
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct mfxEncoderDescription {
