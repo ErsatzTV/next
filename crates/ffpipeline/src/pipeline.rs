@@ -187,19 +187,14 @@ impl Pipeline {
             final_output_settings.accel.as_ref(),
             final_output_settings.video_format,
         ) {
-            (Some(a), Some(format)) => {
-                if a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8))
-                    && let Some(codec) = a.codec_for_format(&format)
-                {
-                    codec
-                } else {
-                    match format {
-                        VideoFormat::Hevc => VideoCodec::LIBX265,
-                        VideoFormat::H264 => VideoCodec::LIBX264,
-                        _ => VideoCodec::COPY,
-                    }
-                }
-            }
+            (Some(a), Some(format)) => a
+                .codec_for_format(&format)
+                .filter(|_| a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)))
+                .unwrap_or(match format {
+                    VideoFormat::Hevc => VideoCodec::LIBX265,
+                    VideoFormat::H264 => VideoCodec::LIBX264,
+                    _ => VideoCodec::COPY,
+                }),
             (_, Some(VideoFormat::H264)) => VideoCodec::LIBX264,
             (_, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
             _ => VideoCodec::COPY,
