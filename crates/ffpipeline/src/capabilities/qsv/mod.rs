@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use crate::pipeline::{PixelFormat, VideoFormat};
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", any(target_arch = "x86", target_arch = "x86_64")))]
 pub(crate) mod linux;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86", target_arch = "x86_64"))))]
 pub(crate) mod stub;
 
 #[derive(Debug, Clone)]
