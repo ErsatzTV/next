@@ -143,9 +143,9 @@ impl VaapiCapabilities {
                         }
                     }
                 }
-            }
 
-            unsafe { vaDestroyConfig(display, config_id) };
+                unsafe { vaDestroyConfig(display, config_id) };
+            }
         }
 
         unsafe {
