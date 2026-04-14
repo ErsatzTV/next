@@ -181,7 +181,11 @@ impl Pipeline {
             final_output_settings.accel.as_ref(),
             final_output_settings.video_format,
         ) {
-            (Some(a), Some(format)) => a.codec_for_format(&format),
+            (Some(a), Some(format))
+                if a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)) =>
+            {
+                a.codec_for_format(&format)
+            }
             (None, Some(VideoFormat::H264)) => VideoCodec::LIBX264,
             (None, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
             _ => VideoCodec::COPY,

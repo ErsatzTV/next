@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use libva_sys::*;
 
-use crate::pipeline::PixelFormat;
+use crate::pipeline::{PixelFormat, VideoFormat};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -31,6 +31,18 @@ impl VaapiCapabilities {
             .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_VLD)))
     }
 
+    pub fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        Self::encode_profile_for(format, bit_depth)
+            .iter()
+            .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_ENC_SLICE)))
+    }
+
+    pub fn can_encode_low_power(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        Self::encode_profile_for(format, bit_depth)
+            .iter()
+            .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_ENC_SLICE_LP)))
+    }
+
     fn decode_profile_for(codec: &str, profile: &str, _bit_depth: u8) -> Option<VAProfile> {
         match (codec, profile) {
             ("h264", "main" | "77") => Some(VA_PROFILE_H264_MAIN),
@@ -50,6 +62,15 @@ impl VaapiCapabilities {
             ("vp9", "profile 2" | "2") => Some(VA_PROFILE_VP9_PROFILE2),
             ("vp9", "profile 3" | "3") => Some(VA_PROFILE_VP9_PROFILE3),
             ("av1", "main" | "0") => Some(VA_PROFILE_AV1_PROFILE0),
+            _ => None,
+        }
+    }
+
+    fn encode_profile_for(format: &VideoFormat, bit_depth: u8) -> Option<VAProfile> {
+        match (format, bit_depth) {
+            (VideoFormat::H264, 8) => Some(VA_PROFILE_H264_MAIN),
+            (VideoFormat::Hevc, 8) => Some(VA_PROFILE_HEVC_MAIN),
+            (VideoFormat::Hevc, 10) => Some(VA_PROFILE_HEVC_MAIN10),
             _ => None,
         }
     }

@@ -72,6 +72,21 @@ impl HwAccel for Vaapi {
         result
     }
 
+    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        let result = self.capabilities.can_encode(format, bit_depth)
+            || self.capabilities.can_encode_low_power(format, bit_depth);
+
+        if !result {
+            log::debug!(
+                "VAAPI does not support encoding {}-bit {:?}, will use software encoder",
+                bit_depth,
+                format,
+            );
+        }
+
+        result
+    }
+
     fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec {
         match format {
             VideoFormat::H264 => VideoCodec {

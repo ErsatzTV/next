@@ -32,14 +32,6 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        match pixel_format.bit_depth() {
-            10 => matches!(codec, "av1" | "hevc"),
-            8 => matches!(codec, "av1" | "h264" | "hevc" | "mpeg2video"),
-            _ => false,
-        }
-    }
-
     fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec {
         match format {
             VideoFormat::H264 => VideoCodec {

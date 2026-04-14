@@ -7,7 +7,20 @@ use crate::video_filter::VideoFilter;
 
 pub trait HwAccel {
     fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter;
-    fn can_decode(&self, codec: &str, profile: &str, pixel_format: &PixelFormat) -> bool;
+    fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
+        match pixel_format.bit_depth() {
+            10 => matches!(codec, "av1" | "hevc"),
+            8 => matches!(codec, "av1" | "h264" | "hevc" | "mpeg2video"),
+            _ => false,
+        }
+    }
+    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        match bit_depth {
+            10 => matches!(format, VideoFormat::Hevc),
+            8 => matches!(format, VideoFormat::H264 | VideoFormat::Hevc),
+            _ => false,
+        }
+    }
     fn codec_for_format(&self, format: &VideoFormat) -> VideoCodec;
     fn decoder_arg(&self) -> Vec<String>;
     fn decoder_filters(&self) -> Vec<PipelineFilter>;
@@ -46,6 +59,15 @@ impl HwAccel for HardwareAccel {
             Self::Qsv(a) => a.can_decode(codec, profile, pixel_format),
             Self::Vaapi(a) => a.can_decode(codec, profile, pixel_format),
             Self::VideoToolbox(a) => a.can_decode(codec, profile, pixel_format),
+        }
+    }
+
+    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        match self {
+            Self::Cuda(a) => a.can_encode(format, bit_depth),
+            Self::Qsv(a) => a.can_encode(format, bit_depth),
+            Self::Vaapi(a) => a.can_encode(format, bit_depth),
+            Self::VideoToolbox(a) => a.can_encode(format, bit_depth),
         }
     }
 
