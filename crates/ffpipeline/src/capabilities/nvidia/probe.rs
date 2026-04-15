@@ -173,7 +173,7 @@ unsafe fn probe_encode(
             let mut guids = vec![NvEncGuid::default(); count as usize];
             let mut actual = 0u32;
             if get_guids(encoder, guids.as_mut_ptr(), count, &mut actual) == NV_ENC_SUCCESS {
-                for &guid in &guids[..actual as usize] {
+                for &guid in &guids[..actual.min(count) as usize] {
                     if guid == NV_ENC_CODEC_H264_GUID {
                         supported.insert((VideoFormat::H264, 8));
                     } else if guid == NV_ENC_CODEC_HEVC_GUID {
@@ -219,6 +219,6 @@ unsafe fn hevc_supports_main10(
         {
             return false;
         }
-        profiles[..actual as usize].contains(&NV_ENC_HEVC_PROFILE_MAIN10_GUID)
+        profiles[..actual.min(count) as usize].contains(&NV_ENC_HEVC_PROFILE_MAIN10_GUID)
     }
 }
