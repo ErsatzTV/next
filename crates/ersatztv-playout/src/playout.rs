@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::{Iso8601, iso8601};
@@ -10,8 +11,14 @@ const DATE_CONFIG: iso8601::EncodedConfig =
     iso8601::Config::DEFAULT.set_use_separators(false).encode();
 pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
-#[derive(Debug, Deserialize, Serialize)]
+/// A playout schedule for a single time window.
+///
+/// Files should be named `{start}_{finish}.json` using compact ISO 8601
+/// (no separators), e.g. `20260413T000000.000000000-0500_20260414T002131.620000000-0500.json`,
+/// so that the channel can locate the correct file for the current time.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct Playout {
+    /// URI identifying the schema version, e.g. "https://ersatztv.org/playout/version/0.0.1"
     pub version: String,
     pub items: Vec<PlayoutItem>,
 }
@@ -25,12 +32,16 @@ impl Playout {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct PlayoutItem {
     pub id: String,
+    /// RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
     pub start: OffsetDateTime,
+    /// RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
     pub finish: OffsetDateTime,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<PlayoutItemSource>,
@@ -65,20 +76,20 @@ impl PlayoutItem {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct PlayoutItemTracks {
     pub audio: Option<TrackSelection>,
     pub video: Option<TrackSelection>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum TrackSelection {
     Source { source: PlayoutItemSource },
     StreamIndex { stream_index: u32 },
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(tag = "source_type", rename_all = "snake_case")]
 pub enum PlayoutItemSource {
     Local {

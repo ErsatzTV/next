@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Playout",
+  "description": "A playout schedule for a single time window.\n\nFiles should be named `{start}_{finish}.json` using compact ISO 8601\n(no separators), e.g. `20260413T000000.000000000-0500_20260414T002131.620000000-0500.json`,\nso that the channel can locate the correct file for the current time.",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PlayoutItem"
+      }
+    },
+    "version": {
+      "description": "URI identifying the schema version, e.g. \"https://ersatztv.org/playout/version/0.0.1\"",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "items"
+  ],
+  "$defs": {
+    "PlayoutItem": {
+      "type": "object",
+      "properties": {
+        "finish": {
+          "description": "RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlayoutItemSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start": {
+          "description": "RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00",
+          "type": "string"
+        },
+        "tracks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlayoutItemTracks"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "finish"
+      ]
+    },
+    "PlayoutItemSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "in_point_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "out_point_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string"
+            },
+            "source_type": {
+              "type": "string",
+              "const": "local"
+            }
+          },
+          "required": [
+            "source_type",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "params": {
+              "type": "string"
+            },
+            "source_type": {
+              "type": "string",
+              "const": "lavfi"
+            }
+          },
+          "required": [
+            "source_type",
+            "params"
+          ]
+        }
+      ]
+    },
+    "PlayoutItemTracks": {
+      "type": "object",
+      "properties": {
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrackSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "video": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrackSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TrackSelection": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/PlayoutItemSource"
+            }
+          },
+          "required": [
+            "source"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stream_index": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "stream_index"
+          ]
+        }
+      ]
+    }
+  }
+}

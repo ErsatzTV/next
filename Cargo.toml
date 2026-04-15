@@ -27,6 +27,7 @@ libva-sys = { path = "crates/libva-sys" }
 libvpl-sys = { path = "crates/libvpl-sys" }
 log = "0.4"
 rand = { version = "0.10", features = ["thread_rng"] }
+schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simple-expand-tilde = "0.5.3"
