@@ -56,10 +56,6 @@ jobs:
       - run: rustup component add clippy
       - run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
 
-      - name: Install libva development headers
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libva-dev
-
       - run: cargo +nightly fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
@@ -79,11 +75,11 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
             exe_ext: ""
             archive_ext: .tar.gz
-#          - os: ubuntu-latest
-#            target: linux-musl-x64
-#            rust_target: x86_64-unknown-linux-musl
-#            exe_ext: ""
-#            archive_ext: .tar.gz
+          - os: ubuntu-latest
+            target: linux-musl-x64
+            rust_target: x86_64-unknown-linux-musl
+            exe_ext: ""
+            archive_ext: .tar.gz
           - os: ubuntu-latest
             target: linux-arm
             rust_target: armv7-unknown-linux-gnueabihf
@@ -109,7 +105,6 @@ jobs:
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
-          package: libva-dev
 
       - name: Build
         shell: bash
@@ -178,8 +173,8 @@ jobs:
             archive_ext: .zip
           - target: linux-x64
             archive_ext: .tar.gz
-#          - target: linux-musl-x64
-#            archive_ext: .tar.gz
+          - target: linux-musl-x64
+            archive_ext: .tar.gz
           - target: linux-arm
             archive_ext: .tar.gz
           - target: linux-arm64

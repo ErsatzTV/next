@@ -27,13 +27,16 @@ impl VaapiCapabilities {
     }
 
     fn probe_inner(device: &str) -> Result<VaapiCapabilities, FFPipelineError> {
+        let va =
+            VaLib::load().map_err(|e| VaapiCapabilitiesError(format!("libva not found: {e}")))?;
+
         let file = File::options()
             .read(true)
             .write(true)
             .open(device)
             .map_err(|e| VaapiCapabilitiesError(format!("cannot open {device}: {e}")))?;
 
-        let display = unsafe { vaGetDisplayDRM(file.as_raw_fd()) };
+        let display = unsafe { (va.vaGetDisplayDRM)(file.as_raw_fd()) };
         if display.is_null() {
             return Err(VaapiCapabilitiesError(String::from(
                 "vaGetDisplayDRM returned NULL",
@@ -42,7 +45,7 @@ impl VaapiCapabilities {
 
         let mut major = 0i32;
         let mut minor = 0i32;
-        let status = unsafe { vaInitialize(display, &mut major, &mut minor) };
+        let status = unsafe { (va.vaInitialize)(display, &mut major, &mut minor) };
         if status != VA_STATUS_SUCCESS {
             return Err(VaapiCapabilitiesError(format!(
                 "vaInitialize failed: {status}"
@@ -50,7 +53,7 @@ impl VaapiCapabilities {
         }
 
         let vendor = unsafe {
-            let ptr = vaQueryVendorString(display);
+            let ptr = (va.vaQueryVendorString)(display);
             if ptr.is_null() {
                 String::new()
             } else {
@@ -58,14 +61,15 @@ impl VaapiCapabilities {
             }
         };
 
-        let max_profiles = unsafe { vaMaxNumProfiles(display) } as usize;
+        let max_profiles = unsafe { (va.vaMaxNumProfiles)(display) } as usize;
         let mut profiles = vec![0i32; max_profiles];
         let mut num_profiles = 0i32;
-        let status =
-            unsafe { vaQueryConfigProfiles(display, profiles.as_mut_ptr(), &mut num_profiles) };
+        let status = unsafe {
+            (va.vaQueryConfigProfiles)(display, profiles.as_mut_ptr(), &mut num_profiles)
+        };
         if status != VA_STATUS_SUCCESS {
             unsafe {
-                vaTerminate(display);
+                (va.vaTerminate)(display);
             }
             return Err(VaapiCapabilitiesError(format!(
                 "vaQueryConfigProfiles failed: {status}"
@@ -73,14 +77,14 @@ impl VaapiCapabilities {
         }
         profiles.truncate(num_profiles as usize);
 
-        let max_entrypoints = unsafe { vaMaxNumEntrypoints(display) } as usize;
+        let max_entrypoints = unsafe { (va.vaMaxNumEntrypoints)(display) } as usize;
         let mut supported = HashSet::new();
 
         for &profile in &profiles {
             let mut entrypoints = vec![0i32; max_entrypoints];
             let mut num_entrypoints = 0i32;
             let status = unsafe {
-                vaQueryConfigEntrypoints(
+                (va.vaQueryConfigEntrypoints)(
                     display,
                     profile,
                     entrypoints.as_mut_ptr(),
@@ -99,7 +103,7 @@ impl VaapiCapabilities {
         if supported.contains(&(VA_PROFILE_NONE, VA_ENTRYPOINT_VIDEO_PROC)) {
             let mut config_id: VAConfigID = 0;
             let status = unsafe {
-                vaCreateConfig(
+                (va.vaCreateConfig)(
                     display,
                     VA_PROFILE_NONE,
                     VA_ENTRYPOINT_VIDEO_PROC,
@@ -112,7 +116,7 @@ impl VaapiCapabilities {
             if status == VA_STATUS_SUCCESS {
                 let mut num_attrs: c_uint = 0;
                 let status = unsafe {
-                    vaQuerySurfaceAttributes(
+                    (va.vaQuerySurfaceAttributes)(
                         display,
                         config_id,
                         std::ptr::null_mut(),
@@ -124,7 +128,7 @@ impl VaapiCapabilities {
                     let mut attrs =
                         unsafe { vec![std::mem::zeroed::<VASurfaceAttrib>(); num_attrs as usize] };
                     let status = unsafe {
-                        vaQuerySurfaceAttributes(
+                        (va.vaQuerySurfaceAttributes)(
                             display,
                             config_id,
                             attrs.as_mut_ptr(),
@@ -144,12 +148,12 @@ impl VaapiCapabilities {
                     }
                 }
 
-                unsafe { vaDestroyConfig(display, config_id) };
+                unsafe { (va.vaDestroyConfig)(display, config_id) };
             }
         }
 
         unsafe {
-            vaTerminate(display);
+            (va.vaTerminate)(display);
         }
 
         Ok(VaapiCapabilities {

@@ -1,52 +1,68 @@
+#![allow(non_snake_case)]
+
 use std::ffi::{c_char, c_int, c_uint, c_void};
+
+use libloading::Library;
 
 use crate::{VAConfigID, VADisplay, VAEntrypoint, VAProfile, VAStatus, VASurfaceAttrib};
 
-unsafe extern "C" {
-    pub fn vaGetDisplayDRM(fd: c_int) -> VADisplay;
+pub struct VaLib {
+    _libva: Library,
+    _libva_drm: Library,
+    pub vaGetDisplayDRM: unsafe extern "C" fn(c_int) -> VADisplay,
+    pub vaInitialize: unsafe extern "C" fn(VADisplay, *mut c_int, *mut c_int) -> VAStatus,
+    pub vaTerminate: unsafe extern "C" fn(VADisplay) -> VAStatus,
+    pub vaQueryVendorString: unsafe extern "C" fn(VADisplay) -> *const c_char,
+    pub vaMaxNumProfiles: unsafe extern "C" fn(VADisplay) -> c_int,
+    pub vaMaxNumEntrypoints: unsafe extern "C" fn(VADisplay) -> c_int,
+    pub vaQueryConfigProfiles:
+        unsafe extern "C" fn(VADisplay, *mut VAProfile, *mut c_int) -> VAStatus,
+    pub vaQueryConfigEntrypoints:
+        unsafe extern "C" fn(VADisplay, VAProfile, *mut VAEntrypoint, *mut c_int) -> VAStatus,
+    pub vaCreateConfig: unsafe extern "C" fn(
+        VADisplay,
+        VAProfile,
+        VAEntrypoint,
+        *mut c_void,
+        c_int,
+        *mut VAConfigID,
+    ) -> VAStatus,
+    pub vaDestroyConfig: unsafe extern "C" fn(VADisplay, VAConfigID) -> VAStatus,
+    pub vaQuerySurfaceAttributes:
+        unsafe extern "C" fn(VADisplay, VAConfigID, *mut VASurfaceAttrib, *mut c_uint) -> VAStatus,
+}
 
-    pub fn vaInitialize(
-        dpy: VADisplay,
-        major_version: *mut c_int,
-        minor_version: *mut c_int,
-    ) -> VAStatus;
-
-    pub fn vaTerminate(dpy: VADisplay) -> VAStatus;
-
-    pub fn vaQueryVendorString(dpy: VADisplay) -> *const c_char;
-
-    pub fn vaMaxNumProfiles(dpy: VADisplay) -> c_int;
-
-    pub fn vaMaxNumEntrypoints(dpy: VADisplay) -> c_int;
-
-    pub fn vaQueryConfigProfiles(
-        dpy: VADisplay,
-        profile_list: *mut VAProfile,
-        num_profiles: *mut c_int,
-    ) -> VAStatus;
-
-    pub fn vaQueryConfigEntrypoints(
-        dpy: VADisplay,
-        profile: VAProfile,
-        entrypoint_list: *mut VAEntrypoint,
-        num_entrypoints: *mut c_int,
-    ) -> VAStatus;
-
-    pub fn vaCreateConfig(
-        dpy: VADisplay,
-        profile: VAProfile,
-        entrypoint: VAEntrypoint,
-        attrib_list: *mut c_void,
-        num_attribs: c_int,
-        config_id: *mut VAConfigID,
-    ) -> VAStatus;
-
-    pub fn vaDestroyConfig(dpy: VADisplay, config_id: VAConfigID) -> VAStatus;
-
-    pub fn vaQuerySurfaceAttributes(
-        dpy: VADisplay,
-        config: VAConfigID,
-        attrib_list: *mut VASurfaceAttrib,
-        num_attribs: *mut c_uint,
-    ) -> VAStatus;
+impl VaLib {
+    pub fn load() -> Result<Self, libloading::Error> {
+        unsafe {
+            let lib = Library::new("libva.so.2")?;
+            let vaInitialize = *lib.get(b"vaInitialize\0")?;
+            let vaTerminate = *lib.get(b"vaTerminate\0")?;
+            let vaQueryVendorString = *lib.get(b"vaQueryVendorString\0")?;
+            let vaMaxNumProfiles = *lib.get(b"vaMaxNumProfiles\0")?;
+            let vaMaxNumEntrypoints = *lib.get(b"vaMaxNumEntrypoints\0")?;
+            let vaQueryConfigProfiles = *lib.get(b"vaQueryConfigProfiles\0")?;
+            let vaQueryConfigEntrypoints = *lib.get(b"vaQueryConfigEntrypoints\0")?;
+            let vaCreateConfig = *lib.get(b"vaCreateConfig\0")?;
+            let vaDestroyConfig = *lib.get(b"vaDestroyConfig\0")?;
+            let vaQuerySurfaceAttributes = *lib.get(b"vaQuerySurfaceAttributes\0")?;
+            let lib_drm = Library::new("libva-drm.so.2")?;
+            let vaGetDisplayDRM = *lib_drm.get(b"vaGetDisplayDRM\0")?;
+            Ok(Self {
+                _libva: lib,
+                _libva_drm: lib_drm,
+                vaGetDisplayDRM,
+                vaInitialize,
+                vaTerminate,
+                vaQueryVendorString,
+                vaMaxNumProfiles,
+                vaMaxNumEntrypoints,
+                vaQueryConfigProfiles,
+                vaQueryConfigEntrypoints,
+                vaCreateConfig,
+                vaDestroyConfig,
+                vaQuerySurfaceAttributes,
+            })
+        }
+    }
 }

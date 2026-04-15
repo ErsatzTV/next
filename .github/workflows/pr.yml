@@ -24,11 +24,6 @@ jobs:
       - run: rustup component add clippy
       - run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
 
-      - name: Install development headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libva-dev
-
       - run: cargo +nightly fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
@@ -64,7 +59,6 @@ jobs:
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
-          package: libva-dev
 
       - name: Build
         run: cargo build --locked --workspace --all-features --target ${{ matrix.rust_target }}
