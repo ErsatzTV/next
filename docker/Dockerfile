@@ -20,7 +20,7 @@ RUN groupadd --gid 1000 ersatztv && \
     chown ersatztv:ersatztv /config
 
 ENV FONTCONFIG_PATH=/etc/fonts
-RUN fc-cache update
+RUN fc-cache -f
 
 WORKDIR /app
 COPY --from=build --chown=ersatztv:ersatztv \
@@ -30,4 +30,5 @@ COPY --from=build --chown=ersatztv:ersatztv \
     ./
 
 USER ersatztv
-ENTRYPOINT ["/app/ersatztv", "/config/lineup.toml"]
+ENTRYPOINT ["/app/ersatztv"]
+CMD ["/config/lineup.toml"]
