@@ -1,5 +1,6 @@
 mod error;
 mod generate;
+mod sync;
 
 use std::path::{Path, PathBuf};
 
@@ -30,15 +31,21 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Sync {
+    SyncChannel {
         #[arg(short, long, required = true)]
         database: PathBuf,
+        #[arg(short, long, required = true)]
+        channel: String,
+        #[arg(short, long, required = true)]
+        output_folder: PathBuf,
     },
 }
 
 #[tokio::main]
 pub async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
+        .filter_module("sqlx", log::LevelFilter::Warn)
+        .init();
 
     if let Err(err) = run().await {
         log::error!("{err}");
@@ -50,10 +57,11 @@ async fn run() -> Result<(), PlayoutGeneratorError> {
     let args = Args::parse();
 
     match args.command {
-        Some(Commands::Sync { database }) => {
-            log::info!("synchronizing from database at {:?}", database);
-            Ok(())
-        }
+        Some(Commands::SyncChannel {
+            database,
+            channel,
+            output_folder,
+        }) => sync::sync_playout(&database, &channel, &output_folder).await,
         None => {
             let content_folder = args.content_folder.unwrap();
             let output_folder = args.output_folder.unwrap();
