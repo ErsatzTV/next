@@ -160,8 +160,6 @@ impl Pipeline {
     ) -> Result<Pipeline, FFPipelineError> {
         let mut final_output_settings = output_settings;
 
-        log::debug!("ffmpeg info: {:?}", ffmpeg_info);
-
         if let Some(accel) = &final_output_settings.accel
             && !ffmpeg_info.has_hw_accel(accel)
         {

@@ -58,6 +58,7 @@ pub struct ChannelSession {
     ffmpeg_path: PathBuf,
     ffprobe_path: PathBuf,
     ffmpeg_info: FfmpegInfo,
+    hw_accel: Option<ffpipeline::hw_accel::HardwareAccel>,
 
     transcoded_until: OffsetDateTime,
     ready_file: PathBuf,
@@ -137,6 +138,7 @@ impl ChannelSession {
             ffmpeg_path: ffmpeg_path.to_owned(),
             ffprobe_path: ffprobe_path.to_owned(),
             ffmpeg_info: FfmpegInfo::default(),
+            hw_accel: None,
             transcoded_until: now + start_time_offset,
             ready_file,
             output_file: ffmpeg_output_file,
@@ -155,6 +157,16 @@ impl ChannelSession {
             &self.channel_config.ffmpeg.disabled_filters,
         )
         .await?;
+
+        log::debug!("ffmpeg info: {:?}", self.ffmpeg_info);
+
+        self.hw_accel = self
+            .channel_config
+            .normalization
+            .video
+            .accel
+            .as_ref()
+            .and_then(|a| a.to_pipeline(&self.channel_config));
 
         let pm = self.playlist_manager.clone();
         let tn = self.timeout_notify.clone();
@@ -346,10 +358,7 @@ impl ChannelSession {
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),
             video_buffer: video_norm.buffer_kbps.map(Kbps),
             video_size,
-            accel: video_norm
-                .accel
-                .clone()
-                .and_then(|a| a.to_pipeline(&self.channel_config)),
+            accel: self.hw_accel.clone(),
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),
                 segment_template: self.output_segment_template.clone(),
