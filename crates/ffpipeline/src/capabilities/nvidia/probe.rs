@@ -155,12 +155,21 @@ unsafe fn probe_encode(
         };
 
         let mut encoder: *mut c_void = std::ptr::null_mut();
-        if open_session_ex(&mut params, &mut encoder) != NV_ENC_SUCCESS {
+        let status = open_session_ex(&mut params, &mut encoder);
+        if status != NV_ENC_SUCCESS {
+            log::warn!("nvEncOpenEncodeSessionEx failed: {:#010x}", status);
             return;
         }
 
         let mut count = 0u32;
-        if get_guid_count(encoder, &mut count) == NV_ENC_SUCCESS && count > 0 {
+        let status = get_guid_count(encoder, &mut count);
+        if status != NV_ENC_SUCCESS {
+            log::warn!("nvEncGetEncodeGUIDCount failed: {:#010x}", status);
+            destroy(encoder);
+            return;
+        }
+
+        if count > 0 {
             let mut guids = vec![NvEncGuid::default(); count as usize];
             let mut actual = 0u32;
             if get_guids(encoder, guids.as_mut_ptr(), count, &mut actual) == NV_ENC_SUCCESS {

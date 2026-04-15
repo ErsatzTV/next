@@ -3,7 +3,7 @@ use std::ffi::c_void;
 use libloading::Library;
 
 const NVENCAPI_MAJOR_VERSION: u32 = 12;
-const NVENCAPI_MINOR_VERSION: u32 = 0;
+const NVENCAPI_MINOR_VERSION: u32 = 2;
 pub const NVENCAPI_VERSION: u32 = NVENCAPI_MAJOR_VERSION | (NVENCAPI_MINOR_VERSION << 24);
 
 const fn nvencapi_struct_version(ver: u32) -> u32 {
@@ -36,15 +36,14 @@ pub const NV_ENC_CODEC_HEVC_GUID: NvEncGuid = NvEncGuid {
     data1: 0x790cdc88,
     data2: 0x4522,
     data3: 0x4d7b,
-    data4: [0x94, 0x25, 0x8d, 0xa4, 0x4b, 0xb9, 0x3c, 0x17],
+    data4: [0x94, 0x25, 0xbd, 0xa9, 0x97, 0x5f, 0x76, 0x03],
 };
 
-// NV_ENC_HEVC_PROFILE_MAIN10_GUID — used to detect 10-bit HEVC encode support
 pub const NV_ENC_HEVC_PROFILE_MAIN10_GUID: NvEncGuid = NvEncGuid {
-    data1: 0xd5bfb4d7,
-    data2: 0xbd25,
-    data3: 0x4ead,
-    data4: [0x9e, 0xa3, 0x29, 0x0b, 0xd2, 0x0a, 0x22, 0x69],
+    data1: 0xfa4d2b6c,
+    data2: 0x3a5b,
+    data3: 0x411a,
+    data4: [0x80, 0x18, 0x0a, 0x3f, 0x5e, 0x3c, 0x9b, 0xe5],
 };
 
 #[repr(C)]
@@ -59,12 +58,12 @@ pub struct NvEncApiFunctionList {
         Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut NvEncGuid, u32, *mut u32) -> i32>,
     pub nv_enc_get_encode_guids:
         Option<unsafe extern "C" fn(*mut c_void, *mut NvEncGuid, u32, *mut u32) -> i32>,
-    pub _slots5_27: [usize; 23],
+    pub _slots5_26: [usize; 22],
     pub nv_enc_destroy_encoder: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub _slot29: usize,
+    pub _slot28: usize,
     pub nv_enc_open_encode_session_ex:
         Option<unsafe extern "C" fn(*mut NvEncOpenEncodeSessionExParams, *mut *mut c_void) -> i32>,
-    pub _tail: [usize; 288], // pads to 2560 bytes
+    pub _tail: [usize; 289], // pads to 2560 bytes
 }
 
 impl Default for NvEncApiFunctionList {
@@ -75,7 +74,7 @@ impl Default for NvEncApiFunctionList {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<NvEncApiFunctionList>() == 2560);
+const _: () = assert!(size_of::<NvEncApiFunctionList>() == 2560);
 
 #[repr(C)]
 pub struct NvEncOpenEncodeSessionExParams {
