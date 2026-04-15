@@ -1,3 +1,4 @@
+use crate::capabilities::nvidia::NvidiaCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
@@ -7,7 +8,9 @@ use crate::video_codec::VideoCodec;
 use crate::video_filter::{ForceOriginalAspectRatio, HwVideoFilter, VideoFilter};
 
 #[derive(Debug, Clone)]
-pub struct Cuda;
+pub struct Cuda {
+    pub capabilities: NvidiaCapabilities,
+}
 
 impl HwAccel for Cuda {
     fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter {
@@ -30,6 +33,24 @@ impl HwAccel for Cuda {
             }
             _ => video_filter.clone(),
         }
+    }
+
+    fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
+        let format = match codec {
+            "av1" => Some(VideoFormat::Av1),
+            "h264" => Some(VideoFormat::H264),
+            "hevc" => Some(VideoFormat::Hevc),
+            "mpeg2video" => Some(VideoFormat::Mpeg2Video),
+            "vc1" => Some(VideoFormat::Vc1),
+            "vp8" => Some(VideoFormat::Vp8),
+            "vp9" => Some(VideoFormat::Vp9),
+            _ => None,
+        };
+        format.is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+    }
+
+    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        self.capabilities.can_encode(format, bit_depth)
     }
 
     fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {

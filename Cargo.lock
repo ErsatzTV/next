@@ -378,6 +378,7 @@ name = "ffpipeline"
 version = "0.1.0"
 dependencies = [
  "dyn-clone",
+ "libnvidia-sys",
  "libva-sys",
  "libvpl-sys",
  "log",
@@ -649,6 +650,23 @@ name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+
+[[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libnvidia-sys"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+]
 
 [[package]]
 name = "libredox"

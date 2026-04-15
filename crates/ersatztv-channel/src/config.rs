@@ -121,9 +121,21 @@ impl HardwareAccel {
         channel_config: &ChannelConfig,
     ) -> Option<ffpipeline::hw_accel::HardwareAccel> {
         match self {
-            HardwareAccel::Cuda => Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
-                ffpipeline::accel::cuda::Cuda,
-            )),
+            HardwareAccel::Cuda => {
+                let capabilities = ffpipeline::capabilities::nvidia::NvidiaCapabilities::probe();
+                match capabilities {
+                    Ok(capabilities) => {
+                        log::debug!("detected NVIDIA capabilities: {:?}", capabilities);
+                        Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
+                            ffpipeline::accel::cuda::Cuda { capabilities },
+                        ))
+                    }
+                    Err(e) => {
+                        log::error!("failed to probe NVIDIA capabilities: {}", e);
+                        None
+                    }
+                }
+            }
             HardwareAccel::Qsv => {
                 let capabilities = ffpipeline::capabilities::qsv::QsvCapabilities::probe();
                 match capabilities {

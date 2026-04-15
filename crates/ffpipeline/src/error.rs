@@ -16,4 +16,6 @@ pub enum FFPipelineError {
     VaapiCapabilitiesError(String),
     #[error("error detecting qsv capabilities: {0}")]
     QsvCapabilitiesError(String),
+    #[error("error detecting nvidia capabilities: {0}")]
+    NvidiaCapabilitiesError(String),
 }
