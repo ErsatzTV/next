@@ -82,7 +82,7 @@ impl PlaylistManager {
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
             let generated_playlist = self.generate_playlist(None)?;
-            let temp = tempfile::NamedTempFile::new()?;
+            let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
             tokio::fs::write(temp.path(), generated_playlist).await?;
             tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file).await?;
         }
@@ -159,7 +159,7 @@ impl PlaylistManager {
 
         // generate and atomically save playlist
         let generated_playlist = self.generate_playlist(Some(10))?;
-        let temp = tempfile::NamedTempFile::new()?;
+        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
         tokio::fs::write(temp.path(), generated_playlist).await?;
         tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
 
