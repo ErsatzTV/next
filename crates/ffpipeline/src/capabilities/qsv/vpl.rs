@@ -15,8 +15,11 @@ impl QsvCapabilities {
         let mut supported_decoders = HashSet::new();
         let mut supported_encoders = HashSet::new();
 
+        let vpl = VplLib::load()
+            .map_err(|e| FFPipelineError::QsvCapabilitiesError(format!("libvpl not found: {e}")))?;
+
         unsafe {
-            let loader = MFXLoad();
+            let loader = (vpl.MFXLoad)();
             if loader.is_null() {
                 return Err(FFPipelineError::QsvCapabilitiesError(
                     "MFXLoad failed".into(),
@@ -24,7 +27,7 @@ impl QsvCapabilities {
             }
 
             // filter for hardware implementations only
-            let config = MFXCreateConfig(loader);
+            let config = (vpl.MFXCreateConfig)(loader);
             if !config.is_null() {
                 let variant = mfxVariant {
                     Version: 0,
@@ -34,13 +37,13 @@ impl QsvCapabilities {
                     },
                 };
                 let name = b"mfxImplDescription.Impl\0";
-                MFXSetConfigFilterProperty(config, name.as_ptr(), variant);
+                (vpl.MFXSetConfigFilterProperty)(config, name.as_ptr(), variant);
             }
 
             // request the implementation description struct from the first matching impl
             let mut hdl: mfxHDL = std::ptr::null_mut();
             let status =
-                MFXEnumImplementations(loader, 0, MFX_IMPLCAPS_IMPLDESCSTRUCTURE, &mut hdl);
+                (vpl.MFXEnumImplementations)(loader, 0, MFX_IMPLCAPS_IMPLDESCSTRUCTURE, &mut hdl);
 
             if status == MFX_ERR_NONE && !hdl.is_null() {
                 // dec and enc are embedded at fixed offsets inside mfxImplDescription
@@ -84,10 +87,10 @@ impl QsvCapabilities {
                     }
                 }
 
-                MFXDispReleaseImplDescription(loader, hdl);
+                (vpl.MFXDispReleaseImplDescription)(loader, hdl);
             }
 
-            MFXUnload(loader);
+            (vpl.MFXUnload)(loader);
         }
 
         Ok(QsvCapabilities {

@@ -2,32 +2,44 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use libloading::Library;
+
 use crate::*;
 
-unsafe extern "C" {
-    pub fn MFXLoad() -> mfxLoader;
+pub struct VplLib {
+    _lib: Library,
+    pub MFXLoad: unsafe extern "C" fn() -> mfxLoader,
+    pub MFXCreateConfig: unsafe extern "C" fn(mfxLoader) -> mfxConfig,
+    pub MFXSetConfigFilterProperty:
+        unsafe extern "C" fn(mfxConfig, *const u8, mfxVariant) -> mfxStatus,
+    pub MFXEnumImplementations: unsafe extern "C" fn(mfxLoader, u32, u32, *mut mfxHDL) -> mfxStatus,
+    pub MFXDispReleaseImplDescription: unsafe extern "C" fn(mfxLoader, mfxHDL) -> mfxStatus,
+    pub MFXUnload: unsafe extern "C" fn(mfxLoader),
+}
 
-    pub fn MFXCreateConfig(loader: mfxLoader) -> mfxConfig;
-    pub fn MFXSetConfigFilterProperty(
-        config: mfxConfig,
-        name: *const u8, // null-terminated string
-        value: mfxVariant,
-    ) -> mfxStatus;
-
-    /// Enumerate available implementations and return capability descriptions.
-    ///
-    /// Pass `MFX_IMPLCAPS_IMPLDESCSTRUCTURE` as `format` to get a pointer to
-    /// `mfxImplDescription` back via `desc`. The caller must release it with
-    /// `MFXDispReleaseImplDescription` when done.
-    pub fn MFXEnumImplementations(
-        loader: mfxLoader,
-        index: u32,
-        format: u32, // mfxImplCapsDeliveryFormat
-        desc: *mut mfxHDL,
-    ) -> mfxStatus;
-
-    /// Release a capability description handle returned by `MFXEnumImplementations`.
-    pub fn MFXDispReleaseImplDescription(loader: mfxLoader, hdl: mfxHDL) -> mfxStatus;
-
-    pub fn MFXUnload(loader: mfxLoader);
+impl VplLib {
+    pub fn load() -> Result<Self, libloading::Error> {
+        #[cfg(target_os = "linux")]
+        let name = "libvpl.so.2";
+        #[cfg(target_os = "windows")]
+        let name = "vpl.dll";
+        unsafe {
+            let lib = Library::new(name)?;
+            let MFXLoad = *lib.get(b"MFXLoad\0")?;
+            let MFXCreateConfig = *lib.get(b"MFXCreateConfig\0")?;
+            let MFXSetConfigFilterProperty = *lib.get(b"MFXSetConfigFilterProperty\0")?;
+            let MFXEnumImplementations = *lib.get(b"MFXEnumImplementations\0")?;
+            let MFXDispReleaseImplDescription = *lib.get(b"MFXDispReleaseImplDescription\0")?;
+            let MFXUnload = *lib.get(b"MFXUnload\0")?;
+            Ok(Self {
+                _lib: lib,
+                MFXLoad,
+                MFXCreateConfig,
+                MFXSetConfigFilterProperty,
+                MFXEnumImplementations,
+                MFXDispReleaseImplDescription,
+                MFXUnload,
+            })
+        }
+    }
 }

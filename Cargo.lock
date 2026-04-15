@@ -691,7 +691,7 @@ dependencies = [
 name = "libvpl-sys"
 version = "0.1.0"
 dependencies = [
- "pkg-config",
+ "libloading",
 ]
 
 [[package]]

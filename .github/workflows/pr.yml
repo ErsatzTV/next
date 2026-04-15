@@ -27,7 +27,7 @@ jobs:
       - name: Install development headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libva-dev libvpl-dev
+          sudo apt-get install -y libva-dev
 
       - run: cargo +nightly fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
@@ -59,24 +59,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install oneVPL (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          git clone --depth 1 https://github.com/intel/libvpl.git C:\libvpl-src
-          cmake -S C:\libvpl-src -B C:\libvpl-build -DCMAKE_INSTALL_PREFIX=C:\libvpl -DBUILD_TESTS=OFF
-          cmake --build C:\libvpl-build --config Release
-          cmake --install C:\libvpl-build --config Release
-          echo "VPL_DIR=C:\libvpl" >> $env:GITHUB_ENV
-
       - name: Install cross-compilation tools
         if: runner.os == 'Linux'
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
-          # Only install libvpl-dev on x86_64 Linux
-          package: >-
-            libva-dev
-            ${{ matrix.target == 'linux-x64' && 'libvpl-dev' || '' }}
+          package: libva-dev
 
       - name: Build
         run: cargo build --locked --workspace --all-features --target ${{ matrix.rust_target }}
