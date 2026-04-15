@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -17,9 +17,7 @@ struct PlayoutChannel {
 }
 
 #[derive(FromRow)]
-struct RawPlayoutItem {
-    #[sqlx(rename = "MediaItemId")]
-    media_item_id: i32,
+struct PlayoutItemWithPath {
     #[sqlx(rename = "InPoint")]
     in_point: Option<String>,
     #[sqlx(rename = "OutPoint")]
@@ -28,10 +26,6 @@ struct RawPlayoutItem {
     start: OffsetDateTime,
     #[sqlx(rename = "Finish")]
     finish: OffsetDateTime,
-}
-
-#[derive(FromRow)]
-struct LocalPath {
     #[sqlx(rename = "Path")]
     path: String,
 }
@@ -56,50 +50,37 @@ pub async fn sync_playout(
         database
     );
 
-    let playout_items = sqlx::query_as::<_, RawPlayoutItem>(
-        "SELECT MediaItemId, InPoint, OutPoint, Start, Finish FROM PlayoutItem WHERE PlayoutId = ?",
+    let items_with_paths = sqlx::query_as::<_, PlayoutItemWithPath>(
+        "SELECT
+        PI.InPoint, PI.OutPoint, PI.Start, PI.Finish, MF.Path
+    FROM PlayoutItem PI
+    INNER JOIN MediaVersion MV ON
+        PI.MediaItemId = MV.MovieId OR
+        PI.MediaItemId = MV.EpisodeId OR
+        PI.MediaItemId = MV.MusicVideoId OR
+        PI.MediaItemId = MV.OtherVideoId
+    INNER JOIN MediaFile MF ON MV.Id = MF.MediaVersionId
+    INNER JOIN LibraryFolder LF on MF.LibraryFolderId = LF.Id
+    INNER JOIN LibraryPath LP on LF.LibraryPathId = LP.Id
+    INNER JOIN LocalLibrary L on LP.LibraryId = L.Id
+    WHERE PI.PlayoutId = ?",
     )
     .bind(playout.id)
     .fetch_all(&pool)
     .await?;
 
-    log::debug!("found {} playout items", playout_items.len());
-
-    let mut path_cache: HashMap<i32, String> = HashMap::new();
+    log::debug!("found {} playout items", items_with_paths.len());
 
     let mut items: Vec<PlayoutItem> = Vec::new();
-    for db_playout_item in playout_items {
-        if let std::collections::hash_map::Entry::Vacant(e) =
-            path_cache.entry(db_playout_item.media_item_id)
-            && let Ok(path) = sqlx::query_as::<_, LocalPath>(
-                "SELECT MF.Path
-FROM MediaFile MF
-INNER JOIN MediaVersion MV on MF.MediaVersionId = MV.Id
-INNER JOIN LibraryFolder LF on MF.LibraryFolderId = LF.Id
-INNER JOIN LibraryPath LP on LF.LibraryPathId = LP.Id
-INNER JOIN LocalLibrary L on LP.LibraryId = L.Id
-WHERE ? IN (MV.MovieId, MV.EpisodeId, MV.MusicVideoId, MV.OtherVideoId)",
-            )
-            .bind(db_playout_item.media_item_id)
-            .fetch_one(&pool)
-            .await
-        {
-            e.insert(path.path);
-        }
-
-        if let Some(path) = path_cache.get(&db_playout_item.media_item_id)
-            && let Ok(playout_item) = PlayoutItem::new(
-                uuid::Uuid::new_v4().to_string(),
-                db_playout_item.start,
-                db_playout_item.finish,
-                db_playout_item.in_point.as_deref().and_then(parse_duration),
-                db_playout_item
-                    .out_point
-                    .as_deref()
-                    .and_then(parse_duration),
-                Path::new(&path),
-            )
-        {
+    for item in items_with_paths {
+        if let Ok(playout_item) = PlayoutItem::new(
+            uuid::Uuid::new_v4().to_string(),
+            item.start,
+            item.finish,
+            item.in_point.as_deref().and_then(parse_duration),
+            item.out_point.as_deref().and_then(parse_duration),
+            Path::new(&item.path),
+        ) {
             items.push(playout_item);
         }
     }
