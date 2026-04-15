@@ -1,0 +1,141 @@
+name: Build & Publish to Docker Hub
+on:
+  workflow_call:
+    inputs:
+      base_version:
+        description: 'Base version (latest or develop)'
+        required: true
+        type: string
+      info_version:
+        description: 'Informational version number (e.g. 0.3.7-alpha)'
+        required: true
+        type: string
+      tag_version:
+        description: 'Docker tag version (e.g. v0.3.7)'
+        required: true
+        type: string
+    secrets:
+      docker_hub_username:
+        required: true
+      docker_hub_access_token:
+        required: true
+jobs:
+  build_images:
+    name: Build ${{ matrix.name }} image
+    runs-on: ${{ matrix.os }}
+    if: contains(github.event.head_commit.message, '[no build]') == false
+    strategy:
+      matrix:
+        include:
+          - name: amd64
+            os: ubuntu-latest
+            path: ''
+            suffix: '-amd64'
+            platform: 'linux/amd64'
+          # - name: arm32v7
+          #   os: ubuntu-latest
+          #   path: 'arm32v7/'
+          #   suffix: '-arm'
+          #   platform: 'linux/arm/v7'
+          # - name: arm64
+          #   os: ubuntu-24.04-arm
+          #   path: 'arm64/'
+          #   suffix: '-arm64'
+          #   platform: 'linux/arm64'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # - name: Set up QEMU
+      #   if: ${{ matrix.name == 'arm32v7' }}
+      #   uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.docker_hub_username }}
+          password: ${{ secrets.docker_hub_access_token }}
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/${{ matrix.path }}Dockerfile
+          push: true
+          provenance: false
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            INFO_VERSION=${{ inputs.info_version }}-docker${{ matrix.suffix }}
+          outputs: |
+            type=image,name=ersatztv/next,name-canonical=true,push-by-digest=true
+            type=image,name=ghcr.io/ersatztv/next,name-canonical=true,push-by-digest=true
+
+      - name: Save Digest to Artifact
+        run: echo ${{ steps.build.outputs.digest }} > digest.txt
+
+      - name: Upload Digest Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: digest-${{ matrix.name }}
+          path: digest.txt
+
+  merge_manifests:
+    name: Merge Manifests
+    runs-on: ubuntu-latest
+    needs: build_images
+    steps:
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.docker_hub_username }}
+          password: ${{ secrets.docker_hub_access_token }}
+
+      - name: Log in to the Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download All Digest Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: digests/
+
+      - name: Read Digests From Artifacts
+        id: digests
+        run: |
+          AMD64_HASH=$(cat digests/digest-amd64/digest.txt)
+          # ARM32V7_HASH=$(cat digests/digest-arm32v7/digest.txt)
+          # ARM64_HASH=$(cat digests/digest-arm64/digest.txt)
+
+          DOCKER_HUB_DIGESTS="ersatztv/next@${AMD64_HASH}"
+          GHCR_DIGESTS="ghcr.io/ersatztv/next@${AMD64_HASH}"
+
+          echo "docker_hub_digests=${DOCKER_HUB_DIGESTS}" >> $GITHUB_OUTPUT
+          echo "ghcr_digests=${GHCR_DIGESTS}" >> $GITHUB_OUTPUT
+
+      - name: Create and Push Manifests
+        run: |
+          docker manifest create ersatztv/next:${{ inputs.base_version }} ${{ steps.digests.outputs.docker_hub_digests }}
+          docker manifest push ersatztv/next:${{ inputs.base_version }}
+          docker manifest create ersatztv/next:${{ inputs.tag_version }} ${{ steps.digests.outputs.docker_hub_digests }}
+          docker manifest push ersatztv/next:${{ inputs.tag_version }}
+
+          docker manifest create ghcr.io/ersatztv/next:${{ inputs.base_version }} ${{ steps.digests.outputs.ghcr_digests }}
+          docker manifest push ghcr.io/ersatztv/next:${{ inputs.base_version }}
+          docker manifest create ghcr.io/ersatztv/next:${{ inputs.tag_version }} ${{ steps.digests.outputs.ghcr_digests }}
+          docker manifest push ghcr.io/ersatztv/next:${{ inputs.tag_version }}

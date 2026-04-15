@@ -12,19 +12,29 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Extract artifacts version
+      - name: Extract Docker Tag
+        shell: bash
+        run: |
+          tag=$(git describe --tags --abbrev=0)
+          tag2="${tag:1}"
+          short=$(git rev-parse --short HEAD)
+          final="${tag2}-${short}"
+          echo "git_tag=${final}" >> $GITHUB_ENV
+      - name: Extract Artifacts Version
         shell: bash
         run: |
           tag=$(git describe --tags --abbrev=0)
           short=$(git rev-parse --short HEAD)
           final="${tag}-${short}"
-          echo "ARTIFACTS_VERSION=${final}" >> $GITHUB_ENV
-          echo "INFO_VERSION=${tag:1}" >> $GITHUB_ENV
+          echo "artifacts_version=${final}" >> $GITHUB_ENV
+          echo "info_version=${tag:1}" >> $GITHUB_ENV
     outputs:
-      artifacts_version: ${{ env.ARTIFACTS_VERSION }}
-      info_version: ${{ env.INFO_VERSION }}
+      git_tag: ${{ env.git_tag }}
+      artifacts_version: ${{ env.artifacts_version }}
+      info_version: ${{ env.info_version }}
 
   build_and_upload:
+    name: Build and Upload Artifacts
     uses: ersatztv/next/.github/workflows/artifacts.yml@main
     needs: calculate_version
     with:
@@ -40,3 +50,15 @@ jobs:
       azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
       azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
       azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  build_images:
+    name: Build and Publish Docker Images
+    uses: ersatztv/next/.github/workflows/docker.yml@main
+    needs: calculate_version
+    with:
+      base_version: develop
+      info_version: ${{ needs.calculate_version.outputs.git_tag }}
+      tag_version: ${{ github.sha }}
+    secrets:
+      docker_hub_username: ${{ secrets.DOCKER_HUB_USERNAME }}
+      docker_hub_access_token: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}

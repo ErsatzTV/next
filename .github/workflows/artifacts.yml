@@ -50,14 +50,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - run: rustup update stable
-      - run: rustup update nightly
-      - run: rustup show active-toolchain
-      - run: rustup component add clippy
-      - run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
+      - name: Update Rust
+        run: rustup update stable
+      - name: Update Nightly Rust
+        run: rustup update nightly
+      - name: Show Toolchain
+        run: rustup show active-toolchain
+      - name: Add Clippy
+        run: rustup component add clippy
+      - name: Add Rustfmt
+        run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
 
-      - run: cargo +nightly fmt --all -- --check
-      - run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
+      - name: Check Formatting
+        run: cargo +nightly fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
   build:
     name: Build
@@ -95,12 +102,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - run: rustup update stable
-      - run: rustup show active-toolchain
+      - name: Update Rust
+        run: rustup update stable
+      - name: Show Toolchain
+        run: rustup show active-toolchain
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cross-compilation tools
+      - name: Install Cross-Compilation Tools
         if: runner.os == 'Linux'
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
@@ -156,7 +165,7 @@ jobs:
           # Delete output directory
           rm -r "$release_name"
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.target }}
@@ -180,7 +189,7 @@ jobs:
           - target: linux-arm64
             archive_ext: .tar.gz
     steps:
-      - name: Download artifact
+      - name: Download Artifact
         uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.target }}
