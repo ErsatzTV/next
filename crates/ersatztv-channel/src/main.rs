@@ -71,12 +71,11 @@ async fn run() -> Result<(), ChannelError> {
 
             log::debug!("{:?}", channel_config);
 
-            let default_ffmpeg_path = Path::new("ffmpeg").to_path_buf();
             let ffmpeg_path = channel_config
                 .ffmpeg
                 .ffmpeg_path
-                .as_ref()
-                .unwrap_or(&default_ffmpeg_path);
+                .as_deref()
+                .unwrap_or(Path::new("ffmpeg"));
             let ffmpeg_info =
                 FfmpegInfo::load(ffmpeg_path, &channel_config.ffmpeg.disabled_filters).await?;
 
