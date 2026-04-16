@@ -16,6 +16,7 @@ resolver = "3"
 axum = "0.8"
 clap = { version = "4.6", features = ["derive"] }
 dyn-clone = "1.0"
+enum_dispatch = "0.3.13"
 env_logger = "0.11"
 ersatztv-core = { path = "crates/ersatztv-core" }
 ersatztv-playout = { path = "crates/ersatztv-playout" }
