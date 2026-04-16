@@ -6,7 +6,7 @@ use time::OffsetDateTime;
 
 use crate::error::ChannelError;
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct ChannelConfig {
     pub playout: PlayoutConfig,
     pub ffmpeg: FfmpegConfig,
@@ -22,14 +22,14 @@ pub struct ChannelConfig {
     number: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct PlayoutConfig {
     pub folder: String,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub virtual_start: Option<OffsetDateTime>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct FfmpegConfig {
     pub ffmpeg_path: Option<PathBuf>,
     pub ffprobe_path: Option<PathBuf>,
@@ -37,13 +37,13 @@ pub struct FfmpegConfig {
     pub disabled_filters: Vec<String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct NormalizationConfig {
     pub audio: AudioNormalizationConfig,
     pub video: VideoNormalizationConfig,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct AudioNormalizationConfig {
     pub format: Option<AudioFormat>,
     pub bitrate_kbps: Option<u32>,
@@ -51,7 +51,7 @@ pub struct AudioNormalizationConfig {
     pub channels: Option<u32>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     Aac,
@@ -67,7 +67,7 @@ impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct VideoNormalizationConfig {
     pub format: Option<VideoFormat>,
     #[serde(default, deserialize_with = "deserialize_bit_depth")]
@@ -81,7 +81,7 @@ pub struct VideoNormalizationConfig {
     pub vaapi_driver: Option<VaapiDriver>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum VaapiDriver {
     Ihd,
@@ -99,14 +99,14 @@ impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum VideoFormat {
     H264,
     Hevc,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum HardwareAccel {
     Cuda,

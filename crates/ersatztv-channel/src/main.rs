@@ -5,9 +5,10 @@ mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
 use crate::config::ChannelConfig;
@@ -16,11 +17,22 @@ use crate::error::ChannelError;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    config_path: PathBuf,
-    #[arg(short, long)]
-    output_folder: PathBuf,
-    #[arg(short, long)]
-    number: String,
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Print debug information using the provided configuration
+    Debug { config_path: PathBuf },
+    /// Run the channel using the provided configuration
+    Run {
+        config_path: PathBuf,
+        #[arg(short, long)]
+        output_folder: PathBuf,
+        #[arg(short, long)]
+        number: String,
+    },
 }
 
 #[tokio::main]
@@ -40,11 +52,41 @@ pub async fn main() {
 async fn run() -> Result<(), ChannelError> {
     let args = Args::parse();
 
-    // load channel config
-    let channel_config =
-        ChannelConfig::from_file(&args.config_path, &args.output_folder, &args.number).await?;
+    match args.command {
+        Commands::Run {
+            config_path,
+            output_folder,
+            number,
+        } => {
+            let channel_config =
+                ChannelConfig::from_file(&config_path, &output_folder, &number).await?;
 
-    // start channel session
-    let mut channel_session = ChannelSession::new(channel_config)?;
-    channel_session.run().await
+            // start channel session
+            let mut channel_session = ChannelSession::new(channel_config)?;
+            channel_session.run().await
+        }
+        Commands::Debug { config_path } => {
+            let channel_config =
+                ChannelConfig::from_file(&config_path, &std::env::temp_dir(), "debug").await?;
+
+            log::debug!("{:?}", channel_config);
+
+            let default_ffmpeg_path = Path::new("ffmpeg").to_path_buf();
+            let ffmpeg_path = channel_config
+                .ffmpeg
+                .ffmpeg_path
+                .as_ref()
+                .unwrap_or(&default_ffmpeg_path);
+            let ffmpeg_info =
+                FfmpegInfo::load(ffmpeg_path, &channel_config.ffmpeg.disabled_filters).await?;
+
+            log::debug!("{:?}", ffmpeg_info);
+
+            if let Some(accel) = &channel_config.normalization.video.accel {
+                let _ = accel.to_pipeline(&channel_config);
+            }
+
+            Ok(())
+        }
+    }
 }
