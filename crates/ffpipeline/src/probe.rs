@@ -144,14 +144,19 @@ pub async fn probe_lavfi(
     ffmpeg_path: &std::path::Path,
     lavfi: &str,
 ) -> Result<ProbeResult, FFPipelineError> {
-    let mut ffmpeg = std::process::Command::new(ffmpeg_path)
+    let mut ffmpeg = Command::new(ffmpeg_path)
         .args(["-f", "lavfi", "-i", lavfi, "-t", "1", "-f", "nut", "pipe:1"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| FFPipelineError::ProbeFailed)?;
 
-    let ffmpeg_stdout = ffmpeg.stdout.take().ok_or(FFPipelineError::ProbeFailed)?;
+    let ffmpeg_stdout: std::process::Stdio = ffmpeg
+        .stdout
+        .take()
+        .ok_or(FFPipelineError::ProbeFailed)?
+        .try_into()
+        .map_err(|_| FFPipelineError::ProbeFailed)?;
 
     let output = Command::new(ffprobe_path)
         .args([
@@ -171,7 +176,7 @@ pub async fn probe_lavfi(
         .await
         .map_err(|_| FFPipelineError::ProbeFailed)?;
 
-    let _ = ffmpeg.wait();
+    let _ = ffmpeg.wait().await;
 
     if !output.status.success() {
         return Err(FFPipelineError::ProbeFailed);
