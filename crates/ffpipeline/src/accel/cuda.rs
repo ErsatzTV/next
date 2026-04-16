@@ -62,13 +62,21 @@ impl HwAccel for Cuda {
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 is_hardware: true,
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
-                codec_name: "hevc_nvenc",
-                options: &[],
-                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
-            }),
+            VideoFormat::Hevc => {
+                let options = if self.capabilities.b_frame_ref_mode(format) {
+                    &["-tag:v", "hvc1", "-b_ref_mode", "1"]
+                } else {
+                    &["-tag:v", "hvc1", "-b_ref_mode", "0"]
+                };
+
+                Some(VideoCodec {
+                    codec_name: "hevc_nvenc",
+                    options,
+                    preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                    preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                    is_hardware: true,
+                })
+            }
             _ => None,
         }
     }

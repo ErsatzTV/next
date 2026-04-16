@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::c_void;
 
 use libnvidia_sys::cuda::{CUDA_SUCCESS, CudaLib};
@@ -8,20 +8,21 @@ use libnvidia_sys::cuvid::{
     CUDA_VIDEO_CODEC_VP9, CuvidDecodeCaps, CuvidLib,
 };
 use libnvidia_sys::nvenc::{
-    NV_ENC_CODEC_H264_GUID, NV_ENC_CODEC_HEVC_GUID, NV_ENC_DEVICE_TYPE_CUDA,
-    NV_ENC_HEVC_PROFILE_MAIN10_GUID, NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER, NV_ENC_SUCCESS,
-    NV_ENCODE_API_FUNCTION_LIST_VER, NVENCAPI_VERSION, NvEncApiFunctionList, NvEncGuid,
+    NV_ENC_CAPS_PARAM_VER, NV_ENC_CAPS_SUPPORT_10_BIT_ENCODE, NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE,
+    NV_ENC_CODEC_AV1_GUID, NV_ENC_CODEC_H264_GUID, NV_ENC_CODEC_HEVC_GUID, NV_ENC_DEVICE_TYPE_CUDA,
+    NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER, NV_ENC_SUCCESS, NV_ENCODE_API_FUNCTION_LIST_VER,
+    NVENCAPI_VERSION, NvEncApiFunctionList, NvEncCapsParam, NvEncGuid,
     NvEncOpenEncodeSessionExParams, NvencLib,
 };
 
-use crate::capabilities::nvidia::NvidiaCapabilities;
+use crate::capabilities::nvidia::{EncoderCapability, NvidiaCapabilities};
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
 
 impl NvidiaCapabilities {
     pub fn probe() -> Result<NvidiaCapabilities, FFPipelineError> {
-        let mut supported_decoders = HashSet::new();
-        let mut supported_encoders = HashSet::new();
+        let mut supported_decoders = HashMap::new();
+        let mut supported_encoders = HashMap::new();
 
         let cuda = CudaLib::load().map_err(|e| {
             FFPipelineError::NvidiaCapabilitiesError(format!("failed to load libcuda: {e}"))
@@ -70,19 +71,19 @@ impl NvidiaCapabilities {
     }
 }
 
-unsafe fn probe_decode(cuvid: &CuvidLib, supported: &mut HashSet<(VideoFormat, u8)>) {
+unsafe fn probe_decode(cuvid: &CuvidLib, supported: &mut HashMap<VideoFormat, Vec<u8>>) {
     unsafe {
-        const CODECS: &[(VideoFormat, u32, bool)] = &[
-            (VideoFormat::H264, CUDA_VIDEO_CODEC_H264, true),
-            (VideoFormat::Hevc, CUDA_VIDEO_CODEC_HEVC, true),
-            (VideoFormat::Mpeg2Video, CUDA_VIDEO_CODEC_MPEG2, false),
-            (VideoFormat::Vc1, CUDA_VIDEO_CODEC_VC1, false),
-            (VideoFormat::Vp8, CUDA_VIDEO_CODEC_VP8, false),
-            (VideoFormat::Vp9, CUDA_VIDEO_CODEC_VP9, true),
-            (VideoFormat::Av1, CUDA_VIDEO_CODEC_AV1, true),
+        const CODECS: &[(VideoFormat, u32)] = &[
+            (VideoFormat::H264, CUDA_VIDEO_CODEC_H264),
+            (VideoFormat::Hevc, CUDA_VIDEO_CODEC_HEVC),
+            (VideoFormat::Mpeg2Video, CUDA_VIDEO_CODEC_MPEG2),
+            (VideoFormat::Vc1, CUDA_VIDEO_CODEC_VC1),
+            (VideoFormat::Vp8, CUDA_VIDEO_CODEC_VP8),
+            (VideoFormat::Vp9, CUDA_VIDEO_CODEC_VP9),
+            (VideoFormat::Av1, CUDA_VIDEO_CODEC_AV1),
         ];
 
-        for &(format, codec, supports_10bit) in CODECS {
+        for &(format, codec) in CODECS {
             let mut caps = CuvidDecodeCaps {
                 e_codec_type: codec,
                 e_chroma_format: CUDA_VIDEO_CHROMA_FORMAT_420,
@@ -91,20 +92,18 @@ unsafe fn probe_decode(cuvid: &CuvidLib, supported: &mut HashSet<(VideoFormat, u
             };
             if (cuvid.cuvid_get_decoder_caps)(&mut caps) == CUDA_SUCCESS && caps.b_is_supported != 0
             {
-                supported.insert((format, 8));
-
-                if supports_10bit {
-                    let mut caps10 = CuvidDecodeCaps {
-                        e_codec_type: codec,
-                        e_chroma_format: CUDA_VIDEO_CHROMA_FORMAT_420,
-                        n_bit_depth_minus8: 2,
-                        ..CuvidDecodeCaps::default()
-                    };
-                    if (cuvid.cuvid_get_decoder_caps)(&mut caps10) == CUDA_SUCCESS
-                        && caps10.b_is_supported != 0
-                    {
-                        supported.insert((format, 10));
-                    }
+                let mut caps10 = CuvidDecodeCaps {
+                    e_codec_type: codec,
+                    e_chroma_format: CUDA_VIDEO_CHROMA_FORMAT_420,
+                    n_bit_depth_minus8: 2,
+                    ..CuvidDecodeCaps::default()
+                };
+                if (cuvid.cuvid_get_decoder_caps)(&mut caps10) == CUDA_SUCCESS
+                    && caps10.b_is_supported != 0
+                {
+                    supported.insert(format, vec![8, 10]);
+                } else {
+                    supported.insert(format, vec![8]);
                 }
             }
         }
@@ -114,7 +113,7 @@ unsafe fn probe_decode(cuvid: &CuvidLib, supported: &mut HashSet<(VideoFormat, u
 unsafe fn probe_encode(
     nvenc: &NvencLib,
     ctx: *mut c_void,
-    supported: &mut HashSet<(VideoFormat, u8)>,
+    supported: &mut HashMap<VideoFormat, EncoderCapability>,
 ) {
     unsafe {
         let mut fn_list = NvEncApiFunctionList {
@@ -134,10 +133,14 @@ unsafe fn probe_encode(
         let Some(get_guids) = fn_list.nv_enc_get_encode_guids else {
             return;
         };
-        let Some(get_profile_count) = fn_list.nv_enc_get_encode_profile_guid_count else {
+        // TODO: get encode profile list and store in capabilities
+        let Some(_get_profile_count) = fn_list.nv_enc_get_encode_profile_guid_count else {
             return;
         };
-        let Some(get_profiles) = fn_list.nv_enc_get_encode_profile_guids else {
+        let Some(_get_profiles) = fn_list.nv_enc_get_encode_profile_guids else {
+            return;
+        };
+        let Some(get_encode_caps) = fn_list.nv_enc_get_encode_caps else {
             return;
         };
         let Some(destroy) = fn_list.nv_enc_destroy_encoder else {
@@ -174,15 +177,38 @@ unsafe fn probe_encode(
             let mut actual = 0u32;
             if get_guids(encoder, guids.as_mut_ptr(), count, &mut actual) == NV_ENC_SUCCESS {
                 for &guid in &guids[..actual.min(count) as usize] {
-                    if guid == NV_ENC_CODEC_H264_GUID {
-                        supported.insert((VideoFormat::H264, 8));
-                    } else if guid == NV_ENC_CODEC_HEVC_GUID {
-                        supported.insert((VideoFormat::Hevc, 8));
-                        // Check whether the driver exposes the Main10 profile
-                        if hevc_supports_main10(encoder, get_profile_count, get_profiles) {
-                            supported.insert((VideoFormat::Hevc, 10));
-                        }
-                    }
+                    if let Some(format) = match guid {
+                        NV_ENC_CODEC_H264_GUID => Some(VideoFormat::H264),
+                        NV_ENC_CODEC_HEVC_GUID => Some(VideoFormat::Hevc),
+                        NV_ENC_CODEC_AV1_GUID => Some(VideoFormat::Av1),
+                        _ => None,
+                    } {
+                        let bit_depths = if query_cap(
+                            encoder,
+                            guid,
+                            NV_ENC_CAPS_SUPPORT_10_BIT_ENCODE,
+                            get_encode_caps,
+                        ) {
+                            vec![8, 10]
+                        } else {
+                            vec![8]
+                        };
+
+                        let b_frame_ref_mode = query_cap(
+                            encoder,
+                            guid,
+                            NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE,
+                            get_encode_caps,
+                        );
+
+                        supported.insert(
+                            format,
+                            EncoderCapability {
+                                bit_depths,
+                                b_frame_ref_mode,
+                            },
+                        );
+                    };
                 }
             }
         }
@@ -191,34 +217,25 @@ unsafe fn probe_encode(
     }
 }
 
-unsafe fn hevc_supports_main10(
+unsafe fn query_cap(
     encoder: *mut c_void,
-    get_count: unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut u32) -> i32,
-    get_profiles: unsafe extern "C" fn(
+    guid: NvEncGuid,
+    caps_to_query: u32,
+    get_encode_caps: unsafe extern "C" fn(
         *mut c_void,
         NvEncGuid,
-        *mut NvEncGuid,
-        u32,
-        *mut u32,
+        *mut NvEncCapsParam,
+        *mut i32,
     ) -> i32,
 ) -> bool {
     unsafe {
-        let mut count = 0u32;
-        if get_count(encoder, NV_ENC_CODEC_HEVC_GUID, &mut count) != NV_ENC_SUCCESS || count == 0 {
-            return false;
-        }
-        let mut profiles = vec![NvEncGuid::default(); count as usize];
-        let mut actual = 0u32;
-        if get_profiles(
-            encoder,
-            NV_ENC_CODEC_HEVC_GUID,
-            profiles.as_mut_ptr(),
-            count,
-            &mut actual,
-        ) != NV_ENC_SUCCESS
-        {
-            return false;
-        }
-        profiles[..actual.min(count) as usize].contains(&NV_ENC_HEVC_PROFILE_MAIN10_GUID)
+        let mut param = NvEncCapsParam {
+            version: NV_ENC_CAPS_PARAM_VER,
+            caps_to_query,
+            reserved: [0u32; 62],
+        };
+
+        let mut caps_val: i32 = 0;
+        get_encode_caps(encoder, guid, &mut param, &mut caps_val) == NV_ENC_SUCCESS && caps_val > 0
     }
 }

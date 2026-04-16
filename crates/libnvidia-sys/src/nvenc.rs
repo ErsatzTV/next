@@ -13,6 +13,10 @@ const fn nvencapi_struct_version(ver: u32) -> u32 {
 pub const NV_ENCODE_API_FUNCTION_LIST_VER: u32 = nvencapi_struct_version(2);
 pub const NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER: u32 = nvencapi_struct_version(1);
 
+pub const NV_ENC_CAPS_PARAM_VER: u32 = nvencapi_struct_version(1);
+pub const NV_ENC_CAPS_SUPPORT_10_BIT_ENCODE: u32 = 39;
+pub const NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE: u32 = 43;
+
 pub const NV_ENC_DEVICE_TYPE_CUDA: u32 = 1;
 pub const NV_ENC_SUCCESS: i32 = 0;
 
@@ -39,11 +43,11 @@ pub const NV_ENC_CODEC_HEVC_GUID: NvEncGuid = NvEncGuid {
     data4: [0x94, 0x25, 0xbd, 0xa9, 0x97, 0x5f, 0x76, 0x03],
 };
 
-pub const NV_ENC_HEVC_PROFILE_MAIN10_GUID: NvEncGuid = NvEncGuid {
-    data1: 0xfa4d2b6c,
-    data2: 0x3a5b,
-    data3: 0x411a,
-    data4: [0x80, 0x18, 0x0a, 0x3f, 0x5e, 0x3c, 0x9b, 0xe5],
+pub const NV_ENC_CODEC_AV1_GUID: NvEncGuid = NvEncGuid {
+    data1: 0x0A352289,
+    data2: 0x0AA7,
+    data3: 0x4759,
+    data4: [0x86, 0x2D, 0x5D, 0x15, 0xCD, 0x16, 0xD2, 0x54],
 };
 
 #[repr(C)]
@@ -58,7 +62,10 @@ pub struct NvEncApiFunctionList {
         Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut NvEncGuid, u32, *mut u32) -> i32>,
     pub nv_enc_get_encode_guids:
         Option<unsafe extern "C" fn(*mut c_void, *mut NvEncGuid, u32, *mut u32) -> i32>,
-    pub _slots5_26: [usize; 22],
+    pub _slots5_6: [usize; 2],
+    pub nv_enc_get_encode_caps:
+        Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut NvEncCapsParam, *mut i32) -> i32>,
+    pub _slots8_26: [usize; 19],
     pub nv_enc_destroy_encoder: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     pub _slot28: usize,
     pub nv_enc_open_encode_session_ex:
@@ -85,6 +92,13 @@ pub struct NvEncOpenEncodeSessionExParams {
     pub api_version: u32,      // NVENCAPI_VERSION
     pub _reserved1: [u32; 253],
     pub _reserved2: [*mut c_void; 64],
+}
+
+#[repr(C)]
+pub struct NvEncCapsParam {
+    pub version: u32,
+    pub caps_to_query: u32,
+    pub reserved: [u32; 62],
 }
 
 pub struct NvencLib {
