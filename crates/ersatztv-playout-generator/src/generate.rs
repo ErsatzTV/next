@@ -19,15 +19,16 @@ pub async fn generate_playout(
 ) -> Result<(), PlayoutGeneratorError> {
     // find all available video files
     let mut video_paths: HashMap<PathBuf, ProbeResult> = HashMap::new();
-    for path_and_probe in WalkDir::new(content_folder)
+    for dir_entry in WalkDir::new(content_folder)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| is_video_extension(e) || is_image_extension(e))
-        .filter_map(to_probe_result)
     {
-        log::debug!("path: {path_and_probe:?}");
-        video_paths.insert(path_and_probe.path, path_and_probe.probe);
+        if let Some(path_and_probe) = to_probe_result(&dir_entry).await {
+            log::debug!("path: {path_and_probe:?}");
+            video_paths.insert(path_and_probe.path, path_and_probe.probe);
+        }
     }
 
     if video_paths.is_empty() {

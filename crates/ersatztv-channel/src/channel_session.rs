@@ -332,11 +332,11 @@ impl ChannelSession {
         }?;
 
         let audio_probe_result =
-            Self::probe_source(&self.ffprobe_path, &self.ffmpeg_path, &audio_source)?;
+            Self::probe_source(&self.ffprobe_path, &self.ffmpeg_path, &audio_source).await?;
         let video_probe_result = if video_source == audio_source {
             audio_probe_result.clone()
         } else {
-            Self::probe_source(&self.ffprobe_path, &self.ffmpeg_path, &video_source)?
+            Self::probe_source(&self.ffprobe_path, &self.ffmpeg_path, &video_source).await?
         };
 
         let audio_norm = &self.channel_config.normalization.audio;
@@ -509,7 +509,7 @@ impl ChannelSession {
         result
     }
 
-    fn probe_source(
+    async fn probe_source(
         ffprobe_path: &Path,
         ffmpeg_path: &Path,
         source: &PlayoutItemSource,
@@ -524,12 +524,12 @@ impl ChannelSession {
                     .ok_or(ChannelError::PlayoutJsonInvalidLocalSource)?;
 
                 // probe current item
-                let probe_result = probe::probe(ffprobe_path, expanded_path)?;
+                let probe_result = probe::probe(ffprobe_path, expanded_path).await?;
 
                 Ok(probe_result)
             }
             PlayoutItemSource::Lavfi { params } => {
-                let probe_result = probe::probe_lavfi(ffprobe_path, ffmpeg_path, params)?;
+                let probe_result = probe::probe_lavfi(ffprobe_path, ffmpeg_path, params).await?;
 
                 Ok(probe_result)
             }

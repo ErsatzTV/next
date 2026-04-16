@@ -90,9 +90,9 @@ fn is_image_extension(dir_entry: &DirEntry) -> bool {
     false
 }
 
-fn to_probe_result(dir_entry: DirEntry) -> Option<PathAndProbe> {
+async fn to_probe_result(dir_entry: &DirEntry) -> Option<PathAndProbe> {
     if let Some(video_path) = dir_entry.path().to_str()
-        && let Ok(probe_result) = ffpipeline::probe::probe(Path::new("ffprobe"), video_path)
+        && let Ok(probe_result) = ffpipeline::probe::probe(Path::new("ffprobe"), video_path).await
     // && probe_result
     //     .duration
     //     .filter(|d| d.as_secs() < 120)
