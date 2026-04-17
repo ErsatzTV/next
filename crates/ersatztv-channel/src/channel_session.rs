@@ -291,7 +291,6 @@ impl ChannelSession {
             Err(e) => log::debug!("failed to scan pts time: {e}"),
         }
 
-        // TODO: transcode error message instead of bailing
         let current_item_result = self
             .playout_loader
             .get_current_item(&self.transcoded_until)
@@ -308,6 +307,35 @@ impl ChannelSession {
             }
         };
 
+        let pts_duration = pts_time.map(|p| p.duration);
+
+        let result = self
+            .transcode_item(&current_item, realtime, pts_duration)
+            .await;
+
+        let (finish, is_complete) = match result {
+            Ok(ok) => ok,
+            Err(e) => {
+                log::error!("item failed, replacing with black/silence: {e}");
+                let fake_item = self.fake_playout_item(Some(current_item.finish));
+                self.transcode_item(&fake_item, realtime, pts_duration).await?
+            }
+        };
+
+        self.transcoded_until = finish;
+        log::debug!("transcoded until: {}", self.transcoded_until);
+
+        self.state = Self::next_state(self.state, is_complete);
+
+        Ok(())
+    }
+
+    async fn transcode_item(
+        &mut self,
+        current_item: &PlayoutItem,
+        realtime: bool,
+        pts_duration: Option<Duration>,
+    ) -> Result<(OffsetDateTime, bool), ChannelError> {
         let current_source = current_item.source.clone();
         let audio_source = match current_source.as_ref() {
             Some(source) => Ok(source.to_owned()),
@@ -376,9 +404,7 @@ impl ChannelSession {
                 playlist: self.output_file.clone(),
                 segment_template: self.output_segment_template.clone(),
             },
-            pts_offset: pts_time.map(|p| PtsOffset {
-                duration: p.duration,
-            }),
+            pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
             realtime,
 
             frame_rate: if video_probe_result.is_still_image() {
@@ -393,8 +419,8 @@ impl ChannelSession {
             ChannelSessionState::ZeroAndWorkAhead | ChannelSessionState::ZeroAndRealtime
         );
 
-        let audio_timing = self.input_timing(&current_item, &audio_source, start_at_zero, realtime);
-        let video_timing = self.input_timing(&current_item, &video_source, start_at_zero, realtime);
+        let audio_timing = self.input_timing(current_item, &audio_source, start_at_zero, realtime);
+        let video_timing = self.input_timing(current_item, &video_source, start_at_zero, realtime);
 
         let video_index = current_item
             .tracks
@@ -481,15 +507,10 @@ impl ChannelSession {
             }
         }
 
-        self.transcoded_until = std::cmp::min(audio_timing.finish, video_timing.finish);
-        log::debug!("transcoded until: {}", self.transcoded_until);
+        let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
+        let is_complete = audio_timing.is_complete && video_timing.is_complete;
 
-        self.state = Self::next_state(
-            self.state,
-            audio_timing.is_complete && video_timing.is_complete,
-        );
-
-        Ok(())
+        Ok((finish, is_complete))
     }
 
     fn next_state(state: ChannelSessionState, is_complete: bool) -> ChannelSessionState {
