@@ -8,6 +8,22 @@ use crate::error::FFPipelineError;
 use crate::frame_rate::FrameRate;
 
 #[derive(Debug, Clone)]
+pub struct ProbeResultColorParams {
+    pub color_range: Option<String>,
+    pub color_space: Option<String>,
+    pub color_transfer: Option<String>,
+    pub color_primaries: Option<String>,
+}
+
+impl ProbeResultColorParams {
+    pub fn is_hdr(&self) -> bool {
+        self.color_transfer
+            .as_ref()
+            .is_some_and(|ct| ct == "arib-std-b67" || ct == "smpte2084")
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ProbeResultVideoStream {
     pub stream_index: u32,
     pub codec: String,
@@ -18,6 +34,7 @@ pub struct ProbeResultVideoStream {
     pub sample_aspect_ratio: Option<String>,
     pub display_aspect_ratio: Option<String>,
     pub pix_fmt: String,
+    pub color_params: ProbeResultColorParams,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +46,7 @@ pub struct ProbeResultAudioStream {
 
 #[derive(Debug, Clone)]
 pub enum ProbeResultStream {
-    Video(ProbeResultVideoStream),
+    Video(Box<ProbeResultVideoStream>),
     Audio(ProbeResultAudioStream),
 }
 
@@ -100,6 +117,10 @@ struct ProbeOutputStream {
     sample_aspect_ratio: Option<String>,
     display_aspect_ratio: Option<String>,
     pix_fmt: Option<String>,
+    color_range: Option<String>,
+    color_space: Option<String>,
+    color_transfer: Option<String>,
+    color_primaries: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -226,7 +247,7 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 .unwrap_or(String::from("unknown")),
             channels: output_stream.channels?,
         })),
-        "video" => Some(ProbeResultStream::Video(ProbeResultVideoStream {
+        "video" => Some(ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
             stream_index: output_stream.index,
             codec: output_stream
                 .codec_name
@@ -239,10 +260,16 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
             height: output_stream.height?,
             width: output_stream.width?,
             pix_fmt: output_stream.pix_fmt.clone()?,
+            color_params: ProbeResultColorParams {
+                color_range: output_stream.color_range.clone(),
+                color_space: output_stream.color_space.clone(),
+                color_transfer: output_stream.color_transfer.clone(),
+                color_primaries: output_stream.color_primaries.clone(),
+            },
             frame_rate: FrameRate::parse(&output_stream.r_frame_rate.clone()?),
             sample_aspect_ratio: output_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
-        })),
+        }))),
         _ => None,
     }
 }

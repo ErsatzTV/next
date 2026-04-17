@@ -1,4 +1,4 @@
-use crate::ffmpeg_info::FfmpegInfo;
+use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
@@ -54,24 +54,32 @@ impl HwAccel for VideoToolbox {
         Vec::new()
     }
 
-    fn envs(&self) -> Vec<(String, String)> {
-        Vec::new()
+    fn decoder_frame_surface(&self) -> FrameSurface {
+        FrameSurface::VideoToolbox
     }
 
-    fn ffmpeg_name(&self) -> &str {
-        "videotoolbox"
+    fn encoder_frame_surface(&self) -> FrameSurface {
+        FrameSurface::VideoToolbox
+    }
+
+    fn envs(&self) -> Vec<(String, String)> {
+        Vec::new()
     }
 
     fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {
         None
     }
 
-    fn frame_surface(&self) -> FrameSurface {
-        FrameSurface::VideoToolbox
+    fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
+        self.clone()
     }
 
     fn init_hw_device(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    fn known_accel(&self) -> &KnownHardwareAccel {
+        &KnownHardwareAccel::VideoToolbox
     }
 
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {

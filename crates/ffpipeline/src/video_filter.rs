@@ -53,6 +53,10 @@ pub enum VideoFilter {
     Format {
         format: PixelFormat,
     },
+    ToneMap {
+        algorithm: Option<String>,
+        format: PixelFormat,
+    },
     Hardware(Box<dyn HwVideoFilter>),
 }
 
@@ -98,6 +102,13 @@ impl VideoFilter {
             VideoFilter::Pad { size: None } => None,
             VideoFilter::Loop { codec } if codec == "png" => Some(self.clone()),
             VideoFilter::Loop { .. } => None,
+            VideoFilter::ToneMap { .. } => {
+                if !state.is_hdr {
+                    None
+                } else {
+                    Some(self.clone())
+                }
+            }
         }
     }
 
@@ -138,6 +149,10 @@ impl VideoFilter {
             VideoFilter::Format { format } => {
                 state.pixel_format = format.clone();
             }
+            VideoFilter::ToneMap { format, .. } => {
+                state.pixel_format = format.clone();
+                state.is_hdr = false;
+            }
         }
     }
 
@@ -151,6 +166,7 @@ impl VideoFilter {
             VideoFilter::Pad { .. } => Some(FrameSurface::System),
             VideoFilter::Loop { .. } => Some(FrameSurface::System),
             VideoFilter::Format { .. } => Some(FrameSurface::System),
+            VideoFilter::ToneMap { .. } => Some(FrameSurface::System),
         }
     }
 
@@ -198,6 +214,11 @@ impl VideoFilter {
             VideoFilter::Pad { .. } => None,
             VideoFilter::Loop { .. } => Some(String::from("loop=-1:1")),
             VideoFilter::Format { format } => Some(format!("format={}", format.as_arg())),
+            VideoFilter::ToneMap { algorithm, format } => Some(format!(
+                "zscale=transfer=linear,tonemap={},zscale=transfer=bt709,format={}",
+                algorithm.as_deref().unwrap_or("linear"),
+                format.as_arg()
+            )),
         }
     }
 }

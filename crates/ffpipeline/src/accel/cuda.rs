@@ -1,5 +1,5 @@
 use crate::capabilities::nvidia::NvidiaCapabilities;
-use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
+use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
@@ -10,6 +10,16 @@ use crate::video_filter::{ForceOriginalAspectRatio, HwVideoFilter, VideoFilter};
 #[derive(Debug, Clone)]
 pub struct Cuda {
     pub capabilities: NvidiaCapabilities,
+    is_vulkan_hdr: bool,
+}
+
+impl Cuda {
+    pub fn new(capabilities: NvidiaCapabilities) -> Cuda {
+        Cuda {
+            capabilities,
+            is_vulkan_hdr: false,
+        }
+    }
 }
 
 impl HwAccel for Cuda {
@@ -30,6 +40,15 @@ impl HwAccel for Cuda {
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda) =>
             {
                 VideoFilter::Hardware(Box::new(PadCuda { size: size.clone() }))
+            }
+            VideoFilter::ToneMap { algorithm, format } if self.is_vulkan_hdr => {
+                VideoFilter::Hardware(Box::new(Libplacebo {
+                    algorithm: algorithm.clone(),
+                    format: match format {
+                        PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                        _ => PixelFormat::Nv12,
+                    },
+                }))
             }
             _ => video_filter.clone(),
         }
@@ -82,26 +101,49 @@ impl HwAccel for Cuda {
     }
 
     fn decoder_arg(&self) -> Vec<String> {
-        vec![
-            String::from("-hwaccel"),
-            String::from("cuda"),
-            String::from("-hwaccel_output_format"),
-            String::from("cuda"),
-        ]
+        log::debug!("decoder arg, is_hdr: {}", self.is_vulkan_hdr);
+        if self.is_vulkan_hdr {
+            vec![
+                String::from("-hwaccel"),
+                String::from("vulkan"),
+                String::from("-hwaccel_output_format"),
+                String::from("vulkan"),
+            ]
+        } else {
+            vec![
+                String::from("-hwaccel"),
+                String::from("cuda"),
+                String::from("-hwaccel_output_format"),
+                String::from("cuda"),
+            ]
+        }
     }
 
     fn decoder_filters(&self) -> Vec<PipelineFilter> {
-        vec![PipelineFilter::Video(VideoFilter::Hardware(Box::new(
-            HwUploadCudaWorkaround,
-        )))]
+        // can't work around fallback to software decode with HDR
+        if self.is_vulkan_hdr {
+            Vec::new()
+        } else {
+            vec![PipelineFilter::Video(VideoFilter::Hardware(Box::new(
+                HwUploadCudaWorkaround,
+            )))]
+        }
+    }
+
+    fn decoder_frame_surface(&self) -> FrameSurface {
+        if self.is_vulkan_hdr {
+            FrameSurface::Vulkan
+        } else {
+            FrameSurface::Cuda
+        }
+    }
+
+    fn encoder_frame_surface(&self) -> FrameSurface {
+        FrameSurface::Cuda
     }
 
     fn envs(&self) -> Vec<(String, String)> {
         Vec::new()
-    }
-
-    fn ffmpeg_name(&self) -> &str {
-        "cuda"
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
@@ -110,12 +152,31 @@ impl HwAccel for Cuda {
         })))
     }
 
-    fn frame_surface(&self) -> FrameSurface {
-        FrameSurface::Cuda
+    fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self {
+        Cuda {
+            capabilities: self.capabilities.clone(),
+            is_vulkan_hdr: is_hdr
+                && ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vulkan)
+                && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo),
+        }
     }
 
     fn init_hw_device(&self) -> Vec<String> {
-        vec![String::from("-init_hw_device"), String::from("cuda")]
+        log::debug!("init hw device, is_hdr: {}", self.is_vulkan_hdr);
+        if self.is_vulkan_hdr {
+            vec![
+                String::from("-init_hw_device"),
+                String::from("cuda=nv"),
+                String::from("-init_hw_device"),
+                String::from("vulkan=vk@nv"),
+            ]
+        } else {
+            vec![String::from("-init_hw_device"), String::from("cuda")]
+        }
+    }
+
+    fn known_accel(&self) -> &KnownHardwareAccel {
+        &KnownHardwareAccel::Cuda
     }
 
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
@@ -251,5 +312,47 @@ impl HwVideoFilter for HwUploadCudaWorkaround {
 
     fn as_arg(&self) -> Option<String> {
         Some(String::from("hwupload"))
+    }
+}
+
+#[derive(Clone)]
+struct Libplacebo {
+    algorithm: Option<String>,
+    format: PixelFormat,
+}
+
+impl HwVideoFilter for Libplacebo {
+    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
+        // called before this is used
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = self.format.clone();
+        state.is_hdr = false;
+        state.surface = FrameSurface::Cuda;
+    }
+
+    fn required_surface(&self) -> FrameSurface {
+        FrameSurface::Vulkan
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        let vulkan_format = match &self.format {
+            PixelFormat::P010le => PixelFormat::P016,
+            _ => PixelFormat::Nv12,
+        };
+
+        let cuda_format = match vulkan_format {
+            PixelFormat::P016 => ",scale_cuda=format=p010",
+            _ => "",
+        };
+
+        Some(format!(
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={},hwupload_cuda{}",
+            self.algorithm.as_deref().unwrap_or("linear"),
+            vulkan_format.as_arg(),
+            cuda_format
+        ))
     }
 }

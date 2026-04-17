@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use crate::capabilities::vaapi::VaapiCapabilities;
-use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
+use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
@@ -120,12 +120,16 @@ impl HwAccel for Vaapi {
         Vec::new()
     }
 
-    fn envs(&self) -> Vec<(String, String)> {
-        vec![(String::from("LIBVA_DRIVER_NAME"), self.driver.to_string())]
+    fn decoder_frame_surface(&self) -> FrameSurface {
+        FrameSurface::Vaapi
     }
 
-    fn ffmpeg_name(&self) -> &str {
-        "vaapi"
+    fn encoder_frame_surface(&self) -> FrameSurface {
+        FrameSurface::Vaapi
+    }
+
+    fn envs(&self) -> Vec<(String, String)> {
+        vec![(String::from("LIBVA_DRIVER_NAME"), self.driver.to_string())]
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
@@ -134,12 +138,16 @@ impl HwAccel for Vaapi {
         })))
     }
 
-    fn frame_surface(&self) -> FrameSurface {
-        FrameSurface::Vaapi
+    fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
+        self.clone()
     }
 
     fn init_hw_device(&self) -> Vec<String> {
         vec![String::from("-vaapi_device"), self.device.clone()]
+    }
+
+    fn known_accel(&self) -> &KnownHardwareAccel {
+        &KnownHardwareAccel::Vaapi
     }
 
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {

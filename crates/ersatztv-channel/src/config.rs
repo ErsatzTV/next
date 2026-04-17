@@ -79,6 +79,7 @@ pub struct VideoNormalizationConfig {
     pub accel: Option<HardwareAccel>,
     pub vaapi_device: Option<PathBuf>,
     pub vaapi_driver: Option<VaapiDriver>,
+    pub tonemap_algorithm: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -127,7 +128,7 @@ impl HardwareAccel {
                     Ok(capabilities) => {
                         log::debug!("detected NVIDIA capabilities: {:?}", capabilities);
                         Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
-                            ffpipeline::accel::cuda::Cuda { capabilities },
+                            ffpipeline::accel::cuda::Cuda::new(capabilities),
                         ))
                     }
                     Err(e) => {

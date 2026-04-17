@@ -64,6 +64,7 @@ pub enum FrameSurface {
     Qsv,
     Vaapi,
     VideoToolbox,
+    Vulkan,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +73,7 @@ pub enum PixelFormat {
     Yuv420p10le,
     Nv12,
     P010le,
+    P016,
 }
 
 impl PixelFormat {
@@ -92,6 +94,7 @@ impl PixelFormat {
         match self {
             PixelFormat::Yuv420p | PixelFormat::Nv12 => 8,
             PixelFormat::Yuv420p10le | PixelFormat::P010le => 10,
+            PixelFormat::P016 => 16,
         }
     }
 
@@ -101,6 +104,7 @@ impl PixelFormat {
             PixelFormat::Yuv420p10le => "yuv420p10le",
             PixelFormat::Nv12 => "nv12",
             PixelFormat::P010le => "p010le",
+            PixelFormat::P016 => "p016",
         }
     }
 }
@@ -113,6 +117,7 @@ pub struct FrameState {
     pub(crate) display_aspect_ratio: Option<String>,
     pub(crate) surface: FrameSurface,
     pub(crate) pixel_format: PixelFormat,
+    pub(crate) is_hdr: bool,
 }
 
 pub enum PipelineInput {
@@ -161,7 +166,7 @@ impl Pipeline {
         let mut final_output_settings = output_settings;
 
         if let Some(accel) = &final_output_settings.accel
-            && !ffmpeg_info.has_hw_accel(accel)
+            && !ffmpeg_info.has_hw_accel(accel.known_accel())
         {
             log::warn!("ffmpeg does not support requested accel {:?}", accel);
             final_output_settings.accel = None;
@@ -179,6 +184,13 @@ impl Pipeline {
             Some(AudioFormat::Ac3) => AudioCodec::Ac3,
             _ => AudioCodec::Copy,
         };
+
+        let video_stream = Self::select_video_stream(&input_settings)?;
+        let audio_stream = Self::select_audio_stream(&input_settings)?;
+
+        final_output_settings.accel = final_output_settings
+            .accel
+            .map(|a| a.initialize(ffmpeg_info, video_stream.color_params.is_hdr()));
 
         // TODO: add target profile to config
         let video_codec = match (
@@ -200,9 +212,6 @@ impl Pipeline {
 
         let output_path = final_output_settings.format.path();
 
-        let video_stream = Self::select_video_stream(&input_settings)?;
-        let audio_stream = Self::select_audio_stream(&input_settings)?;
-
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
         let video_decoder = VideoDecoder::new(video_stream, is_still_image, &final_output_settings);
 
@@ -217,6 +226,7 @@ impl Pipeline {
             surface: video_decoder.output_surface(),
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
+            is_hdr: video_stream.color_params.is_hdr(),
         };
 
         let initial_scaled_size = final_output_settings
@@ -238,7 +248,7 @@ impl Pipeline {
             media_frame_rate: video_stream.frame_rate.to_owned(),
             preferred_surface: if video_codec.is_hardware {
                 match final_output_settings.accel.as_ref() {
-                    Some(a) => a.frame_surface(),
+                    Some(a) => a.encoder_frame_surface(),
                     _ => FrameSurface::System,
                 }
             } else {
@@ -257,6 +267,13 @@ impl Pipeline {
         filters.extend([
             PipelineFilter::Video(VideoFilter::Loop {
                 codec: video_stream.codec.to_owned(),
+            }),
+            PipelineFilter::Video(VideoFilter::ToneMap {
+                algorithm: final_output_settings.tonemap_algorithm.clone(),
+                format: match final_output_settings.bit_depth {
+                    Some(10) => PixelFormat::Yuv420p10le,
+                    _ => PixelFormat::Yuv420p,
+                },
             }),
             PipelineFilter::Video(VideoFilter::Scale {
                 size: initial_scaled_size,
@@ -482,7 +499,7 @@ impl Pipeline {
     fn select_video_stream(
         input_settings: &InputSettings,
     ) -> Result<&ProbeResultVideoStream, FFPipelineError> {
-        let mut all_video_streams: Vec<&ProbeResultVideoStream> = input_settings
+        let mut all_video_streams: Vec<&Box<ProbeResultVideoStream>> = input_settings
             .video_input
             .probe_result
             .streams

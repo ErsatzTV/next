@@ -50,6 +50,9 @@ buffer_kbps = 4_000
 # `cuda`, `qsv`, `vaapi` and `videotoolbox` accels are minimally supported at this point
 #accel = "cuda"
 
+# algorithm used for tone mapping when transcoding HDR content
+#tonemap_algorithm = "linear"
+
 # when accel is `vaapi`, the path to the vaapi device is required
 #vaapi_device = "/dev/dri/renderD128"
 

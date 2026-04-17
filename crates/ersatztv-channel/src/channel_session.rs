@@ -401,6 +401,7 @@ impl ChannelSession {
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),
             video_buffer: video_norm.buffer_kbps.map(Kbps),
             video_size,
+            tonemap_algorithm: video_norm.tonemap_algorithm.clone(),
             accel: self.hw_accel.clone(),
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),
@@ -408,7 +409,6 @@ impl ChannelSession {
             },
             pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
             realtime,
-
             frame_rate: if video_probe_result.is_still_image() {
                 Some(FrameRate::default())
             } else {

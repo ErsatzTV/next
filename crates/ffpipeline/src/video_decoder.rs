@@ -51,7 +51,7 @@ impl VideoDecoder {
         match self {
             VideoDecoder::None => FrameSurface::System,
             VideoDecoder::Software => FrameSurface::System,
-            VideoDecoder::HardwareAccel { accel } => accel.frame_surface(),
+            VideoDecoder::HardwareAccel { accel } => accel.decoder_frame_surface(),
         }
     }
 

@@ -19,10 +19,12 @@ pub struct VaapiCapabilities {
 impl VaapiCapabilities {
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
         let fourcc = match pixel_format {
-            PixelFormat::Nv12 | PixelFormat::Yuv420p => VA_FOURCC_NV12,
-            PixelFormat::P010le | PixelFormat::Yuv420p10le => VA_FOURCC_P010,
+            PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(VA_FOURCC_NV12),
+            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
+            _ => None,
         };
-        self.vpp_pixel_formats.contains(&fourcc)
+
+        fourcc.is_some_and(|c| self.vpp_pixel_formats.contains(&c))
     }
 
     pub fn can_decode(&self, codec: &str, profile: &str, bit_depth: u8) -> bool {

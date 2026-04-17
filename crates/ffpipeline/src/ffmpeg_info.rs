@@ -3,10 +3,10 @@ use std::path::Path;
 use tokio::process::Command;
 
 use crate::error::FFPipelineError;
-use crate::hw_accel::{HardwareAccel, HwAccel};
 
-static KNOWN_ACCELS: &[&str] = &["cuda", "qsv", "vaapi", "videotoolbox"];
+static KNOWN_ACCELS: &[&str] = &["cuda", "qsv", "vaapi", "videotoolbox", "vulkan"];
 static KNOWN_FILTERS: &[&str] = &[
+    "libplacebo",
     "pad_cuda",
     "pad_vaapi",
     "scale_cuda",
@@ -14,7 +14,16 @@ static KNOWN_FILTERS: &[&str] = &[
     "vpp_qsv",
 ];
 
+pub enum KnownHardwareAccel {
+    Cuda,
+    Qsv,
+    Vaapi,
+    VideoToolbox,
+    Vulkan,
+}
+
 pub enum KnownVideoFilter {
+    LibPlacebo,
     PadCuda,
     PadVaapi,
     ScaleCuda,
@@ -41,26 +50,29 @@ impl FfmpegInfo {
         })
     }
 
-    pub fn has_hw_accel(&self, accel: &HardwareAccel) -> bool {
-        if let Some(accel_string) = Some(accel.ffmpeg_name()) {
-            self.hwaccels.iter().any(|f| f == accel_string)
-        } else {
-            false
-        }
+    pub fn has_hw_accel(&self, hw_accel: &KnownHardwareAccel) -> bool {
+        let accel_string = match hw_accel {
+            KnownHardwareAccel::Cuda => "cuda",
+            KnownHardwareAccel::Qsv => "qsv",
+            KnownHardwareAccel::Vaapi => "vaapi",
+            KnownHardwareAccel::VideoToolbox => "videotoolbox",
+            KnownHardwareAccel::Vulkan => "vulkan",
+        };
+
+        self.hwaccels.iter().any(|f| f == accel_string)
     }
 
     pub fn has_video_filter(&self, filter: &KnownVideoFilter) -> bool {
-        if let Some(filter_string) = match filter {
-            KnownVideoFilter::PadCuda => Some("pad_cuda"),
-            KnownVideoFilter::PadVaapi => Some("pad_vaapi"),
-            KnownVideoFilter::ScaleCuda => Some("scale_cuda"),
-            KnownVideoFilter::ScaleVaapi => Some("scale_vaapi"),
-            KnownVideoFilter::VppQsv => Some("vpp_qsv"),
-        } {
-            self.video_filters.iter().any(|f| f == filter_string)
-        } else {
-            false
-        }
+        let filter_string = match filter {
+            KnownVideoFilter::LibPlacebo => "libplacebo",
+            KnownVideoFilter::PadCuda => "pad_cuda",
+            KnownVideoFilter::PadVaapi => "pad_vaapi",
+            KnownVideoFilter::ScaleCuda => "scale_cuda",
+            KnownVideoFilter::ScaleVaapi => "scale_vaapi",
+            KnownVideoFilter::VppQsv => "vpp_qsv",
+        };
+
+        self.video_filters.iter().any(|f| f == filter_string)
     }
 
     async fn load_hw_accels(path: &Path) -> Result<Vec<String>, FFPipelineError> {
