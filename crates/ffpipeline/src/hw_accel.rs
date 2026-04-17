@@ -9,7 +9,9 @@ use crate::video_filter::VideoFilter;
 
 #[enum_dispatch]
 pub trait HwAccel {
-    fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter;
+    fn best_filter(&self, video_filter: &VideoFilter, _ffmpeg_info: &FfmpegInfo) -> VideoFilter {
+        video_filter.clone()
+    }
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         match pixel_format.bit_depth() {
             10 => matches!(codec, "av1" | "hevc"),
@@ -26,15 +28,26 @@ pub trait HwAccel {
     }
     fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec>;
     fn decoder_arg(&self) -> Vec<String>;
-    fn decoder_filters(&self) -> Vec<PipelineFilter>;
+    fn decoder_filters(&self) -> Vec<PipelineFilter> {
+        Vec::new()
+    }
     fn decoder_frame_surface(&self) -> FrameSurface;
     fn encoder_frame_surface(&self) -> FrameSurface;
-    fn envs(&self) -> Vec<(String, String)>;
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter>;
+    fn envs(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {
+        None
+    }
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self;
     fn init_hw_device(&self) -> Vec<String>;
     fn known_accel(&self) -> &KnownHardwareAccel;
-    fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat;
+    fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
+        match source_pixel_format.bit_depth() {
+            10 => PixelFormat::P010le,
+            _ => PixelFormat::Nv12,
+        }
+    }
     fn supports_pixel_format(&self, _pixel_format: &PixelFormat) -> bool {
         true
     }
@@ -47,4 +60,5 @@ pub enum HardwareAccel {
     Qsv(accel::qsv::Qsv),
     Vaapi(accel::vaapi::Vaapi),
     VideoToolbox(accel::video_toolbox::VideoToolbox),
+    Vulkan(accel::vulkan::Vulkan),
 }

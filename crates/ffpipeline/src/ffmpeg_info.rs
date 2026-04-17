@@ -11,6 +11,7 @@ static KNOWN_FILTERS: &[&str] = &[
     "pad_vaapi",
     "scale_cuda",
     "scale_vaapi",
+    "scale_vulkan",
     "vpp_qsv",
 ];
 
@@ -28,6 +29,7 @@ pub enum KnownVideoFilter {
     PadVaapi,
     ScaleCuda,
     ScaleVaapi,
+    ScaleVulkan,
     VppQsv,
 }
 
@@ -69,6 +71,7 @@ impl FfmpegInfo {
             KnownVideoFilter::PadVaapi => "pad_vaapi",
             KnownVideoFilter::ScaleCuda => "scale_cuda",
             KnownVideoFilter::ScaleVaapi => "scale_vaapi",
+            KnownVideoFilter::ScaleVulkan => "scale_vulkan",
             KnownVideoFilter::VppQsv => "vpp_qsv",
         };
 

@@ -47,7 +47,7 @@ bitrate_kbps = 2_000
 
 buffer_kbps = 4_000
 
-# `cuda`, `qsv`, `vaapi` and `videotoolbox` accels are minimally supported at this point
+# `cuda`, `qsv`, `vaapi`, `videotoolbox` and `vulkan` accels are minimally supported at this point
 #accel = "cuda"
 
 # algorithm used for tone mapping when transcoding HDR content

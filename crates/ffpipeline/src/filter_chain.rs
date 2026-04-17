@@ -108,6 +108,7 @@ impl FilterChain {
                             if is_format_supported {
                                 let upload = VideoFilter::HwUpload {
                                     target_surface: required.clone(),
+                                    bit_depth: current_state.pixel_format.bit_depth(),
                                 };
                                 upload.apply_to(&mut current_state);
                                 resolved.push(PipelineFilter::Video(upload))
@@ -126,6 +127,7 @@ impl FilterChain {
 
                                     let upload = VideoFilter::HwUpload {
                                         target_surface: required,
+                                        bit_depth: current_state.pixel_format.bit_depth(),
                                     };
                                     upload.apply_to(&mut current_state);
                                     resolved.push(PipelineFilter::Video(upload));
@@ -169,6 +171,7 @@ impl FilterChain {
             } else {
                 let upload = VideoFilter::HwUpload {
                     target_surface: encoder_surface.clone(),
+                    bit_depth: current_state.pixel_format.bit_depth(),
                 };
                 upload.apply_to(&mut current_state);
                 resolved.push(PipelineFilter::Video(upload))

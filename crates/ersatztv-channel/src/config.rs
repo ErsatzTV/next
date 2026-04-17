@@ -114,6 +114,7 @@ pub enum HardwareAccel {
     Qsv,
     Vaapi,
     VideoToolbox,
+    Vulkan,
 }
 
 impl HardwareAccel {
@@ -202,6 +203,9 @@ impl HardwareAccel {
             }
             HardwareAccel::VideoToolbox => Some(ffpipeline::hw_accel::HardwareAccel::VideoToolbox(
                 ffpipeline::accel::video_toolbox::VideoToolbox,
+            )),
+            HardwareAccel::Vulkan => Some(ffpipeline::hw_accel::HardwareAccel::Vulkan(
+                ffpipeline::accel::vulkan::Vulkan,
             )),
         }
     }

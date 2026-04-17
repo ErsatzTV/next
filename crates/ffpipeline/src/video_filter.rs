@@ -35,6 +35,7 @@ dyn_clone::clone_trait_object!(HwVideoFilter);
 pub enum VideoFilter {
     HwUpload {
         target_surface: FrameSurface,
+        bit_depth: u8,
     },
     HwDownload {
         target_pixel_format: PixelFormat,
@@ -114,7 +115,7 @@ impl VideoFilter {
 
     pub(crate) fn apply_to(&self, state: &mut FrameState) {
         match self {
-            VideoFilter::HwUpload { target_surface } => {
+            VideoFilter::HwUpload { target_surface, .. } => {
                 state.surface = target_surface.clone();
                 state.pixel_format = match &state.pixel_format {
                     PixelFormat::Yuv420p => PixelFormat::Nv12,
@@ -172,10 +173,21 @@ impl VideoFilter {
 
     pub(crate) fn as_arg(&self) -> Option<String> {
         match self {
-            VideoFilter::HwUpload { target_surface } => match target_surface {
+            VideoFilter::HwUpload {
+                target_surface,
+                bit_depth,
+            } => match target_surface {
+                // TODO: refactor this into each hwaccel, maybe a hw_upload_filter() fn?
                 FrameSurface::Cuda => Some(String::from("hwupload_cuda")),
                 FrameSurface::Qsv => Some(String::from("hwupload=extra_hw_frames=64")),
                 FrameSurface::Vaapi => Some(String::from("hwupload")),
+                FrameSurface::Vulkan => {
+                    let format = match bit_depth {
+                        10 => "p010le",
+                        _ => "nv12",
+                    };
+                    Some(format!("format={},hwupload", format))
+                }
                 _ => None,
             },
             VideoFilter::HwDownload {

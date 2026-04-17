@@ -1,18 +1,12 @@
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
-use crate::filter_chain::PipelineFilter;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
-use crate::video_filter::VideoFilter;
 
 #[derive(Debug, Clone)]
 pub struct VideoToolbox;
 
 impl HwAccel for VideoToolbox {
-    fn best_filter(&self, video_filter: &VideoFilter, _ffmpeg_info: &FfmpegInfo) -> VideoFilter {
-        video_filter.clone()
-    }
-
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         match pixel_format.bit_depth() {
             10 => matches!(codec, "hevc"),
@@ -50,24 +44,12 @@ impl HwAccel for VideoToolbox {
         ]
     }
 
-    fn decoder_filters(&self) -> Vec<PipelineFilter> {
-        Vec::new()
-    }
-
     fn decoder_frame_surface(&self) -> FrameSurface {
         FrameSurface::VideoToolbox
     }
 
     fn encoder_frame_surface(&self) -> FrameSurface {
         FrameSurface::VideoToolbox
-    }
-
-    fn envs(&self) -> Vec<(String, String)> {
-        Vec::new()
-    }
-
-    fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        None
     }
 
     fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
@@ -80,12 +62,5 @@ impl HwAccel for VideoToolbox {
 
     fn known_accel(&self) -> &KnownHardwareAccel {
         &KnownHardwareAccel::VideoToolbox
-    }
-
-    fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
-        match source_pixel_format.bit_depth() {
-            10 => PixelFormat::P010le,
-            _ => PixelFormat::Nv12,
-        }
     }
 }
