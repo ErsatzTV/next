@@ -318,7 +318,8 @@ impl ChannelSession {
             Err(e) => {
                 log::error!("item failed, replacing with black/silence: {e}");
                 let fake_item = self.fake_playout_item(Some(current_item.finish));
-                self.transcode_item(&fake_item, realtime, pts_duration).await?
+                self.transcode_item(&fake_item, realtime, pts_duration)
+                    .await?
             }
         };
 
