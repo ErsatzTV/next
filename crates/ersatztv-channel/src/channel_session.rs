@@ -315,6 +315,7 @@ impl ChannelSession {
 
         let (finish, is_complete) = match result {
             Ok(ok) => ok,
+            Err(e @ ChannelError::IdleTimeout(_)) => return Err(e),
             Err(e) => {
                 log::error!("item failed, replacing with black/silence: {e}");
                 let fake_item = self.fake_playout_item(Some(current_item.finish));
