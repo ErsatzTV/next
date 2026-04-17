@@ -102,6 +102,30 @@ pub enum PlayoutItemSource {
     Lavfi {
         params: String,
     },
+    Http {
+        /// URI template, e.g. "https://example.com/file.mkv?token={{MY_SECRET}}"
+        uri: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        in_point_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        out_point_ms: Option<u64>,
+        /// Custom HTTP headers, e.g. ["Authorization: Bearer {{TOKEN}}"]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        headers: Option<Vec<String>>,
+        /// Custom user-agent string
+        #[serde(skip_serializing_if = "Option::is_none")]
+        user_agent: Option<String>,
+        /// Socket timeout in microseconds
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeout_us: Option<u64>,
+        /// Enable reconnect on failure (default: true)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reconnect: Option<bool>,
+        /// Max reconnect delay in seconds
+        /// Maps directly to the reconnect_delay_max ffmpeg option
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reconnect_delay_max: Option<u32>,
+    },
 }
 
 pub struct PlayoutLoadResult {

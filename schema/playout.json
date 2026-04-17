@@ -110,6 +110,81 @@
             "source_type",
             "params"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "headers": {
+              "description": "Custom HTTP headers, e.g. [\"Authorization: Bearer {{TOKEN}}\"]",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "in_point_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "out_point_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "reconnect": {
+              "description": "Enable reconnect on failure (default: true)",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "reconnect_delay_max": {
+              "description": "Max reconnect delay in seconds",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "source_type": {
+              "type": "string",
+              "const": "http"
+            },
+            "timeout_us": {
+              "description": "Socket timeout in microseconds",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "uri": {
+              "description": "URI template, e.g. \"https://example.com/file.mkv?token={{MY_SECRET}}\"",
+              "type": "string"
+            },
+            "user_agent": {
+              "description": "Custom user-agent string",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "source_type",
+            "uri"
+          ]
         }
       ]
     },

@@ -10,4 +10,10 @@ pub enum PlayoutError {
 
     #[error("date formatting error: {0}")]
     PlayoutDateFormatError(#[from] time::error::Format),
+
+    #[error("template references missing environment variable: {0}")]
+    TemplateMissingEnvVar(String),
+
+    #[error("environment variable '{0}' contains invalid characters (control chars not allowed)")]
+    TemplateInvalidEnvVarValue(String),
 }

@@ -7,10 +7,27 @@ pub struct InputSettings {
     pub video_input: ProbedInput,
 }
 
+#[derive(Clone, Debug)]
+pub struct HttpInputOptions {
+    pub headers: Vec<String>,
+    pub user_agent: Option<String>,
+    pub timeout_us: Option<u64>,
+    pub reconnect: bool,
+    pub reconnect_delay_max: Option<u32>,
+}
+
 #[derive(Clone)]
 pub enum InputSource {
-    Local { path: String },
-    Lavfi { params: String },
+    Local {
+        path: String,
+    },
+    Lavfi {
+        params: String,
+    },
+    Http {
+        uri: String,
+        options: HttpInputOptions,
+    },
 }
 
 pub struct ProbedInput {

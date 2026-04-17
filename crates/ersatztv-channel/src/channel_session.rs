@@ -7,10 +7,11 @@ use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
     PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
 };
+use ersatztv_playout::template::expand_template;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
-use ffpipeline::input::{InputSettings, InputSource, ProbedInput};
+use ffpipeline::input::{HttpInputOptions, InputSettings, InputSource, ProbedInput};
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
 use ffpipeline::probe::ProbeResult;
@@ -458,10 +459,7 @@ impl ChannelSession {
 
         let input_settings = InputSettings {
             audio_input: ProbedInput {
-                input_source: match audio_source {
-                    PlayoutItemSource::Local { path, .. } => InputSource::Local { path },
-                    PlayoutItemSource::Lavfi { params } => InputSource::Lavfi { params },
-                },
+                input_source: Self::playout_source_to_input_source(audio_source)?,
                 in_point: audio_timing.in_point,
                 out_point: audio_timing.out_point,
                 probe_result: audio_probe_result,
@@ -469,10 +467,7 @@ impl ChannelSession {
                 video_index: None,
             },
             video_input: ProbedInput {
-                input_source: match video_source {
-                    PlayoutItemSource::Local { path, .. } => InputSource::Local { path },
-                    PlayoutItemSource::Lavfi { params } => InputSource::Lavfi { params },
-                },
+                input_source: Self::playout_source_to_input_source(video_source)?,
                 in_point: if video_probe_result.is_still_image() {
                     Duration::ZERO
                 } else {
@@ -583,6 +578,49 @@ impl ChannelSession {
 
                 Ok(probe_result)
             }
+            PlayoutItemSource::Http { uri, .. } => {
+                let expanded_uri = expand_template(uri)?;
+                let probe_result = probe::probe(ffprobe_path, &expanded_uri).await?;
+
+                Ok(probe_result)
+            }
+        }
+    }
+
+    fn playout_source_to_input_source(
+        source: PlayoutItemSource,
+    ) -> Result<InputSource, ChannelError> {
+        match source {
+            PlayoutItemSource::Local { path, .. } => Ok(InputSource::Local { path }),
+            PlayoutItemSource::Lavfi { params } => Ok(InputSource::Lavfi { params }),
+            PlayoutItemSource::Http {
+                uri,
+                headers,
+                user_agent,
+                timeout_us,
+                reconnect,
+                reconnect_delay_max,
+                ..
+            } => {
+                let expanded_uri = expand_template(&uri)?;
+                let expanded_headers: Vec<String> = headers
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|h| expand_template(h))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let expanded_ua = user_agent.as_deref().map(expand_template).transpose()?;
+
+                Ok(InputSource::Http {
+                    uri: expanded_uri,
+                    options: HttpInputOptions {
+                        headers: expanded_headers,
+                        user_agent: expanded_ua,
+                        timeout_us,
+                        reconnect: reconnect.unwrap_or(true),
+                        reconnect_delay_max,
+                    },
+                })
+            }
         }
     }
 
@@ -599,11 +637,13 @@ impl ChannelSession {
         let item_finish = current_item.finish;
         let item_duration = current_item.finish - current_item.start;
         let item_in_point_base_ms = match source {
-            PlayoutItemSource::Local { in_point_ms, .. } => in_point_ms.unwrap_or(0),
+            PlayoutItemSource::Local { in_point_ms, .. }
+            | PlayoutItemSource::Http { in_point_ms, .. } => in_point_ms.unwrap_or(0),
             _ => 0,
         };
         let item_out_point_ms = match source {
-            PlayoutItemSource::Local { out_point_ms, .. } => out_point_ms
+            PlayoutItemSource::Local { out_point_ms, .. }
+            | PlayoutItemSource::Http { out_point_ms, .. } => out_point_ms
                 .unwrap_or(item_in_point_base_ms + item_duration.whole_milliseconds() as u64),
             _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
         };

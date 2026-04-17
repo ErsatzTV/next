@@ -154,6 +154,11 @@ pub async fn probe(
         .map_err(|_| FFPipelineError::ProbeFailed)?;
 
     if !output.status.success() {
+        log::warn!(
+            "error executing ffprobe: {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         return Err(FFPipelineError::ProbeFailed);
     }
 
