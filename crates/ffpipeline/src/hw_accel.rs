@@ -3,13 +3,18 @@ use enum_dispatch::enum_dispatch;
 use crate::accel;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
-use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
 
 #[enum_dispatch]
 pub trait HwAccel {
-    fn best_filter(&self, video_filter: &VideoFilter, _ffmpeg_info: &FfmpegInfo) -> VideoFilter {
+    fn best_filter(
+        &self,
+        video_filter: &VideoFilter,
+        _ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> VideoFilter {
         video_filter.clone()
     }
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {

@@ -9,25 +9,35 @@ use crate::video_filter::{HwVideoFilter, VideoFilter};
 pub struct Vulkan;
 
 impl HwAccel for Vulkan {
-    fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter {
+    fn best_filter(
+        &self,
+        video_filter: &VideoFilter,
+        ffmpeg_info: &FfmpegInfo,
+        current_state: &FrameState,
+    ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale {
                 size,
                 input_is_anamorphic,
                 ..
-            } if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan) => {
-                // TODO: this only works with 8-bit content
+            } if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
+                && current_state.pixel_format.bit_depth() == 8 =>
+            {
                 VideoFilter::Hardware(Box::new(ScaleVulkan {
                     size: size.clone(),
                     input_is_anamorphic: *input_is_anamorphic,
                     //force_original_aspect_ratio: force_original_aspect_ratio.clone(),
                 }))
             }
-            VideoFilter::ToneMap { algorithm, .. }
+            VideoFilter::ToneMap { algorithm, format }
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) =>
             {
                 VideoFilter::Hardware(Box::new(Libplacebo {
                     algorithm: algorithm.clone(),
+                    format: match format {
+                        PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                        _ => PixelFormat::Nv12,
+                    },
                 }))
             }
             _ => video_filter.clone(),
@@ -117,6 +127,7 @@ impl HwVideoFilter for FormatVulkan {
 #[derive(Clone)]
 struct Libplacebo {
     algorithm: Option<String>,
+    format: PixelFormat,
 }
 
 impl HwVideoFilter for Libplacebo {
@@ -126,6 +137,7 @@ impl HwVideoFilter for Libplacebo {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = self.format.clone();
         state.is_hdr = false;
     }
 
@@ -135,8 +147,9 @@ impl HwVideoFilter for Libplacebo {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!(
-            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709",
-            self.algorithm.as_deref().unwrap_or("linear")
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}",
+            self.algorithm.as_deref().unwrap_or("linear"),
+            self.format.as_arg(),
         ))
     }
 }

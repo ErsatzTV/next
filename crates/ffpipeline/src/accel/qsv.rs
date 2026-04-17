@@ -12,7 +12,12 @@ pub struct Qsv {
 }
 
 impl HwAccel for Qsv {
-    fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter {
+    fn best_filter(
+        &self,
+        video_filter: &VideoFilter,
+        ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale { size, .. }
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>

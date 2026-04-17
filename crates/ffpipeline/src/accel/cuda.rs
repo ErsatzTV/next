@@ -23,7 +23,12 @@ impl Cuda {
 }
 
 impl HwAccel for Cuda {
-    fn best_filter(&self, video_filter: &VideoFilter, ffmpeg_info: &FfmpegInfo) -> VideoFilter {
+    fn best_filter(
+        &self,
+        video_filter: &VideoFilter,
+        ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale {
                 size,

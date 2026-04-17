@@ -81,7 +81,7 @@ impl FilterChain {
             match filter {
                 PipelineFilter::Video(video_filter) => {
                     let mut best = match accel {
-                        Some(a) => a.best_filter(video_filter, ffmpeg_info),
+                        Some(a) => a.best_filter(video_filter, ffmpeg_info, &current_state),
                         _ => video_filter.clone(),
                     };
 
