@@ -618,7 +618,7 @@ impl ChannelSession {
         PlayoutItem {
             id: uuid::Uuid::new_v4().to_string(),
             start: self.transcoded_until,
-            finish: next_start.unwrap_or(self.transcoded_until + Duration::from_mins(2)),
+            finish: next_start.unwrap_or(self.transcoded_until + Duration::from_mins(1)),
             source: None,
             tracks: Some(PlayoutItemTracks {
                 audio: Some(TrackSelection::Source {
