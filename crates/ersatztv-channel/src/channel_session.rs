@@ -628,7 +628,19 @@ impl ChannelSession {
                 }),
                 video: Some(TrackSelection::Source {
                     source: PlayoutItemSource::Lavfi {
-                        params: String::from("color=c=black:s=1920x1080"),
+                        params: format!(
+                            "color=c=black:s={}x{}",
+                            self.channel_config
+                                .normalization
+                                .video
+                                .height
+                                .unwrap_or(1920),
+                            self.channel_config
+                                .normalization
+                                .video
+                                .height
+                                .unwrap_or(1080),
+                        ),
                     },
                 }),
             }),
