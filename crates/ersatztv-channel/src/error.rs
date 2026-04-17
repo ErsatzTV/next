@@ -1,6 +1,7 @@
 use ersatztv_playout::error::PlayoutError;
 use ffpipeline::error::FFPipelineError;
 use thiserror::Error;
+use time::OffsetDateTime;
 
 #[derive(Error, Debug)]
 pub enum ChannelError {
@@ -27,6 +28,9 @@ pub enum ChannelError {
 
     #[error("{0}")]
     PlayoutJsonLoadFailure(#[from] PlayoutError),
+
+    #[error("unable to find playout JSON file for time {0}")]
+    PlayoutJsonNoFileForTime(OffsetDateTime),
 
     #[error("unable to find current item in playout JSON")]
     PlayoutJsonNoItem,

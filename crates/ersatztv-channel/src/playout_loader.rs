@@ -28,7 +28,37 @@ impl PlayoutLoader {
                 .to_string_lossy()
         );
 
-        // find first playout JSON in folder
+        let path = self.playout_file_for_time(now).await?;
+        log::debug!("playout JSON is {path}");
+
+        // load playout JSON
+        let playout_result = ersatztv_playout::playout::from_file(&path).await?;
+
+        // find current item
+        playout_result
+            .playout
+            .items
+            .into_iter()
+            .rfind(|i| now >= &i.start && now < &i.finish())
+            .ok_or(ChannelError::PlayoutJsonNoItem)
+    }
+
+    pub async fn get_start_after(&self, now: &OffsetDateTime) -> Option<OffsetDateTime> {
+        match self.playout_file_for_time(now).await {
+            Ok(path) => match ersatztv_playout::playout::from_file(&path).await {
+                Ok(playout_result) => playout_result
+                    .playout
+                    .items
+                    .into_iter()
+                    .find(|i| &i.start > now)
+                    .map(|i| i.start),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        }
+    }
+
+    async fn playout_file_for_time(&self, now: &OffsetDateTime) -> Result<String, ChannelError> {
         let mut entries = tokio::fs::read_dir(self.channel_config.expanded_playout_folder())
             .await
             .map_err(|e| {
@@ -58,27 +88,13 @@ impl PlayoutLoader {
                             && now >= &start
                             && now < &finish
                         {
-                            log::debug!("playout JSON is {path}");
-
-                            // load playout JSON
-                            let playout_result =
-                                ersatztv_playout::playout::from_file(&path).await?;
-
-                            // find current item
-                            return playout_result
-                                .playout
-                                .items
-                                .into_iter()
-                                .rfind(|i| now >= &i.start && now < &i.finish())
-                                .ok_or(ChannelError::PlayoutJsonNoItem);
+                            return Ok(path);
                         }
                     }
                 }
             }
         }
 
-        Err(ChannelError::ChannelConfigFailure(String::from(
-            "found no files for the current time",
-        )))
+        Err(ChannelError::PlayoutJsonNoFileForTime(*now))
     }
 }

@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
-use ersatztv_playout::playout::{PlayoutItem, PlayoutItemSource, TrackSelection};
+use ersatztv_playout::playout::{
+    PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
+};
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
@@ -290,10 +292,25 @@ impl ChannelSession {
         }
 
         // TODO: transcode error message instead of bailing
-        let current_item = self
+        let current_item_result = self
             .playout_loader
             .get_current_item(&self.transcoded_until)
-            .await?;
+            .await;
+
+        let current_item = match current_item_result {
+            Ok(playout_item) => playout_item,
+            Err(ChannelError::PlayoutJsonNoItem) => {
+                let start_after_result = self
+                    .playout_loader
+                    .get_start_after(&self.transcoded_until)
+                    .await;
+                self.fake_playout_item(start_after_result)
+            }
+            Err(err) => {
+                log::error!("{}", err);
+                self.fake_playout_item(None)
+            }
+        };
 
         let current_source = current_item.source.clone();
         let audio_source = match current_source.as_ref() {
@@ -594,6 +611,27 @@ impl ChannelSession {
             out_point,
             finish,
             is_complete,
+        }
+    }
+
+    fn fake_playout_item(&self, next_start: Option<OffsetDateTime>) -> PlayoutItem {
+        PlayoutItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            start: self.transcoded_until,
+            finish: next_start.unwrap_or(self.transcoded_until + Duration::from_mins(2)),
+            source: None,
+            tracks: Some(PlayoutItemTracks {
+                audio: Some(TrackSelection::Source {
+                    source: PlayoutItemSource::Lavfi {
+                        params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
+                    },
+                }),
+                video: Some(TrackSelection::Source {
+                    source: PlayoutItemSource::Lavfi {
+                        params: String::from("color=c=black:s=1920x1080"),
+                    },
+                }),
+            }),
         }
     }
 }

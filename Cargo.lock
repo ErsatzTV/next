@@ -515,6 +515,7 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "uuid",
 ]
 
 [[package]]
