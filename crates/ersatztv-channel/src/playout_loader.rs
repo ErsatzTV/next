@@ -1,4 +1,4 @@
-use ersatztv_playout::playout::{DATE_FORMAT, PlayoutItem};
+use ersatztv_playout::playout::{DATE_FORMAT, PlayoutItem, PlayoutLoadResult};
 use time::OffsetDateTime;
 
 use crate::config::ChannelConfig;
@@ -34,28 +34,16 @@ impl PlayoutLoader {
         // load playout JSON
         let playout_result = ersatztv_playout::playout::from_file(&path).await?;
 
+        // in case current item isn't found
+        let next_start = self.next_start(&playout_result, now);
+
         // find current item
         playout_result
             .playout
             .items
             .into_iter()
             .rfind(|i| now >= &i.start && now < &i.finish())
-            .ok_or(ChannelError::PlayoutJsonNoItem)
-    }
-
-    pub async fn get_start_after(&self, now: &OffsetDateTime) -> Option<OffsetDateTime> {
-        match self.playout_file_for_time(now).await {
-            Ok(path) => match ersatztv_playout::playout::from_file(&path).await {
-                Ok(playout_result) => playout_result
-                    .playout
-                    .items
-                    .into_iter()
-                    .find(|i| &i.start > now)
-                    .map(|i| i.start),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        }
+            .ok_or(ChannelError::PlayoutJsonNoItem { next_start })
     }
 
     async fn playout_file_for_time(&self, now: &OffsetDateTime) -> Result<String, ChannelError> {
@@ -96,5 +84,18 @@ impl PlayoutLoader {
         }
 
         Err(ChannelError::PlayoutJsonNoFileForTime(*now))
+    }
+
+    fn next_start(
+        &self,
+        playout_result: &PlayoutLoadResult,
+        now: &OffsetDateTime,
+    ) -> Option<OffsetDateTime> {
+        playout_result
+            .playout
+            .items
+            .iter()
+            .find(|i| &i.start > now)
+            .map(|i| i.start)
     }
 }

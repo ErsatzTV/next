@@ -33,7 +33,7 @@ pub enum ChannelError {
     PlayoutJsonNoFileForTime(OffsetDateTime),
 
     #[error("unable to find current item in playout JSON")]
-    PlayoutJsonNoItem,
+    PlayoutJsonNoItem { next_start: Option<OffsetDateTime> },
 
     #[error("local source is invalid for playout item")]
     PlayoutJsonInvalidLocalSource,

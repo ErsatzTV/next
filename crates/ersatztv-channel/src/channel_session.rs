@@ -299,12 +299,8 @@ impl ChannelSession {
 
         let current_item = match current_item_result {
             Ok(playout_item) => playout_item,
-            Err(ChannelError::PlayoutJsonNoItem) => {
-                let start_after_result = self
-                    .playout_loader
-                    .get_start_after(&self.transcoded_until)
-                    .await;
-                self.fake_playout_item(start_after_result)
+            Err(ChannelError::PlayoutJsonNoItem { next_start }) => {
+                self.fake_playout_item(next_start)
             }
             Err(err) => {
                 log::error!("{}", err);
