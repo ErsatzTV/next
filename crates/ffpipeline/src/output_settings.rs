@@ -6,11 +6,7 @@ use crate::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, VideoFormat};
 
 #[derive(Debug)]
 pub struct OutputSettings {
-    pub audio_format: Option<AudioFormat>,
-    pub audio_bitrate: Option<Kbps>,
-    pub audio_buffer: Option<Kbps>,
-    pub audio_channels: Option<u32>,
-    pub audio_sample_rate: Option<Hz>,
+    pub audio: AudioOutputSettings,
     pub video_format: Option<VideoFormat>,
     pub bit_depth: Option<u8>,
     pub video_bitrate: Option<Kbps>,
@@ -22,4 +18,21 @@ pub struct OutputSettings {
     pub pts_offset: Option<PtsOffset>,
     pub realtime: bool,
     pub frame_rate: Option<FrameRate>,
+}
+
+#[derive(Debug)]
+pub struct AudioOutputSettings {
+    pub format: Option<AudioFormat>,
+    pub bitrate: Option<Kbps>,
+    pub buffer: Option<Kbps>,
+    pub channels: Option<u32>,
+    pub sample_rate: Option<Hz>,
+    pub loudness: Option<AudioLoudnessSettings>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AudioLoudnessSettings {
+    pub integrated_target: Option<f64>,
+    pub range_target: Option<f64>,
+    pub true_peak: Option<f64>,
 }

@@ -1,9 +1,14 @@
-use crate::pipeline::FrameState;
+use crate::output_settings::AudioLoudnessSettings;
+use crate::pipeline::{FrameState, Hz};
 
 #[derive(Clone)]
 pub enum AudioFilter {
     Resample,
     Pad,
+    LoudNorm {
+        settings: Option<AudioLoudnessSettings>,
+        sample_rate: Option<Hz>,
+    },
 }
 
 impl AudioFilter {
@@ -19,6 +24,26 @@ impl AudioFilter {
         match self {
             AudioFilter::Resample => Some(String::from("aresample=async=1")),
             AudioFilter::Pad => Some(String::from("apad")),
+            AudioFilter::LoudNorm { settings: None, .. } => None,
+            AudioFilter::LoudNorm {
+                settings,
+                sample_rate,
+            } => Some(format!(
+                "loudnorm=I={}:TP={}:LRA={},aresample={}",
+                settings
+                    .as_ref()
+                    .and_then(|s| s.integrated_target)
+                    .unwrap_or(-16f64),
+                settings
+                    .as_ref()
+                    .and_then(|s| s.true_peak)
+                    .unwrap_or(-1.5f64),
+                settings
+                    .as_ref()
+                    .and_then(|s| s.range_target)
+                    .unwrap_or(11f64),
+                sample_rate.unwrap_or(Hz(48_000)).0,
+            )),
         }
     }
 }

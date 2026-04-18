@@ -11,7 +11,7 @@ use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{InputSettings, InputSource, ProbedInput};
-use ffpipeline::output_settings::OutputSettings;
+use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
 use ffpipeline::probe::ProbeResult;
 use ffpipeline::{pipeline, probe};
@@ -392,11 +392,18 @@ impl ChannelSession {
 
         // generate pipeline
         let output_settings = OutputSettings {
-            audio_format: audio_norm.format.clone().map(AudioFormat::from),
-            audio_bitrate: audio_norm.bitrate_kbps.map(Kbps),
-            audio_buffer: audio_norm.buffer_kbps.map(Kbps),
-            audio_channels: audio_norm.channels,
-            audio_sample_rate: audio_norm.sample_rate_hz.map(Hz),
+            audio: AudioOutputSettings {
+                format: audio_norm.format.clone().map(AudioFormat::from),
+                bitrate: audio_norm.bitrate_kbps.map(Kbps),
+                buffer: audio_norm.buffer_kbps.map(Kbps),
+                channels: audio_norm.channels,
+                sample_rate: audio_norm.sample_rate_hz.map(Hz),
+                loudness: if audio_norm.normalize_loudness {
+                    audio_norm.loudness.as_ref().map(|l| l.into())
+                } else {
+                    None
+                },
+            },
             video_format: video_norm.format.clone().map(VideoFormat::from),
             bit_depth: video_norm.bit_depth,
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),

@@ -50,6 +50,9 @@ pub struct AudioNormalizationConfig {
     pub buffer_kbps: Option<u32>,
     pub channels: Option<u32>,
     pub sample_rate_hz: Option<u32>,
+    #[serde(default)]
+    pub normalize_loudness: bool,
+    pub loudness: Option<AudioLoudnessConfig>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -64,6 +67,23 @@ impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
         match value {
             AudioFormat::Aac => ffpipeline::pipeline::AudioFormat::Aac,
             AudioFormat::Ac3 => ffpipeline::pipeline::AudioFormat::Ac3,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct AudioLoudnessConfig {
+    pub integrated_target: Option<f64>,
+    pub range_target: Option<f64>,
+    pub true_peak: Option<f64>,
+}
+
+impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSettings {
+    fn from(value: &AudioLoudnessConfig) -> Self {
+        Self {
+            integrated_target: value.integrated_target,
+            range_target: value.range_target,
+            true_peak: value.true_peak,
         }
     }
 }

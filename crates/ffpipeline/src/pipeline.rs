@@ -182,7 +182,7 @@ impl Pipeline {
 
         log::debug!("duration is {:?}", duration);
 
-        let audio_codec = match final_output_settings.audio_format {
+        let audio_codec = match final_output_settings.audio.format {
             Some(AudioFormat::Aac) => AudioCodec::Aac,
             Some(AudioFormat::Ac3) => AudioCodec::Ac3,
             _ => AudioCodec::Copy,
@@ -245,7 +245,7 @@ impl Pipeline {
 
         let output_context = OutputContext {
             audio_codec,
-            audio_channels: final_output_settings.audio_channels,
+            audio_channels: final_output_settings.audio.channels,
             video_codec: video_codec.clone(),
             pts_offset: final_output_settings.pts_offset,
             media_frame_rate: video_stream.frame_rate.to_owned(),
@@ -261,6 +261,10 @@ impl Pipeline {
         };
 
         let mut filters = vec![
+            PipelineFilter::Audio(AudioFilter::LoudNorm {
+                settings: final_output_settings.audio.loudness.clone(),
+                sample_rate: final_output_settings.audio.sample_rate,
+            }),
             PipelineFilter::Audio(AudioFilter::Resample),
             PipelineFilter::Audio(AudioFilter::Pad),
         ];
@@ -327,10 +331,10 @@ impl Pipeline {
                 OutputOption::MovFlagsFastStart,
                 OutputOption::CudaNoAutoScale,
                 OutputOption::AudioCodec(audio_codec),
-                OutputOption::AudioBitrate(final_output_settings.audio_bitrate),
-                OutputOption::AudioBuffer(final_output_settings.audio_buffer),
-                OutputOption::AudioChannels(final_output_settings.audio_channels),
-                OutputOption::AudioSampleRate(final_output_settings.audio_sample_rate),
+                OutputOption::AudioBitrate(final_output_settings.audio.bitrate),
+                OutputOption::AudioBuffer(final_output_settings.audio.buffer),
+                OutputOption::AudioChannels(final_output_settings.audio.channels),
+                OutputOption::AudioSampleRate(final_output_settings.audio.sample_rate),
                 OutputOption::VideoCodec(video_codec),
                 OutputOption::VideoBitrate(final_output_settings.video_bitrate),
                 OutputOption::VideoBuffer(final_output_settings.video_buffer),

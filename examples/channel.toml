@@ -32,6 +32,19 @@ channels = 2
 # audio sample rate
 sample_rate_hz = 48_000
 
+# enable or disable loudness normalization
+normalize_loudness = true
+
+[normalization.audio.loudness]
+# integrated loudness target (from -70 to -5)
+integrated_target = -16
+
+# loudness range target (from 1 to 50)
+range_target = 11
+
+# maximum true peak (from -9 to 0)
+true_peak = -1.5
+
 [normalization.video]
 # video will be stream copied when format is not set (comment out the format line)
 # supported formats are `h264` and `hevc`
