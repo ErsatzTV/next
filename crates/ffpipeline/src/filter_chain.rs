@@ -215,10 +215,8 @@ impl FilterChain {
             .filters
             .iter()
             .position(|f| matches!(f, PipelineFilter::Video(VideoFilter::ToneMap { .. })))
-            && let Some(_) = self
-                .filters
-                .get(tonemap_index + 1)
-                .filter(|f| matches!(f, PipelineFilter::Video(VideoFilter::Scale { .. })))
+            && let Some(PipelineFilter::Video(VideoFilter::Scale { .. })) =
+                self.filters.get(tonemap_index + 1)
         {
             log::debug!("swapping software scale filter before software tonemap filter");
             self.filters.swap(tonemap_index, tonemap_index + 1);
