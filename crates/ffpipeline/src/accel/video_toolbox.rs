@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
@@ -35,12 +36,12 @@ impl HwAccel for VideoToolbox {
         }
     }
 
-    fn decoder_arg(&self) -> Vec<String> {
-        vec![
-            String::from("-hwaccel"),
-            String::from("videotoolbox"),
-            String::from("-hwaccel_output_format"),
-            String::from("videotoolbox_vld"),
+    fn decoder_arg(&self) -> ArgVec {
+        args![
+            "-hwaccel",
+            "videotoolbox",
+            "-hwaccel_output_format",
+            "videotoolbox_vld",
         ]
     }
 
@@ -56,7 +57,7 @@ impl HwAccel for VideoToolbox {
         self.clone()
     }
 
-    fn init_hw_device(&self) -> Vec<String> {
+    fn init_hw_device(&self) -> ArgVec {
         Vec::new()
     }
 

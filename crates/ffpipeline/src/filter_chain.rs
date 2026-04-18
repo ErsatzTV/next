@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
@@ -299,14 +300,11 @@ impl FilterChain {
         &self.video_label
     }
 
-    pub(crate) fn as_arg(&self) -> Vec<String> {
+    pub(crate) fn as_arg(&self) -> ArgVec {
         if self.complex_filter.is_empty() {
             Vec::new()
         } else {
-            vec![
-                String::from("-filter_complex"),
-                self.complex_filter.to_owned(),
-            ]
+            args!["-filter_complex", self.complex_filter.to_owned(),]
         }
     }
 }

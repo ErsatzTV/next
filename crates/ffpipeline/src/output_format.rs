@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::ArgVec;
 use crate::pipeline::{KEYFRAME_INTERVAL_SECONDS, OutputContext, SEGMENT_SECONDS};
 use crate::video_codec::VideoCodec;
 
@@ -12,7 +13,7 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub(crate) fn as_arg(&self, output_context: &OutputContext) -> Vec<String> {
+    pub(crate) fn as_arg(&self, output_context: &OutputContext) -> ArgVec {
         let force_key_frames_expr = format!("expr:gte(t,n_forced*{KEYFRAME_INTERVAL_SECONDS})");
         let segment_seconds = format!("{SEGMENT_SECONDS}");
         let rounded_frame_rate = output_context
@@ -24,34 +25,34 @@ impl OutputFormat {
         let gop = format!("{}", rounded_frame_rate * KEYFRAME_INTERVAL_SECONDS);
         let keyint_min = format!("{}", rounded_frame_rate * KEYFRAME_INTERVAL_SECONDS);
 
-        let mut args: Vec<&str> = Vec::new();
+        let mut args: ArgVec = Vec::new();
 
         match self {
             OutputFormat::Hls {
                 segment_template, ..
             } => {
                 if output_context.video_codec != VideoCodec::COPY {
-                    args.extend(vec![
+                    args.extend(args![
                         "-g",
-                        &gop,
+                        gop,
                         "-keyint_min",
-                        &keyint_min,
+                        keyint_min,
                         "-force_key_frames",
-                        &force_key_frames_expr,
+                        force_key_frames_expr,
                     ]);
                 }
 
-                args.extend(vec![
+                args.extend(args![
                     "-f",
                     "hls",
                     "-hls_time",
-                    &segment_seconds,
+                    segment_seconds,
                     "-hls_list_size",
                     "0",
                     "-segment_list_flags",
                     "+live",
                     "-hls_segment_filename",
-                    segment_template,
+                    segment_template.to_owned(),
                     "-hls_segment_type",
                     "mpegts",
                     "-hls_flags",
@@ -60,7 +61,7 @@ impl OutputFormat {
 
                 match output_context.pts_offset {
                     Some(pts_offset) if pts_offset.duration > Duration::ZERO => {}
-                    _ => args.extend(vec![
+                    _ => args.extend(args![
                         "-hls_segment_options",
                         "mpegts_flags=+initial_discontinuity",
                     ]),
@@ -68,7 +69,7 @@ impl OutputFormat {
             }
         }
 
-        args.into_iter().map(String::from).collect()
+        args
     }
 
     pub(crate) fn path(&self) -> String {

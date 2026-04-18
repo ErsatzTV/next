@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Formatter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -504,7 +505,7 @@ impl ChannelSession {
 
         // stream current item
         let mut ffmpeg_child = tokio::process::Command::new(&self.ffmpeg_path)
-            .args(args)
+            .args(args.iter().map(Cow::as_ref))
             .envs(envs)
             .stdout(std::process::Stdio::null())
             .spawn()

@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::filter_chain::PipelineFilter;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::output_settings::OutputSettings;
@@ -63,7 +64,7 @@ impl VideoDecoder {
         }
     }
 
-    pub(crate) fn as_arg(&self) -> Vec<String> {
+    pub(crate) fn as_arg(&self) -> ArgVec {
         match self {
             VideoDecoder::None => Vec::new(),
             VideoDecoder::Software => Vec::new(),

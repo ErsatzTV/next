@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
@@ -64,13 +65,8 @@ impl HwAccel for Vulkan {
         }
     }
 
-    fn decoder_arg(&self) -> Vec<String> {
-        vec![
-            String::from("-hwaccel"),
-            String::from("vulkan"),
-            String::from("-hwaccel_output_format"),
-            String::from("vulkan"),
-        ]
+    fn decoder_arg(&self) -> ArgVec {
+        args!["-hwaccel", "vulkan", "-hwaccel_output_format", "vulkan",]
     }
 
     fn decoder_frame_surface(&self) -> FrameSurface {
@@ -91,8 +87,8 @@ impl HwAccel for Vulkan {
         self.clone()
     }
 
-    fn init_hw_device(&self) -> Vec<String> {
-        vec![String::from("-init_hw_device"), String::from("vulkan")]
+    fn init_hw_device(&self) -> ArgVec {
+        args!["-init_hw_device", "vulkan"]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {

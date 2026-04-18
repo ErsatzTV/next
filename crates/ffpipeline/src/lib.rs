@@ -1,3 +1,9 @@
+use std::borrow::Cow;
+
+type ArgVec = Vec<Cow<'static, str>>;
+
+#[macro_use]
+mod macros;
 pub mod accel;
 pub mod audio_codec;
 pub mod audio_decoder;

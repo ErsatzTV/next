@@ -1,3 +1,5 @@
+use crate::ArgVec;
+
 #[derive(Copy, Clone, PartialEq)]
 pub enum AudioCodec {
     Copy,
@@ -6,13 +8,13 @@ pub enum AudioCodec {
 }
 
 impl AudioCodec {
-    pub(crate) fn as_arg(&self) -> Vec<String> {
+    pub(crate) fn as_arg(&self) -> ArgVec {
         let codec = match self {
-            AudioCodec::Copy => String::from("copy"),
-            AudioCodec::Aac => String::from("aac"),
-            AudioCodec::Ac3 => String::from("ac3"),
+            AudioCodec::Copy => "copy",
+            AudioCodec::Aac => "aac",
+            AudioCodec::Ac3 => "ac3",
         };
 
-        vec![String::from("-acodec"), codec]
+        args!["-acodec", codec]
     }
 }

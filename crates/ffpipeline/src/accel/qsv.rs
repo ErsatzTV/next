@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::capabilities::qsv::QsvCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
@@ -71,13 +72,8 @@ impl HwAccel for Qsv {
         }
     }
 
-    fn decoder_arg(&self) -> Vec<String> {
-        vec![
-            String::from("-hwaccel"),
-            String::from("qsv"),
-            String::from("-hwaccel_output_format"),
-            String::from("qsv"),
-        ]
+    fn decoder_arg(&self) -> ArgVec {
+        args!["-hwaccel", "qsv", "-hwaccel_output_format", "qsv",]
     }
 
     fn decoder_frame_surface(&self) -> FrameSurface {
@@ -92,13 +88,8 @@ impl HwAccel for Qsv {
         self.clone()
     }
 
-    fn init_hw_device(&self) -> Vec<String> {
-        vec![
-            String::from("-init_hw_device"),
-            String::from("qsv=hw"),
-            String::from("-filter_hw_device"),
-            String::from("hw"),
-        ]
+    fn init_hw_device(&self) -> ArgVec {
+        args!["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw",]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {

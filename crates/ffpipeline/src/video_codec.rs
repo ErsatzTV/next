@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+
+use crate::ArgVec;
 use crate::pipeline::PixelFormat;
 
 #[derive(Clone, PartialEq)]
@@ -34,11 +37,9 @@ impl VideoCodec {
         is_hardware: false,
     };
 
-    pub(crate) fn as_arg(&self) -> Vec<String> {
-        [&["-vcodec", self.codec_name], self.options]
-            .concat()
-            .into_iter()
-            .map(String::from)
-            .collect()
+    pub(crate) fn as_arg(&self) -> ArgVec {
+        let mut args = args!["-vcodec", self.codec_name];
+        args.extend(self.options.iter().copied().map(Cow::Borrowed));
+        args
     }
 }

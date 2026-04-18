@@ -1,11 +1,11 @@
 use enum_dispatch::enum_dispatch;
 
-use crate::accel;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
+use crate::{ArgVec, accel};
 
 #[enum_dispatch]
 pub trait HwAccel {
@@ -32,7 +32,7 @@ pub trait HwAccel {
         }
     }
     fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec>;
-    fn decoder_arg(&self) -> Vec<String>;
+    fn decoder_arg(&self) -> ArgVec;
     fn decoder_filters(&self) -> Vec<PipelineFilter> {
         Vec::new()
     }
@@ -45,7 +45,7 @@ pub trait HwAccel {
         None
     }
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self;
-    fn init_hw_device(&self) -> Vec<String>;
+    fn init_hw_device(&self) -> ArgVec;
     fn known_accel(&self) -> &KnownHardwareAccel;
     fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
         match source_pixel_format.bit_depth() {

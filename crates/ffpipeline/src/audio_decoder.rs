@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::output_settings::OutputSettings;
 use crate::probe::ProbeResultAudioStream;
 
@@ -19,14 +20,9 @@ impl AudioDecoder {
         }
     }
 
-    pub(crate) fn as_arg(&self) -> Vec<String> {
+    pub(crate) fn as_arg(&self) -> ArgVec {
         if self.input_codec == "ac3" && self.input_channels > 2 && self.output_channels == Some(2) {
-            return vec![
-                String::from("-acodec"),
-                String::from("ac3"),
-                String::from("-downmix"),
-                String::from("stereo"),
-            ];
+            return args!["-acodec", "ac3", "-downmix", "stereo"];
         }
 
         Vec::new()

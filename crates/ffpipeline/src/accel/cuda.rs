@@ -1,3 +1,4 @@
+use crate::ArgVec;
 use crate::capabilities::nvidia::NvidiaCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
@@ -105,22 +106,12 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn decoder_arg(&self) -> Vec<String> {
+    fn decoder_arg(&self) -> ArgVec {
         log::debug!("decoder arg, is_hdr: {}", self.is_vulkan_hdr);
         if self.is_vulkan_hdr {
-            vec![
-                String::from("-hwaccel"),
-                String::from("vulkan"),
-                String::from("-hwaccel_output_format"),
-                String::from("vulkan"),
-            ]
+            args!["-hwaccel", "vulkan", "-hwaccel_output_format", "vulkan",]
         } else {
-            vec![
-                String::from("-hwaccel"),
-                String::from("cuda"),
-                String::from("-hwaccel_output_format"),
-                String::from("cuda"),
-            ]
+            args!["-hwaccel", "cuda", "-hwaccel_output_format", "cuda",]
         }
     }
 
@@ -162,17 +153,17 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn init_hw_device(&self) -> Vec<String> {
+    fn init_hw_device(&self) -> ArgVec {
         log::debug!("init hw device, is_hdr: {}", self.is_vulkan_hdr);
         if self.is_vulkan_hdr {
-            vec![
-                String::from("-init_hw_device"),
-                String::from("cuda=nv"),
-                String::from("-init_hw_device"),
-                String::from("vulkan=vk@nv"),
+            args![
+                "-init_hw_device",
+                "cuda=nv",
+                "-init_hw_device",
+                "vulkan=vk@nv"
             ]
         } else {
-            vec![String::from("-init_hw_device"), String::from("cuda")]
+            args!["-init_hw_device", "cuda"]
         }
     }
 

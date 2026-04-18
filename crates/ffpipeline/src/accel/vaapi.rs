@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 
+use crate::ArgVec;
 use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
@@ -111,13 +112,8 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn decoder_arg(&self) -> Vec<String> {
-        vec![
-            String::from("-hwaccel"),
-            String::from("vaapi"),
-            String::from("-hwaccel_output_format"),
-            String::from("vaapi"),
-        ]
+    fn decoder_arg(&self) -> ArgVec {
+        args!["-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi"]
     }
 
     fn decoder_frame_surface(&self) -> FrameSurface {
@@ -142,8 +138,8 @@ impl HwAccel for Vaapi {
         self.clone()
     }
 
-    fn init_hw_device(&self) -> Vec<String> {
-        vec![String::from("-vaapi_device"), self.device.clone()]
+    fn init_hw_device(&self) -> ArgVec {
+        args!["-vaapi_device", self.device.clone()]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {

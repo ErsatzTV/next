@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::hw_accel::{HardwareAccel, HwAccel};
 
 pub enum LogLevel {
@@ -5,9 +7,9 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    fn as_arg(&self) -> Vec<String> {
+    fn as_arg(&self) -> Vec<Cow<'static, str>> {
         match self {
-            LogLevel::Error => vec![String::from("-loglevel"), String::from("error")],
+            LogLevel::Error => args!["-loglevel", "error"],
         }
     }
 }
@@ -22,16 +24,13 @@ pub enum GlobalOption {
 }
 
 impl GlobalOption {
-    pub(crate) fn as_arg(&self) -> Vec<String> {
+    pub(crate) fn as_arg(&self) -> Vec<Cow<'static, str>> {
         match self {
-            GlobalOption::Threads(count) => vec![String::from("-threads"), count.to_string()],
-            GlobalOption::NoStdIn => vec![String::from("-nostdin")],
-            GlobalOption::HideBanner => vec![String::from("-hide_banner")],
+            GlobalOption::Threads(count) => args!["-threads", count.to_string()],
+            GlobalOption::NoStdIn => args!["-nostdin"],
+            GlobalOption::HideBanner => args!["-hide_banner"],
             GlobalOption::LogLevel(level) => level.as_arg(),
-            GlobalOption::StandardFormatFlags => vec![
-                String::from("-fflags"),
-                String::from("+genpts+discardcorrupt+igndts"),
-            ],
+            GlobalOption::StandardFormatFlags => args!["-fflags", "+genpts+discardcorrupt+igndts",],
             GlobalOption::InitHwDevice(accel) => accel.init_hw_device(),
         }
     }

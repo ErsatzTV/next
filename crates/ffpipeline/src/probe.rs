@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::borrow::Cow;
 use std::fmt::Formatter;
 use std::path::Path;
 use std::time::Duration;
@@ -7,6 +7,7 @@ use enum_dispatch::enum_dispatch;
 use serde::Deserialize;
 use tokio::process::Command;
 
+use crate::ArgVec;
 use crate::error::FFPipelineError;
 use crate::error::FFPipelineError::ProbeFailed;
 use crate::frame_rate::FrameRate;
@@ -157,17 +158,17 @@ pub trait Probeable {
 
 impl Probeable for LocalInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
-        let mut args: Vec<String> = vec![
-            "-hide_banner".to_string(),
-            "-print_format".to_string(),
-            "json".to_string(),
-            "-show_format".to_string(),
-            "-show_streams".to_string(),
-            "-show_chapters".to_string(),
+        let mut args = args![
+            "-hide_banner",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            "-show_chapters",
         ];
         args.extend(self.args_for_input());
         let expanded_path = self.expand_path().ok_or(ProbeFailed)?;
-        args.extend(["-i".to_string(), expanded_path.clone()]);
+        args.extend(args!["-i", expanded_path.clone()]);
 
         probe_with_args(probe_deps.ffprobe_path, &expanded_path, &args).await
     }
@@ -229,32 +230,28 @@ impl Probeable for LavfiInputSource {
 
 impl Probeable for HttpInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
-        let mut args: Vec<String> = vec![
-            "-hide_banner".to_string(),
-            "-print_format".to_string(),
-            "json".to_string(),
-            "-show_format".to_string(),
-            "-show_streams".to_string(),
-            "-show_chapters".to_string(),
+        let mut args: ArgVec = args![
+            "-hide_banner",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            "-show_chapters",
         ];
         args.extend(self.args_for_input());
-        args.extend(["-i".to_string(), self.uri.clone()]);
+        args.extend(args!["-i", self.uri.clone()]);
 
         probe_with_args(probe_deps.ffprobe_path, &self.uri, &args).await
     }
 }
 
-async fn probe_with_args<I, S>(
+async fn probe_with_args(
     ffprobe_path: &Path,
     path: &str,
-    args: I,
-) -> Result<ProbeResult, FFPipelineError>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
+    args: &ArgVec,
+) -> Result<ProbeResult, FFPipelineError> {
     let output = Command::new(ffprobe_path)
-        .args(args)
+        .args(args.iter().map(Cow::as_ref))
         .output()
         .await
         .map_err(|_| FFPipelineError::ProbeFailed)?;

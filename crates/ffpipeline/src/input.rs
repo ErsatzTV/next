@@ -3,6 +3,7 @@ use std::time::Duration;
 use enum_dispatch::enum_dispatch;
 use simple_expand_tilde::expand_tilde;
 
+use crate::ArgVec;
 use crate::probe::ProbeResult;
 
 pub struct InputSettings {
@@ -55,46 +56,46 @@ pub enum InputSource {
 
 #[enum_dispatch]
 pub trait FfmpegInputArgs {
-    fn args_for_input(&self) -> Vec<String>;
+    fn args_for_input(&self) -> ArgVec;
 }
 
 impl FfmpegInputArgs for LocalInputSource {
-    fn args_for_input(&self) -> Vec<String> {
-        [].to_vec()
+    fn args_for_input(&self) -> ArgVec {
+        vec![]
     }
 }
 
 impl FfmpegInputArgs for LavfiInputSource {
-    fn args_for_input(&self) -> Vec<String> {
-        vec!["-f".to_string(), "lavfi".to_string()]
+    fn args_for_input(&self) -> ArgVec {
+        args!["-f", "lavfi"]
     }
 }
 impl FfmpegInputArgs for HttpInputSource {
-    fn args_for_input(&self) -> Vec<String> {
-        let mut args = Vec::new();
+    fn args_for_input(&self) -> ArgVec {
+        let mut args: ArgVec = Vec::new();
 
         if self.options.reconnect {
-            args.extend([
-                String::from("-reconnect"),
-                String::from("1"),
-                String::from("-reconnect_on_network_error"),
-                String::from("1"),
-                String::from("-reconnect_streamed"),
-                String::from("1"),
-                String::from("-multiple_requests"),
-                String::from("1"),
+            args.extend(args![
+                "-reconnect",
+                "1",
+                "-reconnect_on_network_error",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-multiple_requests",
+                "1",
             ]);
             if let Some(max_delay) = self.options.reconnect_delay_max {
-                args.extend([String::from("-reconnect_delay_max"), max_delay.to_string()]);
+                args.extend(args!["-reconnect_delay_max", max_delay.to_string()]);
             }
         }
 
         if let Some(timeout) = self.options.timeout_us {
-            args.extend([String::from("-timeout"), timeout.to_string()]);
+            args.extend(args!["-timeout", timeout.to_string()]);
         }
 
         if let Some(ua) = &self.options.user_agent {
-            args.extend([String::from("-user_agent"), ua.clone()]);
+            args.extend(args!["-user_agent", ua.clone()]);
         }
 
         if !self.options.headers.is_empty() {
@@ -105,12 +106,12 @@ impl FfmpegInputArgs for HttpInputSource {
                 .iter()
                 .map(|h| format!("{}\r\n", h))
                 .collect();
-            args.extend([String::from("-headers"), combined]);
+            args.extend(args!["-headers", combined]);
         }
 
-        args.extend([
-            String::from("-protocol_whitelist"),
-            String::from("file,http,https,tcp,tls,crypto"),
+        args.extend(args![
+            "-protocol_whitelist",
+            "file,http,https,tcp,tls,crypto",
         ]);
 
         args
