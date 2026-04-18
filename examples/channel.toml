@@ -29,6 +29,9 @@ buffer_kbps = 384
 # integer number of channels, 2 means stereo, 6 means 5.1, etc.
 channels = 2
 
+# audio sample rate
+sample_rate_hz = 48_000
+
 [normalization.video]
 # video will be stream copied when format is not set (comment out the format line)
 # supported formats are `h264` and `hevc`
