@@ -32,7 +32,17 @@ pub struct AudioOutputSettings {
 
 #[derive(Debug, Clone)]
 pub struct AudioLoudnessSettings {
-    pub integrated_target: Option<f64>,
-    pub range_target: Option<f64>,
-    pub true_peak: Option<f64>,
+    pub integrated_target: f64,
+    pub range_target: f64,
+    pub true_peak: f64,
+}
+
+impl Default for AudioLoudnessSettings {
+    fn default() -> Self {
+        Self {
+            integrated_target: -16f64,
+            true_peak: -1.5f64,
+            range_target: 11f64,
+        }
+    }
 }

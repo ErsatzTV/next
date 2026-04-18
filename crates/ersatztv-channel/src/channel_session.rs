@@ -399,7 +399,13 @@ impl ChannelSession {
                 channels: audio_norm.channels,
                 sample_rate: audio_norm.sample_rate_hz.map(Hz),
                 loudness: if audio_norm.normalize_loudness {
-                    audio_norm.loudness.as_ref().map(|l| l.into())
+                    Some(
+                        audio_norm
+                            .loudness
+                            .as_ref()
+                            .map(|l| l.into())
+                            .unwrap_or_default(),
+                    )
                 } else {
                     None
                 },

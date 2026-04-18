@@ -80,10 +80,14 @@ pub struct AudioLoudnessConfig {
 
 impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSettings {
     fn from(value: &AudioLoudnessConfig) -> Self {
+        let default_settings = Self::default();
+
         Self {
-            integrated_target: value.integrated_target,
-            range_target: value.range_target,
-            true_peak: value.true_peak,
+            integrated_target: value
+                .integrated_target
+                .unwrap_or(default_settings.integrated_target),
+            range_target: value.range_target.unwrap_or(default_settings.range_target),
+            true_peak: value.true_peak.unwrap_or(default_settings.true_peak),
         }
     }
 }

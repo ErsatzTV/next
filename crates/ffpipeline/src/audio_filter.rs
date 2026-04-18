@@ -24,26 +24,18 @@ impl AudioFilter {
         match self {
             AudioFilter::Resample => Some(String::from("aresample=async=1")),
             AudioFilter::Pad => Some(String::from("apad")),
-            AudioFilter::LoudNorm { settings: None, .. } => None,
             AudioFilter::LoudNorm {
                 settings,
                 sample_rate,
-            } => Some(format!(
-                "loudnorm=I={}:TP={}:LRA={},aresample={}",
-                settings
-                    .as_ref()
-                    .and_then(|s| s.integrated_target)
-                    .unwrap_or(-16f64),
-                settings
-                    .as_ref()
-                    .and_then(|s| s.true_peak)
-                    .unwrap_or(-1.5f64),
-                settings
-                    .as_ref()
-                    .and_then(|s| s.range_target)
-                    .unwrap_or(11f64),
-                sample_rate.unwrap_or(Hz(48_000)).0,
-            )),
+            } => settings.as_ref().map(|s| {
+                format!(
+                    "loudnorm=I={}:TP={}:LRA={},aresample={}",
+                    s.integrated_target,
+                    s.true_peak,
+                    s.range_target,
+                    sample_rate.unwrap_or(Hz(48_000)).0,
+                )
+            }),
         }
     }
 }
