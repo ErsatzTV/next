@@ -11,7 +11,7 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
-use crate::input::{HttpInputOptions, InputSettings, InputSource};
+use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
 use crate::output_option::OutputOption;
 use crate::output_settings::OutputSettings;
 use crate::probe::{ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
@@ -438,16 +438,7 @@ impl Pipeline {
 
                     // if more than one path, audio is probably separate from video
                     if distinct_paths.len() > 1 {
-                        match input_source {
-                            InputSource::Lavfi { .. } => {
-                                result.extend([String::from("-f"), String::from("lavfi")]);
-                            }
-                            InputSource::Http { options, .. } => {
-                                result.extend(Self::http_input_args(options));
-                            }
-                            _ => {}
-                        }
-
+                        result.extend(input_source.args_for_input());
                         result.extend([String::from("-i"), path.to_owned()]);
                     }
                 }
@@ -474,15 +465,7 @@ impl Pipeline {
                         result.extend([String::from("-readrate"), String::from("1.0")]);
                     }
 
-                    match input_source {
-                        InputSource::Lavfi { .. } => {
-                            result.extend([String::from("-f"), String::from("lavfi")]);
-                        }
-                        InputSource::Http { options, .. } => {
-                            result.extend(Self::http_input_args(options));
-                        }
-                        _ => {}
-                    }
+                    result.extend(input_source.args_for_input());
 
                     result.extend([String::from("-i"), path.to_owned()]);
                 }
@@ -506,51 +489,6 @@ impl Pipeline {
         result.extend([self.output.path.to_owned()]);
 
         result
-    }
-
-    fn http_input_args(options: &HttpInputOptions) -> Vec<String> {
-        let mut args = Vec::new();
-
-        if options.reconnect {
-            args.extend([
-                String::from("-reconnect"),
-                String::from("1"),
-                String::from("-reconnect_on_network_error"),
-                String::from("1"),
-                String::from("-reconnect_streamed"),
-                String::from("1"),
-                String::from("-multiple_requests"),
-                String::from("1"),
-            ]);
-            if let Some(max_delay) = options.reconnect_delay_max {
-                args.extend([String::from("-reconnect_delay_max"), max_delay.to_string()]);
-            }
-        }
-
-        if let Some(timeout) = options.timeout_us {
-            args.extend([String::from("-timeout"), timeout.to_string()]);
-        }
-
-        if let Some(ua) = &options.user_agent {
-            args.extend([String::from("-user_agent"), ua.clone()]);
-        }
-
-        if !options.headers.is_empty() {
-            // FFmpeg expects headers separated by \r\n, with trailing \r\n
-            let combined: String = options
-                .headers
-                .iter()
-                .map(|h| format!("{}\r\n", h))
-                .collect();
-            args.extend([String::from("-headers"), combined]);
-        }
-
-        args.extend([
-            String::from("-protocol_whitelist"),
-            String::from("file,http,https,tcp,tls,crypto"),
-        ]);
-
-        args
     }
 
     pub fn envs(&self) -> Vec<(String, String)> {

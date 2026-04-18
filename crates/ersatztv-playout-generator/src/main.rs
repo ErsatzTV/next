@@ -5,7 +5,9 @@ mod sync;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use ffpipeline::probe::ProbeResult;
+use ffpipeline::input::{InputSource, LocalInputSource};
+use ffpipeline::probe;
+use ffpipeline::probe::{ProbeResult, Probeable};
 use walkdir::DirEntry;
 
 use crate::error::PlayoutGeneratorError;
@@ -92,11 +94,15 @@ fn is_image_extension(dir_entry: &DirEntry) -> bool {
 
 async fn to_probe_result(dir_entry: &DirEntry) -> Option<PathAndProbe> {
     if let Some(video_path) = dir_entry.path().to_str()
-        && let Ok(probe_result) = ffpipeline::probe::probe(Path::new("ffprobe"), video_path).await
-    // && probe_result
-    //     .duration
-    //     .filter(|d| d.as_secs() < 120)
-    //     .is_some()
+        && let input_source = InputSource::Local(LocalInputSource {
+            path: video_path.to_string(),
+        })
+        && let Ok(probe_result) = input_source
+            .probe(&probe::ProbeDeps {
+                ffprobe_path: Path::new("ffprobe"),
+                ffmpeg_path: Path::new("ffmpeg"),
+            })
+            .await
     {
         return Some(PathAndProbe {
             path: dir_entry.path().to_path_buf(),

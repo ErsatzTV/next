@@ -1,11 +1,19 @@
+use std::ffi::OsStr;
 use std::fmt::Formatter;
+use std::path::Path;
 use std::time::Duration;
 
+use enum_dispatch::enum_dispatch;
 use serde::Deserialize;
 use tokio::process::Command;
 
 use crate::error::FFPipelineError;
+use crate::error::FFPipelineError::ProbeFailed;
 use crate::frame_rate::FrameRate;
+use crate::input::InputSource;
+use crate::input::LavfiInputSource;
+use crate::input::LocalInputSource;
+use crate::input::{FfmpegInputArgs, HttpInputSource};
 
 #[derive(Debug, Clone)]
 pub struct ProbeResultColorParams {
@@ -134,21 +142,119 @@ struct ProbeOutput {
     format: ProbeOutputFormat,
 }
 
-pub async fn probe(
-    ffprobe_path: &std::path::Path,
+pub struct ProbeDeps<'a> {
+    pub ffmpeg_path: &'a Path,
+    pub ffprobe_path: &'a Path,
+}
+
+#[enum_dispatch]
+pub trait Probeable {
+    // Temporarily allow this - expanding out to the impl Future syntax
+    // seems to break enum_dispatch.
+    #[allow(async_fn_in_trait)]
+    async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError>;
+}
+
+impl Probeable for LocalInputSource {
+    async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
+        let mut args: Vec<String> = vec![
+            "-hide_banner".to_string(),
+            "-print_format".to_string(),
+            "json".to_string(),
+            "-show_format".to_string(),
+            "-show_streams".to_string(),
+            "-show_chapters".to_string(),
+        ];
+        args.extend(self.args_for_input());
+        let expanded_path = self.expand_path().ok_or(ProbeFailed)?;
+        args.extend(["-i".to_string(), expanded_path.clone()]);
+
+        probe_with_args(probe_deps.ffprobe_path, &expanded_path, &args).await
+    }
+}
+
+impl Probeable for LavfiInputSource {
+    async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
+        let mut ffmpeg = Command::new(probe_deps.ffmpeg_path)
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                self.params.as_str(),
+                "-t",
+                "1",
+                "-f",
+                "nut",
+                "pipe:1",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|_| FFPipelineError::ProbeFailed)?;
+
+        let ffmpeg_stdout: std::process::Stdio = ffmpeg
+            .stdout
+            .take()
+            .ok_or(FFPipelineError::ProbeFailed)?
+            .try_into()
+            .map_err(|_| FFPipelineError::ProbeFailed)?;
+
+        let output = Command::new(probe_deps.ffprobe_path)
+            .args([
+                "-hide_banner",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                "-show_chapters",
+                "-i",
+                "pipe:0",
+            ])
+            .stdin(ffmpeg_stdout)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|_| FFPipelineError::ProbeFailed)?;
+
+        let _ = ffmpeg.wait().await;
+
+        if !output.status.success() {
+            return Err(FFPipelineError::ProbeFailed);
+        }
+
+        parse_ffprobe_stdout(self.params.clone(), output.stdout)
+    }
+}
+
+impl Probeable for HttpInputSource {
+    async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
+        let mut args: Vec<String> = vec![
+            "-hide_banner".to_string(),
+            "-print_format".to_string(),
+            "json".to_string(),
+            "-show_format".to_string(),
+            "-show_streams".to_string(),
+            "-show_chapters".to_string(),
+        ];
+        args.extend(self.args_for_input());
+        args.extend(["-i".to_string(), self.uri.clone()]);
+
+        probe_with_args(probe_deps.ffprobe_path, &self.uri, &args).await
+    }
+}
+
+async fn probe_with_args<I, S>(
+    ffprobe_path: &Path,
     path: &str,
-) -> Result<ProbeResult, FFPipelineError> {
+    args: I,
+) -> Result<ProbeResult, FFPipelineError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let output = Command::new(ffprobe_path)
-        .args([
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-            "-i",
-            path,
-        ])
+        .args(args)
         .output()
         .await
         .map_err(|_| FFPipelineError::ProbeFailed)?;
@@ -162,56 +268,10 @@ pub async fn probe(
         return Err(FFPipelineError::ProbeFailed);
     }
 
-    parse_ffprobe_stdout(path, output.stdout)
+    parse_ffprobe_stdout(path.to_owned(), output.stdout)
 }
 
-pub async fn probe_lavfi(
-    ffprobe_path: &std::path::Path,
-    ffmpeg_path: &std::path::Path,
-    lavfi: &str,
-) -> Result<ProbeResult, FFPipelineError> {
-    let mut ffmpeg = Command::new(ffmpeg_path)
-        .args(["-f", "lavfi", "-i", lavfi, "-t", "1", "-f", "nut", "pipe:1"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|_| FFPipelineError::ProbeFailed)?;
-
-    let ffmpeg_stdout: std::process::Stdio = ffmpeg
-        .stdout
-        .take()
-        .ok_or(FFPipelineError::ProbeFailed)?
-        .try_into()
-        .map_err(|_| FFPipelineError::ProbeFailed)?;
-
-    let output = Command::new(ffprobe_path)
-        .args([
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-            "-i",
-            "pipe:0",
-        ])
-        .stdin(ffmpeg_stdout)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .await
-        .map_err(|_| FFPipelineError::ProbeFailed)?;
-
-    let _ = ffmpeg.wait().await;
-
-    if !output.status.success() {
-        return Err(FFPipelineError::ProbeFailed);
-    }
-
-    parse_ffprobe_stdout(lavfi, output.stdout)
-}
-
-fn parse_ffprobe_stdout(path: &str, stdout: Vec<u8>) -> Result<ProbeResult, FFPipelineError> {
+fn parse_ffprobe_stdout(path: String, stdout: Vec<u8>) -> Result<ProbeResult, FFPipelineError> {
     let raw_output = String::from_utf8(stdout).map_err(|_| FFPipelineError::ProbeFailedToParse)?;
 
     //println!("{raw_output}");
