@@ -386,6 +386,7 @@ impl Pipeline {
             &self.output_context.preferred_surface,
             &self.output_context.preferred_pixel_format,
         );
+        self.filter_chain.optimize();
 
         if let Some(accel) = self.needs_hw_device() {
             self.global_options.push(GlobalOption::InitHwDevice(accel));
