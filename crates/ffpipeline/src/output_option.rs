@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::audio_codec::AudioCodec;
 use crate::frame_rate::FrameRate;
 use crate::output_format::OutputFormat;
-use crate::pipeline::{Kbps, OutputContext, PtsOffset};
+use crate::pipeline::{Hz, Kbps, OutputContext, PtsOffset};
 use crate::video_codec::VideoCodec;
 
 pub enum OutputOption {
@@ -15,6 +15,7 @@ pub enum OutputOption {
     AudioBitrate(Option<Kbps>),
     AudioBuffer(Option<Kbps>),
     AudioChannels(Option<u32>),
+    AudioSampleRate(Option<Hz>),
     Duration(Duration),
     TsOffset(Option<PtsOffset>),
     CudaNoAutoScale,
@@ -60,6 +61,10 @@ impl OutputOption {
                 vec![String::from("-ac"), format!("{}", channels)]
             }
             OutputOption::AudioChannels(None) => Vec::new(),
+            OutputOption::AudioSampleRate(Some(sample_rate)) => {
+                vec![String::from("-ar"), format!("{}", sample_rate.0)]
+            }
+            OutputOption::AudioSampleRate(None) => Vec::new(),
             OutputOption::Duration(duration) => {
                 vec![String::from("-t"), format!("{}ms", duration.as_millis())]
             }

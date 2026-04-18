@@ -12,7 +12,7 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{InputSettings, InputSource, ProbedInput};
 use ffpipeline::output_settings::OutputSettings;
-use ffpipeline::pipeline::{AudioFormat, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
+use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
 use ffpipeline::probe::ProbeResult;
 use ffpipeline::{pipeline, probe};
 use simple_expand_tilde::expand_tilde;
@@ -396,6 +396,7 @@ impl ChannelSession {
             audio_bitrate: audio_norm.bitrate_kbps.map(Kbps),
             audio_buffer: audio_norm.buffer_kbps.map(Kbps),
             audio_channels: audio_norm.channels,
+            audio_sample_rate: audio_norm.sample_rate_hz.map(Hz),
             video_format: video_norm.format.clone().map(VideoFormat::from),
             bit_depth: video_norm.bit_depth,
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),

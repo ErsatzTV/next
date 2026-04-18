@@ -2,7 +2,7 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HardwareAccel;
 use crate::output_format::OutputFormat;
-use crate::pipeline::{AudioFormat, Kbps, PtsOffset, VideoFormat};
+use crate::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, VideoFormat};
 
 #[derive(Debug)]
 pub struct OutputSettings {
@@ -10,6 +10,7 @@ pub struct OutputSettings {
     pub audio_bitrate: Option<Kbps>,
     pub audio_buffer: Option<Kbps>,
     pub audio_channels: Option<u32>,
+    pub audio_sample_rate: Option<Hz>,
     pub video_format: Option<VideoFormat>,
     pub bit_depth: Option<u8>,
     pub video_bitrate: Option<Kbps>,

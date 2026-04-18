@@ -49,6 +49,7 @@ pub struct AudioNormalizationConfig {
     pub bitrate_kbps: Option<u32>,
     pub buffer_kbps: Option<u32>,
     pub channels: Option<u32>,
+    pub sample_rate_hz: Option<u32>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
