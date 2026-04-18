@@ -42,7 +42,7 @@ pub fn expand_template(input: &str) -> Result<String, PlayoutError> {
                 if partial_match {
                     continue;
                 } else if found_close {
-                    let var_name = &input[name_start..name_end];
+                    let var_name = input[name_start..name_end].trim();
                     if var_name.is_empty() || !is_valid_var_name(var_name) {
                         // Not a valid variable reference, emit literally
                         result.push_str("{{");
@@ -103,6 +103,15 @@ mod tests {
         unsafe { std::env::set_var("TEST_TOKEN_1", "secret123") };
         let result =
             expand_template("https://example.com/file.mkv?token={{TEST_TOKEN_1}}").unwrap();
+        assert_eq!(result, "https://example.com/file.mkv?token=secret123");
+    }
+
+    #[test]
+    fn consumes_extra_whitespace() {
+        // SAFETY: test-only, single-threaded
+        unsafe { std::env::set_var("TEST_TOKEN_1", "secret123") };
+        let result =
+            expand_template("https://example.com/file.mkv?token={{ TEST_TOKEN_1  }}").unwrap();
         assert_eq!(result, "https://example.com/file.mkv?token=secret123");
     }
 
