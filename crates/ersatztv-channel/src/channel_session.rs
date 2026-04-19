@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
     PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
@@ -22,8 +24,6 @@ use ffpipeline::{pipeline, probe};
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
-use crate::config::ChannelConfig;
-use crate::error::ChannelError;
 use crate::playlist_manager::PlaylistManager;
 use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};

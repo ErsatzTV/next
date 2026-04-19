@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChannelConfig",
+  "type": "object",
+  "properties": {
+    "ffmpeg": {
+      "$ref": "#/$defs/FfmpegConfig"
+    },
+    "normalization": {
+      "$ref": "#/$defs/NormalizationConfig"
+    },
+    "playout": {
+      "$ref": "#/$defs/PlayoutConfig"
+    }
+  },
+  "required": [
+    "playout",
+    "ffmpeg",
+    "normalization"
+  ],
+  "$defs": {
+    "AudioFormat": {
+      "type": "string",
+      "enum": [
+        "aac",
+        "ac3"
+      ]
+    },
+    "AudioLoudnessConfig": {
+      "type": "object",
+      "properties": {
+        "integrated_target": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "range_target": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "true_peak": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "AudioNormalizationConfig": {
+      "type": "object",
+      "properties": {
+        "bitrate_kbps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "buffer_kbps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "channels": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loudness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioLoudnessConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normalize_loudness": {
+          "type": "boolean",
+          "default": false
+        },
+        "sample_rate_hz": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    },
+    "FfmpegConfig": {
+      "type": "object",
+      "properties": {
+        "disabled_filters": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ffmpeg_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ffprobe_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "HardwareAccel": {
+      "type": "string",
+      "enum": [
+        "cuda",
+        "qsv",
+        "vaapi",
+        "videotoolbox",
+        "vulkan"
+      ]
+    },
+    "NormalizationConfig": {
+      "type": "object",
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioNormalizationConfig"
+        },
+        "video": {
+          "$ref": "#/$defs/VideoNormalizationConfig"
+        }
+      },
+      "required": [
+        "audio",
+        "video"
+      ]
+    },
+    "PlayoutConfig": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string"
+        },
+        "virtual_start": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "folder"
+      ]
+    },
+    "VaapiDriver": {
+      "type": "string",
+      "enum": [
+        "ihd",
+        "i965",
+        "radeonsi"
+      ]
+    },
+    "VideoFormat": {
+      "type": "string",
+      "enum": [
+        "h264",
+        "hevc"
+      ]
+    },
+    "VideoNormalizationConfig": {
+      "type": "object",
+      "properties": {
+        "accel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HardwareAccel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bit_depth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "default": null,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "bitrate_kbps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "buffer_kbps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "tonemap_algorithm": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "vaapi_device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "vaapi_driver": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VaapiDriver"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

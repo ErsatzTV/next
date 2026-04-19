@@ -2,11 +2,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
 use time::OffsetDateTime;
 use time::macros::format_description;
-
-use crate::error::ChannelError;
 
 const MIN_SEGMENTS: usize = 4;
 

@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
 use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
+use tokio::io::AsyncReadExt;
 
 use crate::error::ChannelError;
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
     pub playout: PlayoutConfig,
     pub ffmpeg: FfmpegConfig,
@@ -22,14 +24,15 @@ pub struct ChannelConfig {
     number: String,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct PlayoutConfig {
     pub folder: String,
     #[serde(default, with = "time::serde::rfc3339::option")]
+    #[schemars(with = "Option<String>")]
     pub virtual_start: Option<OffsetDateTime>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct FfmpegConfig {
     pub ffmpeg_path: Option<PathBuf>,
     pub ffprobe_path: Option<PathBuf>,
@@ -37,13 +40,13 @@ pub struct FfmpegConfig {
     pub disabled_filters: Vec<String>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct NormalizationConfig {
     pub audio: AudioNormalizationConfig,
     pub video: VideoNormalizationConfig,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct AudioNormalizationConfig {
     pub format: Option<AudioFormat>,
     pub bitrate_kbps: Option<u32>,
@@ -55,7 +58,7 @@ pub struct AudioNormalizationConfig {
     pub loudness: Option<AudioLoudnessConfig>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     Aac,
@@ -71,7 +74,7 @@ impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
     }
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct AudioLoudnessConfig {
     pub integrated_target: Option<f64>,
     pub range_target: Option<f64>,
@@ -92,7 +95,7 @@ impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSe
     }
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct VideoNormalizationConfig {
     pub format: Option<VideoFormat>,
     #[serde(default, deserialize_with = "deserialize_bit_depth")]
@@ -107,7 +110,7 @@ pub struct VideoNormalizationConfig {
     pub tonemap_algorithm: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VaapiDriver {
     Ihd,
@@ -125,14 +128,14 @@ impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
     }
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VideoFormat {
     H264,
     Hevc,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HardwareAccel {
     Cuda,
@@ -143,7 +146,7 @@ pub enum HardwareAccel {
 }
 
 impl HardwareAccel {
-    pub(crate) fn to_pipeline(
+    pub fn to_pipeline(
         &self,
         channel_config: &ChannelConfig,
     ) -> Option<ffpipeline::hw_accel::HardwareAccel> {
@@ -246,25 +249,45 @@ impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
 }
 
 impl ChannelConfig {
+    pub async fn from_stdin(
+        output_folder: &PathBuf,
+        number: &str,
+    ) -> Result<ChannelConfig, ChannelError> {
+        let mut config_string = String::new();
+        let limit = 256 * 1024; // 256K
+        let mut reader = tokio::io::stdin().take(limit);
+
+        reader.read_to_string(&mut config_string).await?;
+
+        let mut channel_config: ChannelConfig = serde_json::from_str(&config_string)
+            .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
+
+        // expand playout folder
+        let playout_folder = PathBuf::from(&channel_config.playout.folder);
+        let expanded_playout_folder =
+            expand_tilde(&playout_folder).ok_or(ChannelError::ChannelConfigExpandPlayoutFolder)?;
+        if expanded_playout_folder.is_relative() {
+            return Err(ChannelError::ChannelConfigFailure(String::from(
+                "relative playout folders are not supported with config from stdin",
+            )));
+        }
+        channel_config.expanded_playout_folder = expanded_playout_folder;
+
+        channel_config.finalize(output_folder, number)?;
+
+        Ok(channel_config)
+    }
+
     pub async fn from_file(
         path: &PathBuf,
         output_folder: &PathBuf,
         number: &str,
     ) -> Result<ChannelConfig, ChannelError> {
-        // load and deserialize
         let config_string = tokio::fs::read_to_string(path)
             .await
             .map_err(ChannelError::ChannelConfigIoFailure)?;
         let mut channel_config: ChannelConfig = toml::from_str(&config_string)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
-
-        if channel_config.normalization.video.format.is_some()
-            && channel_config.normalization.video.bit_depth.is_none()
-        {
-            return Err(ChannelError::ChannelConfigFailure(String::from(
-                "bit_depth is required when normalizing video",
-            )));
-        }
 
         // expand playout folder
         let playout_folder = PathBuf::from(&channel_config.playout.folder);
@@ -280,13 +303,26 @@ impl ChannelConfig {
         }
         channel_config.expanded_playout_folder = expanded_playout_folder;
 
-        // expand output folder
-        channel_config.expanded_output_folder =
-            expand_tilde(output_folder).ok_or(ChannelError::ChannelConfigExpandOutputFolder)?;
-
-        channel_config.number = number.to_owned();
+        channel_config.finalize(output_folder, number)?;
 
         Ok(channel_config)
+    }
+
+    fn finalize(&mut self, output_folder: &PathBuf, number: &str) -> Result<(), ChannelError> {
+        if self.normalization.video.format.is_some() && self.normalization.video.bit_depth.is_none()
+        {
+            return Err(ChannelError::ChannelConfigFailure(String::from(
+                "bit_depth is required when normalizing video",
+            )));
+        }
+
+        // expand output folder
+        self.expanded_output_folder =
+            expand_tilde(output_folder).ok_or(ChannelError::ChannelConfigExpandOutputFolder)?;
+
+        self.number = number.to_owned();
+
+        Ok(())
     }
 
     pub fn expanded_playout_folder(&self) -> &PathBuf {

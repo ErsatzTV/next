@@ -1,8 +1,7 @@
+use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::error::ChannelError;
 use ersatztv_playout::playout::{DATE_FORMAT, PlayoutItem, PlayoutLoadResult};
 use time::OffsetDateTime;
-
-use crate::config::ChannelConfig;
-use crate::error::ChannelError;
 
 pub struct PlayoutLoader {
     channel_config: ChannelConfig,

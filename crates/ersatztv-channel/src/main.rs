@@ -1,6 +1,4 @@
 mod channel_session;
-mod config;
-mod error;
 mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
@@ -8,11 +6,11 @@ mod pts_scanner;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::error::ChannelError;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
-use crate::config::ChannelConfig;
-use crate::error::ChannelError;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -58,8 +56,11 @@ async fn run() -> Result<(), ChannelError> {
             output_folder,
             number,
         } => {
-            let channel_config =
-                ChannelConfig::from_file(&config_path, &output_folder, &number).await?;
+            let channel_config = if config_path.to_str().is_some_and(|p| p == "-") {
+                ChannelConfig::from_stdin(&output_folder, &number).await?
+            } else {
+                ChannelConfig::from_file(&config_path, &output_folder, &number).await?
+            };
 
             // start channel session
             let mut channel_session = ChannelSession::new(channel_config)?;

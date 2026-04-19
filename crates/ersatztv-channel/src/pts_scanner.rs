@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::error::ChannelError;
 use tokio::process::Command;
-
-use crate::config::ChannelConfig;
-use crate::error::ChannelError;
 
 pub struct PtsTime {
     pub duration: Duration,

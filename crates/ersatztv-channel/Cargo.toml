@@ -10,7 +10,9 @@ ersatztv-core = { workspace = true }
 ersatztv-playout = { workspace = true }
 ffpipeline = { workspace = true }
 log = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 simple-expand-tilde = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
@@ -18,3 +20,7 @@ time = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 uuid = { workspace = true }
+
+[[bin]]
+name = "gen-channel-config-schema"
+path = "src/bin/gen_channel_config_schema.rs"
