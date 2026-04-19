@@ -27,6 +27,7 @@ pub struct ChannelConfig {
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct PlayoutConfig {
     pub folder: String,
+    /// RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00
     #[serde(default, with = "time::serde::rfc3339::option")]
     #[schemars(with = "Option<String>")]
     pub virtual_start: Option<OffsetDateTime>,
@@ -259,8 +260,11 @@ impl ChannelConfig {
 
         reader.read_to_string(&mut config_string).await?;
 
-        let mut channel_config: ChannelConfig = serde_json::from_str(&config_string)
-            .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
+        // read as toml or json
+        let mut channel_config: ChannelConfig = toml::from_str(&config_string)
+            .map_err(|e| e.to_string())
+            .or_else(|_| serde_json::from_str(&config_string).map_err(|e| e.to_string()))
+            .map_err(ChannelError::ChannelConfigFailure)?;
 
         // expand playout folder
         let playout_folder = PathBuf::from(&channel_config.playout.folder);

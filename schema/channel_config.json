@@ -169,6 +169,7 @@
           "type": "string"
         },
         "virtual_start": {
+          "description": "RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00",
           "type": [
             "string",
             "null"
