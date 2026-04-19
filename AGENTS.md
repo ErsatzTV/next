@@ -4,7 +4,9 @@ This file provides guidance to AI agents, e.g. Claude Code (claude.ai/code) when
 
 ## What is this?
 
-ErsatzTV (next) is a Rust rewrite of ErsatzTV — a self-hosted IPTV server that transcodes and streams media as live TV channels over HTTP/HLS. It intentionally excludes library management and scheduling; it consumes pre-defined playout JSON files and handles transcoding/streaming.
+ErsatzTV (next) is a Rust rewrite of ErsatzTV — a self-hosted IPTV server that transcodes and streams media as live TV
+channels over HTTP/HLS. It intentionally excludes library management and scheduling; it consumes pre-defined playout
+JSON files and handles transcoding/streaming.
 
 ## Build & Development Commands
 
@@ -38,25 +40,45 @@ cargo +nightly fmt --all -- --check
 
 # Generate playout JSON schema
 cargo run --bin gen_playout_schema
-```
 
-There is no test suite at this time.
+# There are 2 styles of tests in the repository currently, unit and lightweight integration
+# Lightweight integration tests are disabled by default because they require local ffmpeg
+# binaries.
+
+# Running the tests:
+cargo test
+
+# Run all integration tests explicitly
+cargo test --package ffpipeline -- --ignored
+
+# Run just software or hardware tests
+cargo test --package ffpipeline --test software -- --ignored
+cargo test --package ffpipeline --test videotoolbox -- --ignored
+```
 
 ## Architecture
 
 ### Process Model
 
-The server (`ersatztv`) spawns a separate `ersatztv-channel` subprocess per active channel. Processes communicate via file-based signaling (`.ready` and `.heartbeat` files) — no IPC. The main server monitors these files with tokio watch channels.
+The server (`ersatztv`) spawns a separate `ersatztv-channel` subprocess per active channel. Processes communicate via
+file-based signaling (`.ready` and `.heartbeat` files) — no IPC. The main server monitors these files with tokio watch
+channels.
 
 ### Crate Structure
 
-- **`ersatztv`** — Axum HTTP server. Serves M3U/M3U8 playlists, manages channel process lifecycle via `ChannelSession::spawn()`. Routes: `/channels.m3u`, `/channel/{N}.m3u8`, `/session/{channel}/{file}`.
-- **`ersatztv-channel`** — Per-channel worker. Reads playout JSON, builds FFmpeg pipelines, generates HLS segments. Has a 4-state machine (`SeekAndWorkAhead` → `ZeroAndWorkAhead` → `SeekAndRealtime` → `ZeroAndRealtime`) for buffering strategy.
-- **`ffpipeline`** — FFmpeg pipeline builder. Probes source media, selects hardware acceleration, constructs filter chains, generates ffmpeg command-line args. Key trait: `HwAccel` with implementations for CUDA, QSV, VAAPI, VideoToolbox.
+- **`ersatztv`** — Axum HTTP server. Serves M3U/M3U8 playlists, manages channel process lifecycle via
+  `ChannelSession::spawn()`. Routes: `/channels.m3u`, `/channel/{N}.m3u8`, `/session/{channel}/{file}`.
+- **`ersatztv-channel`** — Per-channel worker. Reads playout JSON, builds FFmpeg pipelines, generates HLS segments. Has
+  a 4-state machine (`SeekAndWorkAhead` → `ZeroAndWorkAhead` → `SeekAndRealtime` → `ZeroAndRealtime`) for buffering
+  strategy.
+- **`ffpipeline`** — FFmpeg pipeline builder. Probes source media, selects hardware acceleration, constructs filter
+  chains, generates ffmpeg command-line args. Key trait: `HwAccel` with implementations for CUDA, QSV, VAAPI,
+  VideoToolbox.
 - **`ersatztv-playout`** — Playout JSON data models (serde + schemars). Schema at `schema/playout.json`.
 - **`ersatztv-core`** — Shared utilities: heartbeat/ready file management, timing constants.
 - **`ersatztv-playout-generator`** — Dev tool for generating playout JSON from video folders or syncing from legacy DB.
-- **`libnvidia-sys`, `libva-sys`, `libvpl-sys`** — FFI bindings for hardware acceleration capability detection. Platform-specific with stub fallbacks.
+- **`libnvidia-sys`, `libva-sys`, `libvpl-sys`** — FFI bindings for hardware acceleration capability detection.
+  Platform-specific with stub fallbacks.
 
 ### Configuration Tiers
 
