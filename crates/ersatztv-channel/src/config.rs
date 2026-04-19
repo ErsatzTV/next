@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
@@ -266,18 +266,9 @@ impl ChannelConfig {
             .or_else(|_| serde_json::from_str(&config_string).map_err(|e| e.to_string()))
             .map_err(ChannelError::ChannelConfigFailure)?;
 
-        // expand playout folder
-        let playout_folder = PathBuf::from(&channel_config.playout.folder);
-        let expanded_playout_folder =
-            expand_tilde(&playout_folder).ok_or(ChannelError::ChannelConfigExpandPlayoutFolder)?;
-        if expanded_playout_folder.is_relative() {
-            return Err(ChannelError::ChannelConfigFailure(String::from(
-                "relative playout folders are not supported with config from stdin",
-            )));
-        }
-        channel_config.expanded_playout_folder = expanded_playout_folder;
+        let playout_relative_to = std::env::current_dir()?;
 
-        channel_config.finalize(output_folder, number)?;
+        channel_config.finalize(&playout_relative_to, output_folder, number)?;
 
         Ok(channel_config)
     }
@@ -293,32 +284,42 @@ impl ChannelConfig {
         let mut channel_config: ChannelConfig = toml::from_str(&config_string)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
-        // expand playout folder
-        let playout_folder = PathBuf::from(&channel_config.playout.folder);
-        let mut expanded_playout_folder =
-            expand_tilde(&playout_folder).ok_or(ChannelError::ChannelConfigExpandPlayoutFolder)?;
-        if expanded_playout_folder.is_relative() {
-            let parent = path
-                .parent()
+        let playout_relative_to =
+            path.parent()
                 .ok_or(ChannelError::ChannelConfigFailure(String::from(
                     "failed to find parent of config",
                 )))?;
-            expanded_playout_folder = parent.join(&expanded_playout_folder).canonicalize()?;
-        }
-        channel_config.expanded_playout_folder = expanded_playout_folder;
 
-        channel_config.finalize(output_folder, number)?;
+        channel_config.finalize(playout_relative_to, output_folder, number)?;
 
         Ok(channel_config)
     }
 
-    fn finalize(&mut self, output_folder: &PathBuf, number: &str) -> Result<(), ChannelError> {
+    fn finalize(
+        &mut self,
+        playout_relative_to: &Path,
+        output_folder: &PathBuf,
+        number: &str,
+    ) -> Result<(), ChannelError> {
         if self.normalization.video.format.is_some() && self.normalization.video.bit_depth.is_none()
         {
             return Err(ChannelError::ChannelConfigFailure(String::from(
                 "bit_depth is required when normalizing video",
             )));
         }
+
+        // expand playout folder
+        let playout_folder = PathBuf::from(&self.playout.folder);
+        let expanded_playout_folder =
+            expand_tilde(&playout_folder).ok_or(ChannelError::ChannelConfigExpandPlayoutFolder)?;
+        let relative_playout_folder = if expanded_playout_folder.is_relative() {
+            playout_relative_to
+                .join(&expanded_playout_folder)
+                .canonicalize()?
+        } else {
+            expanded_playout_folder
+        };
+        self.expanded_playout_folder = relative_playout_folder;
 
         // expand output folder
         self.expanded_output_folder =
