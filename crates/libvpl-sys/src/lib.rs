@@ -137,8 +137,14 @@ pub struct mfxEncoderDescription_encoder_encprofile {
     pub MemDesc: *mut c_void,
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 mod ffi;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 pub use ffi::*;
