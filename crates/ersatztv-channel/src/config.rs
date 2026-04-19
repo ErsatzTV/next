@@ -226,9 +226,20 @@ impl HardwareAccel {
                     None
                 }
             }
-            HardwareAccel::VideoToolbox => Some(ffpipeline::hw_accel::HardwareAccel::VideoToolbox(
-                ffpipeline::accel::video_toolbox::VideoToolbox,
-            )),
+            HardwareAccel::VideoToolbox => {
+                match ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities::probe() {
+                    Ok(capabilities) => {
+                        log::debug!("detected VideoToolbox capabilities: {:?}", capabilities);
+                        Some(ffpipeline::hw_accel::HardwareAccel::VideoToolbox(
+                            ffpipeline::accel::video_toolbox::VideoToolbox::new(capabilities),
+                        ))
+                    }
+                    Err(e) => {
+                        log::error!("failed to probe VideoToolbox capabilities: {}", e);
+                        None
+                    }
+                }
+            }
             HardwareAccel::Vulkan => Some(ffpipeline::hw_accel::HardwareAccel::Vulkan(
                 ffpipeline::accel::vulkan::Vulkan,
             )),

@@ -307,6 +307,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "core-foundation-sys"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -594,6 +610,7 @@ dependencies = [
  "libnvidia-sys",
  "libva-sys",
  "libvpl-sys",
+ "libvt-sys",
  "log",
  "serde",
  "serde_json",
@@ -1149,6 +1166,13 @@ name = "libvpl-sys"
 version = "0.1.0"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "libvt-sys"
+version = "0.1.0"
+dependencies = [
+ "core-foundation",
 ]
 
 [[package]]

@@ -1,31 +1,47 @@
 use crate::ArgVec;
+use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 
 #[derive(Debug, Clone)]
-pub struct VideoToolbox;
+pub struct VideoToolbox {
+    pub capabilities: VideoToolboxCapabilities,
+}
+
+impl VideoToolbox {
+    pub fn new(capabilities: VideoToolboxCapabilities) -> Self {
+        Self { capabilities }
+    }
+}
 
 impl HwAccel for VideoToolbox {
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        match pixel_format.bit_depth() {
-            10 => matches!(codec, "hevc"),
-            8 => matches!(codec, "h264" | "hevc"),
-            _ => false,
-        }
+        let format = match codec {
+            "av1" => Some(VideoFormat::Av1),
+            "h264" => Some(VideoFormat::H264),
+            "hevc" => Some(VideoFormat::Hevc),
+            "vp9" => Some(VideoFormat::Vp9),
+            _ => None,
+        };
+        format.is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+    }
+
+    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+        self.capabilities.can_encode(format, bit_depth)
     }
 
     fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_videotoolbox",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 is_hardware: true,
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
+            VideoFormat::Hevc if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_videotoolbox",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),

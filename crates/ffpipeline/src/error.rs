@@ -18,4 +18,6 @@ pub enum FFPipelineError {
     QsvCapabilitiesError(String),
     #[error("error detecting nvidia capabilities: {0}")]
     NvidiaCapabilitiesError(String),
+    #[error("error detecting videotoolbox capabilities: {0}")]
+    VideoToolboxCapabilitiesError(String),
 }

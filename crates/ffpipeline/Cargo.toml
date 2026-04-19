@@ -9,6 +9,7 @@ enum_dispatch = { workspace = true }
 libnvidia-sys = { workspace = true }
 libva-sys = { workspace = true }
 libvpl-sys = { workspace = true }
+libvt-sys = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
