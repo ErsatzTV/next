@@ -97,6 +97,16 @@ jobs:
             rust_target: aarch64-unknown-linux-gnu
             exe_ext: ""
             archive_ext: .tar.gz
+          - os: macos-13
+            target: macos-x64
+            rust_target: x86_64-apple-darwin
+            exe_ext: ""
+            archive_ext: .tar.gz
+          - os: macos-14
+            target: macos-arm64
+            rust_target: aarch64-apple-darwin
+            exe_ext: ""
+            archive_ext: .tar.gz
     steps:
       - uses: actions/checkout@v6
         with:
@@ -114,6 +124,10 @@ jobs:
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
+
+      - name: Install Rust target
+        if: runner.os == 'macOS'
+        run: rustup target add ${{ matrix.rust_target }}
 
       - name: Build
         shell: bash
@@ -152,6 +166,39 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Import Code-Signing Certificates
+        if: runner.os == 'macOS'
+        uses: Apple-Actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.apple_developer_certificate_p12_base64 }}
+          p12-password: ${{ secrets.apple_developer_certificate_password }}
+
+      - name: Sign macOS binaries
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          release_name="${{ env.RELEASE_NAME }}"
+          for bin in ersatztv ersatztv-channel ersatztv-playout-generator; do
+            codesign --force --verbose --timestamp --options=runtime \
+              --sign "Developer ID Application" "$release_name/$bin"
+          done
+
+      - name: Notarize macOS binaries
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          AC_USERNAME: ${{ secrets.ac_username }}
+          AC_PASSWORD: ${{ secrets.ac_password }}
+        run: |
+          release_name="${{ env.RELEASE_NAME }}"
+          ditto -c -k --keepParent "$release_name" "${release_name}-notarize.zip"
+          xcrun notarytool submit "${release_name}-notarize.zip" \
+            --apple-id "$AC_USERNAME" \
+            --password "$AC_PASSWORD" \
+            --team-id 32MB98Q32R \
+            --wait
+          rm "${release_name}-notarize.zip"
+
       - name: Archive
         shell: bash
         run: |
@@ -187,6 +234,10 @@ jobs:
           - target: linux-arm
             archive_ext: .tar.gz
           - target: linux-arm64
+            archive_ext: .tar.gz
+          - target: macos-x64
+            archive_ext: .tar.gz
+          - target: macos-arm64
             archive_ext: .tar.gz
     steps:
       - name: Download Artifact

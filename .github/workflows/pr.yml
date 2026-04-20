@@ -4,6 +4,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
@@ -48,11 +52,20 @@ jobs:
             target: linux-x64
             rust_target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
+            target: linux-musl-x64
+            rust_target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
             target: linux-arm
             rust_target: armv7-unknown-linux-gnueabihf
           - os: ubuntu-24.04-arm
             target: linux-arm64
             rust_target: aarch64-unknown-linux-gnu
+          - os: macos-13
+            target: macos-x64
+            rust_target: x86_64-apple-darwin
+          - os: macos-14
+            target: macos-arm64
+            rust_target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v6
 
@@ -68,6 +81,10 @@ jobs:
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.rust_target }}
+
+      - name: Install Rust target
+        if: runner.os == 'macOS'
+        run: rustup target add ${{ matrix.rust_target }}
 
       - name: Build
         run: cargo build --locked --workspace --all-features --target ${{ matrix.rust_target }}
