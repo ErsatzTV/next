@@ -137,7 +137,13 @@ impl VideoFilter {
                         (KnownVideoFilter::W3fdif, SoftwareDeinterlaceFilter::W3fdif),
                     ];
 
-                    filter_options.sort_by_key(|(k, _)| !ffmpeg_info.is_preferred_filter(k));
+                    filter_options.sort_by_key(|(k, _)| {
+                        ffmpeg_info
+                            .preferred_filters
+                            .iter()
+                            .position(|p| p == &k.to_string())
+                            .unwrap_or(usize::MAX)
+                    });
 
                     for (known_filter, software_filter) in filter_options {
                         if ffmpeg_info.has_video_filter(&known_filter) {
@@ -197,7 +203,10 @@ impl VideoFilter {
             }
             VideoFilter::Deinterlace { .. } => {
                 state.is_interlaced = false;
-                state.pixel_format = PixelFormat::Yuv420p;
+                state.pixel_format = match state.pixel_format.bit_depth() {
+                    10 => PixelFormat::Yuv420p10le,
+                    _ => PixelFormat::Yuv420p,
+                }
             }
         }
     }
@@ -293,11 +302,11 @@ impl VideoFilter {
             VideoFilter::Deinterlace {
                 filter: SoftwareDeinterlaceFilter::Bwdif,
                 ..
-            } => Some(String::from("bwdif")),
+            } => Some(String::from("bwdif=1")),
             VideoFilter::Deinterlace {
                 filter: SoftwareDeinterlaceFilter::W3fdif,
                 ..
-            } => Some(String::from("w3fdif")),
+            } => Some(String::from("w3fdif=1")),
         }
     }
 }

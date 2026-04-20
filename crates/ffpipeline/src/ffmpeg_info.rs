@@ -37,7 +37,7 @@ pub enum KnownVideoFilter {
 pub struct FfmpegInfo {
     hwaccels: Vec<String>,
     video_filters: HashSet<String>,
-    preferred_filters: Vec<String>,
+    pub(crate) preferred_filters: Vec<String>,
 }
 
 impl FfmpegInfo {
@@ -70,10 +70,6 @@ impl FfmpegInfo {
 
     pub fn has_video_filter(&self, filter: &KnownVideoFilter) -> bool {
         self.video_filters.contains(&filter.to_string())
-    }
-
-    pub fn is_preferred_filter(&self, filter: &KnownVideoFilter) -> bool {
-        self.preferred_filters.contains(&filter.to_string())
     }
 
     async fn load_hw_accels(path: &Path) -> Result<Vec<String>, FFPipelineError> {
