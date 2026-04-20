@@ -18,7 +18,7 @@ use crate::output_settings::OutputSettings;
 use crate::probe::{ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
-use crate::video_filter::VideoFilter;
+use crate::video_filter::{SoftwareDeinterlaceFilter, VideoFilter};
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
 pub const SEGMENT_SECONDS: u32 = 4;
@@ -117,6 +117,7 @@ impl PixelFormat {
 pub struct FrameState {
     pub(crate) size: FrameSize,
     pub(crate) is_anamorphic: bool,
+    pub(crate) is_interlaced: bool,
     pub(crate) sample_aspect_ratio: Option<String>,
     pub(crate) display_aspect_ratio: Option<String>,
     pub(crate) surface: FrameSurface,
@@ -224,7 +225,9 @@ impl Pipeline {
                 width: video_stream.width,
                 height: video_stream.height,
             },
-            is_anamorphic: Self::is_anamorphic(video_stream),
+            is_anamorphic: video_stream.is_anamorphic(),
+            // if user does not want to deinterlace, pretend content is not interlaced
+            is_interlaced: final_output_settings.deinterlace && video_stream.is_interlaced(),
             sample_aspect_ratio: video_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: video_stream.display_aspect_ratio.to_owned(),
             surface: video_decoder.output_surface(),
@@ -282,6 +285,10 @@ impl Pipeline {
                     Some(10) => PixelFormat::Yuv420p10le,
                     _ => PixelFormat::Yuv420p,
                 },
+            }),
+            PipelineFilter::Video(VideoFilter::Deinterlace {
+                filter: SoftwareDeinterlaceFilter::Yadif,
+                input_is_interlaced: initial_state.is_interlaced,
             }),
             PipelineFilter::Video(VideoFilter::Scale {
                 size: initial_scaled_size,
@@ -388,7 +395,8 @@ impl Pipeline {
             self.filter_chain.disable_video();
         }
 
-        self.filter_chain.evaluate(&self.initial_state);
+        self.filter_chain
+            .evaluate(&self.initial_state, &self.ffmpeg_info);
         self.filter_chain.resolve(
             &self.ffmpeg_info,
             &self.accel,
@@ -589,37 +597,6 @@ impl Pipeline {
                 all_audio_streams.sort_by_key(|a| std::cmp::Reverse(a.channels));
                 Ok(all_audio_streams[0])
             }
-        }
-    }
-
-    fn is_anamorphic(video_stream: &ProbeResultVideoStream) -> bool {
-        // TODO: need to calculate SAR when it's not provided; port MediaStream::SampleAspectRatio
-
-        match &video_stream.sample_aspect_ratio {
-            Some(sample_aspect_ratio) => {
-                let display_aspect_ratio = video_stream
-                    .display_aspect_ratio
-                    .as_ref()
-                    .map_or("", |dar| dar.as_ref());
-
-                // square pixels
-                if sample_aspect_ratio == "1:1" {
-                    false
-                }
-                // 0:1 is "unspecified", so anything other than that will be non-square/anamorphic
-                else if sample_aspect_ratio != "0:1" {
-                    true
-                }
-                // SAR 0:1 && DAR 0:1 (both unspecified) means square pixels
-                else if display_aspect_ratio == "0:1" {
-                    false
-                } else {
-                    // DAR == W:H is square
-                    display_aspect_ratio
-                        != format!("{}:{}", video_stream.width, video_stream.height)
-                }
-            }
-            None => false, // assumed SAR of 1:1
         }
     }
 

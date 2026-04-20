@@ -13,6 +13,7 @@ pub struct OutputSettings {
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
     pub tonemap_algorithm: Option<String>,
+    pub deinterlace: bool,
     pub accel: Option<HardwareAccel>,
     pub format: OutputFormat,
     pub pts_offset: Option<PtsOffset>,

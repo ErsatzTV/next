@@ -44,6 +44,45 @@ pub struct ProbeResultVideoStream {
     pub display_aspect_ratio: Option<String>,
     pub pix_fmt: String,
     pub color_params: ProbeResultColorParams,
+    pub field_order: Option<String>,
+}
+
+impl ProbeResultVideoStream {
+    pub fn is_interlaced(&self) -> bool {
+        self.field_order
+            .as_ref()
+            .is_some_and(|fo| ["tt", "bb", "tb", "bt"].contains(&fo.as_str()))
+    }
+
+    pub fn is_anamorphic(&self) -> bool {
+        // TODO: need to calculate SAR when it's not provided; port MediaStream::SampleAspectRatio
+
+        match &self.sample_aspect_ratio {
+            Some(sample_aspect_ratio) => {
+                let display_aspect_ratio = self
+                    .display_aspect_ratio
+                    .as_ref()
+                    .map_or("", |dar| dar.as_ref());
+
+                // square pixels
+                if sample_aspect_ratio == "1:1" {
+                    false
+                }
+                // 0:1 is "unspecified", so anything other than that will be non-square/anamorphic
+                else if sample_aspect_ratio != "0:1" {
+                    true
+                }
+                // SAR 0:1 && DAR 0:1 (both unspecified) means square pixels
+                else if display_aspect_ratio == "0:1" {
+                    false
+                } else {
+                    // DAR == W:H is square
+                    display_aspect_ratio != format!("{}:{}", self.width, self.height)
+                }
+            }
+            None => false, // assumed SAR of 1:1
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +169,7 @@ struct ProbeOutputStream {
     color_space: Option<String>,
     color_transfer: Option<String>,
     color_primaries: Option<String>,
+    field_order: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -328,6 +368,7 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 color_transfer: output_stream.color_transfer.clone(),
                 color_primaries: output_stream.color_primaries.clone(),
             },
+            field_order: output_stream.field_order.clone(),
             frame_rate: FrameRate::parse(&output_stream.r_frame_rate.clone()?),
             sample_aspect_ratio: output_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),

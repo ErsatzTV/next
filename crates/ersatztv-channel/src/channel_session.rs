@@ -161,6 +161,7 @@ impl ChannelSession {
         self.ffmpeg_info = FfmpegInfo::load(
             &self.ffmpeg_path,
             &self.channel_config.ffmpeg.disabled_filters,
+            &self.channel_config.ffmpeg.preferred_filters,
         )
         .await?;
 
@@ -427,6 +428,7 @@ impl ChannelSession {
             video_buffer: video_norm.buffer_kbps.map(Kbps),
             video_size,
             tonemap_algorithm: video_norm.tonemap_algorithm.clone(),
+            deinterlace: video_norm.deinterlace,
             accel: self.hw_accel.clone(),
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),

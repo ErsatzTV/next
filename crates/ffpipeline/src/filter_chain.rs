@@ -43,7 +43,7 @@ impl FilterChain {
 
     /// Optimizes the filter chain by passing the frame state through each filter.
     /// Filters will be dropped when the input state already matches the desired output state.
-    pub(crate) fn evaluate(&mut self, initial_state: &FrameState) {
+    pub(crate) fn evaluate(&mut self, initial_state: &FrameState, ffmpeg_info: &FfmpegInfo) {
         let mut state = initial_state.to_owned();
         let mut active_filters = Vec::new();
 
@@ -56,7 +56,7 @@ impl FilterChain {
                     }
                 }
                 PipelineFilter::Video(vf) => {
-                    if let Some(new_filter) = vf.evaluate(&state) {
+                    if let Some(new_filter) = vf.evaluate(&state, ffmpeg_info) {
                         new_filter.apply_to(&mut state);
                         active_filters.push(PipelineFilter::Video(new_filter));
                     }
@@ -109,7 +109,7 @@ impl FilterChain {
                             if is_format_supported {
                                 let upload = VideoFilter::HwUpload {
                                     target_surface: required.clone(),
-                                    bit_depth: current_state.pixel_format.bit_depth(),
+                                    source_format: current_state.pixel_format.clone(),
                                 };
                                 upload.apply_to(&mut current_state);
                                 resolved.push(PipelineFilter::Video(upload))
@@ -128,7 +128,7 @@ impl FilterChain {
 
                                     let upload = VideoFilter::HwUpload {
                                         target_surface: required,
-                                        bit_depth: current_state.pixel_format.bit_depth(),
+                                        source_format: current_state.pixel_format.clone(),
                                     };
                                     upload.apply_to(&mut current_state);
                                     resolved.push(PipelineFilter::Video(upload));
@@ -172,7 +172,7 @@ impl FilterChain {
             } else {
                 let upload = VideoFilter::HwUpload {
                     target_surface: encoder_surface.clone(),
-                    bit_depth: current_state.pixel_format.bit_depth(),
+                    source_format: current_state.pixel_format.clone(),
                 };
                 upload.apply_to(&mut current_state);
                 resolved.push(PipelineFilter::Video(upload))

@@ -70,6 +70,11 @@ pub async fn generate_playout(
         let is_image = probe_result.streams.len() == 1
             && matches!(probe_result.streams.first(), Some(ProbeResultStream::Video(video_stream)) if IMAGE_EXTENSIONS.contains(&video_stream.codec.as_str()));
 
+        let has_audio = probe_result
+            .streams
+            .iter()
+            .any(|s| matches!(s, ProbeResultStream::Audio(_)));
+
         // use 10-sec duration for images
         let image_duration = std::time::Duration::from_secs(10);
         let duration = match probe_result.duration {
@@ -93,13 +98,31 @@ pub async fn generate_playout(
                 path,
             )
         {
+            // use lavfi audio for video-only content
+            if !has_audio {
+                playout_item.tracks = Some(PlayoutItemTracks {
+                    audio: Some(TrackSelection::Source {
+                        source: PlayoutItemSource::Lavfi {
+                            params: String::from(
+                                "anullsrc=channel_layout=stereo:sample_rate=48000",
+                            ),
+                        },
+                    }),
+                    video: playout_item
+                        .source
+                        .as_ref()
+                        .map(|s| TrackSelection::Source { source: s.clone() }),
+                });
+
+                playout_item.source = None;
+            }
             // use separate tracks with lavfi audio for images
-            if is_image {
+            else if is_image {
                 playout_item.tracks = Some(PlayoutItemTracks {
                     audio: Some(TrackSelection::Source {
                         source: PlayoutItemSource::Lavfi {
                             params: format!(
-                                "sine=frequency=1000:sample_rate=48000:d={}",
+                                "anullsrc=channel_layout=stereo:sample_rate=48000:d={}",
                                 image_duration.as_secs()
                             ),
                         },
