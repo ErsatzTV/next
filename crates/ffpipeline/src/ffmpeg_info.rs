@@ -1,42 +1,70 @@
-use std::collections::HashSet;
+use std::borrow::Cow;
 use std::path::Path;
+use std::sync::LazyLock;
 
-use strum::{Display, EnumIter, IntoEnumIterator};
+use strum::{Display, EnumIter, IntoEnumIterator, IntoStaticStr};
 use tokio::process::Command;
 
 use crate::error::FFPipelineError;
 
-#[derive(Display, EnumIter, PartialEq)]
-#[strum(serialize_all = "snake_case")]
+static KNOWN_ACCELS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| KnownHardwareAccel::iter().map(|x| x.into()).collect());
+
+static KNOWN_FILTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    KnownVideoFilter::iter()
+        .map(|x| x.into())
+        .collect::<Vec<&str>>()
+});
+
+#[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
 pub enum KnownHardwareAccel {
+    #[strum(serialize = "cuda")]
     Cuda,
+    #[strum(serialize = "qsv")]
     Qsv,
+    #[strum(serialize = "vaapi")]
     Vaapi,
     #[strum(serialize = "videotoolbox")]
     VideoToolbox,
+    #[strum(serialize = "vulkan")]
     Vulkan,
 }
 
-#[derive(Display, EnumIter, PartialEq)]
-#[strum(serialize_all = "snake_case")]
+/// Convert a KnownHardwareAccel to a Cow-wrapped &'static str.
+impl From<KnownHardwareAccel> for Cow<'static, str> {
+    fn from(value: KnownHardwareAccel) -> Self {
+        Cow::<'static, str>::from(<KnownHardwareAccel as Into<&'static str>>::into(value))
+    }
+}
+
+#[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
 pub enum KnownVideoFilter {
+    #[strum(serialize = "bwdif")]
     Bwdif,
     #[strum(serialize = "libplacebo")]
     LibPlacebo,
+    #[strum(serialize = "pad_cuda")]
     PadCuda,
+    #[strum(serialize = "pad_vaapi")]
     PadVaapi,
+    #[strum(serialize = "scale_cuda")]
     ScaleCuda,
+    #[strum(serialize = "scale_vaapi")]
     ScaleVaapi,
+    #[strum(serialize = "scale_vulkan")]
     ScaleVulkan,
+    #[strum(serialize = "vpp_qsv")]
     VppQsv,
+    #[strum(serialize = "w3fdif")]
     W3fdif,
+    #[strum(serialize = "yadif")]
     Yadif,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct FfmpegInfo {
     hwaccels: Vec<String>,
-    video_filters: HashSet<String>,
+    video_filters: Vec<String>,
     pub(crate) preferred_filters: Vec<String>,
 }
 
@@ -49,7 +77,7 @@ impl FfmpegInfo {
         let hwaccels = Self::load_hw_accels(path).await?;
         let video_filters = Self::load_video_filters(path, disabled_filters).await?;
 
-        // filter preferred by video_filters
+        // filter preferred by known video filters
         let mut preferred: Vec<String> = Vec::new();
         for filter in preferred_filters {
             if video_filters.contains(filter) {
@@ -81,9 +109,6 @@ impl FfmpegInfo {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
-        let known_accels: HashSet<String> =
-            KnownHardwareAccel::iter().map(|f| f.to_string()).collect();
-
         let mut accels: Vec<String> = Vec::new();
 
         for line in stdout.lines() {
@@ -93,7 +118,7 @@ impl FfmpegInfo {
                 continue;
             }
 
-            if known_accels.contains(trimmed) {
+            if KNOWN_ACCELS.contains(&trimmed) {
                 accels.push(trimmed.to_owned());
             }
         }
@@ -104,7 +129,7 @@ impl FfmpegInfo {
     async fn load_video_filters(
         path: &Path,
         disabled_filters: &[String],
-    ) -> Result<HashSet<String>, FFPipelineError> {
+    ) -> Result<Vec<String>, FFPipelineError> {
         let output = Command::new(path)
             .args(["-hide_banner", "-filters"])
             .output()
@@ -113,18 +138,15 @@ impl FfmpegInfo {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
-        let known_filters: HashSet<String> =
-            KnownVideoFilter::iter().map(|f| f.to_string()).collect();
-
-        let mut filters: HashSet<String> = HashSet::new();
+        let mut filters: Vec<String> = Vec::new();
 
         for line in stdout.lines() {
             //  .. scale_cuda        V->V       GPU accelerated video resizer
             if let Some(filter) = line.split_whitespace().nth(1)
-                && known_filters.contains(filter)
+                && KNOWN_FILTERS.contains(&filter)
                 && !disabled_filters.iter().any(|f| f == filter)
             {
-                filters.insert(filter.to_owned());
+                filters.push(filter.to_owned());
             }
         }
 
