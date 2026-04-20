@@ -13,13 +13,13 @@ ErsatzTV (next) is a Rust rewrite of ErsatzTV — a self-hosted IPTV server that
 cargo build --workspace --all-features
 
 # Run the IPTV server
-cargo run --bin ersatztv -- <path/to/lineup.toml>
+cargo run --bin ersatztv -- <path/to/lineup.json>
 
 # Run a single channel worker (usually spawned by the server)
-cargo run --bin ersatztv-channel -- run <path/to/channel.toml> --output-folder <dir> --number <N>
+cargo run --bin ersatztv-channel -- run <path/to/channel.json> --output-folder <dir> --number <N>
 
 # Debug channel config and FFmpeg capabilities
-cargo run --bin ersatztv-channel -- debug <path/to/channel.toml>
+cargo run --bin ersatztv-channel -- debug <path/to/channel.json>
 
 # Generate test playout from video files
 cargo run --bin ersatztv-playout-generator -- --content-folder <dir> --output-folder <dir>
@@ -60,8 +60,8 @@ The server (`ersatztv`) spawns a separate `ersatztv-channel` subprocess per acti
 
 ### Configuration Tiers
 
-1. **`lineup.toml`** — Server bind address, port, output folder, list of channels (each referencing a channel config)
-2. **`channel.toml`** — Playout folder, FFmpeg paths, normalization settings (video codec/resolution/bitrate, audio codec/bitrate, hardware acceleration)
+1. **`lineup.json`** — Server bind address, port, output folder, list of channels (each referencing a channel config)
+2. **`channel.json`** — Playout folder, FFmpeg paths, normalization settings (video codec/resolution/bitrate, audio codec/bitrate, hardware acceleration)
 3. **Playout JSON files** — Named `{start}_{finish}.json` with ISO 8601 timestamps. Loaded on-demand based on current time.
 
 ### Key Design Decisions

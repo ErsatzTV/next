@@ -1,0 +1,16 @@
+{
+  "server": {
+    "bind_address": "0.0.0.0",
+    "port": 8409
+  },
+  "output": {
+    "folder": "/tmp/hls"
+  },
+  "channels": [
+    {
+      "number": "1",
+      "name": "ErsatzTV",
+      "config": "./channel.json"
+    }
+  ]
+}

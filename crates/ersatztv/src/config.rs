@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::LineupError;
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, JsonSchema)]
 pub struct LineupConfig {
     #[serde(default = "server_config_default")]
     pub server: ServerConfig,
@@ -10,7 +11,7 @@ pub struct LineupConfig {
     pub channels: Vec<ChannelConfig>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, JsonSchema)]
 pub struct ServerConfig {
     #[serde(default = "bind_address_default")]
     pub bind_address: String,
@@ -18,12 +19,12 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, JsonSchema)]
 pub struct OutputConfig {
     pub folder: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, JsonSchema)]
 pub struct ChannelConfig {
     pub number: String,
     pub name: String,
@@ -55,7 +56,7 @@ pub async fn from_file(path: &std::path::PathBuf) -> Result<LineupConfig, Lineup
     let config_string = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| LineupError::LineupConfigFailure(e.to_string()))?;
-    let lineup_config: LineupConfig = toml::from_str(&config_string)
+    let lineup_config: LineupConfig = serde_json::from_str(&config_string)
         .map_err(|e| LineupError::LineupConfigFailure(e.to_string()))?;
     Ok(lineup_config)
 }

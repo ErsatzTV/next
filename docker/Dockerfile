@@ -31,4 +31,4 @@ COPY --from=build --chown=ersatztv:ersatztv \
 
 USER ersatztv
 ENTRYPOINT ["/app/ersatztv"]
-CMD ["/config/lineup.toml"]
+CMD ["/config/lineup.json"]

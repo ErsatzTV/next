@@ -271,11 +271,8 @@ impl ChannelConfig {
 
         reader.read_to_string(&mut config_string).await?;
 
-        // read as toml or json
-        let mut channel_config: ChannelConfig = toml::from_str(&config_string)
-            .map_err(|e| e.to_string())
-            .or_else(|_| serde_json::from_str(&config_string).map_err(|e| e.to_string()))
-            .map_err(ChannelError::ChannelConfigFailure)?;
+        let mut channel_config: ChannelConfig = serde_json::from_str(&config_string)
+            .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
         let playout_relative_to = std::env::current_dir()?;
 
@@ -292,7 +289,7 @@ impl ChannelConfig {
         let config_string = tokio::fs::read_to_string(path)
             .await
             .map_err(ChannelError::ChannelConfigIoFailure)?;
-        let mut channel_config: ChannelConfig = toml::from_str(&config_string)
+        let mut channel_config: ChannelConfig = serde_json::from_str(&config_string)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
         let playout_relative_to =

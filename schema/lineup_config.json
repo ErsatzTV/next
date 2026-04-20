@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LineupConfig",
+  "type": "object",
+  "properties": {
+    "channels": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ChannelConfig"
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/OutputConfig"
+    },
+    "server": {
+      "$ref": "#/$defs/ServerConfig"
+    }
+  },
+  "required": [
+    "output",
+    "channels"
+  ],
+  "$defs": {
+    "ChannelConfig": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "number": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "name",
+        "config"
+      ]
+    },
+    "OutputConfig": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "folder"
+      ]
+    },
+    "ServerConfig": {
+      "type": "object",
+      "properties": {
+        "bind_address": {
+          "type": "string",
+          "default": "0.0.0.0"
+        },
+        "port": {
+          "type": "integer",
+          "format": "uint16",
+          "default": 8409,
+          "maximum": 65535,
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

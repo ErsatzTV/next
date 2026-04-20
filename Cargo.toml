@@ -39,7 +39,6 @@ tempfile = "3"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing", "serde"] }
 tokio = { version = "1.50", features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
-toml = "1"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 uuid = { version = "1.23", features = ["v4"] }

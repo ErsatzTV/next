@@ -27,8 +27,8 @@ This project contains the following crates:
 Finally, there are configuration examples under [examples](examples):
 
 - [playout.json](examples/playout/playout.json): an example playout JSON file, demonstrating some of the possible fields.
-- [channel.toml](examples/channel.toml): an example channel configuration, linking a channel to its playout JSON files, and describing how to normalize the content.
-- [lineup.toml](examples/lineup.toml): an example lineup configuration, linking to all channels, and describing where to write the normalized content and how to serve it over HTTP.
+- [channel.json](examples/channel.json): an example channel configuration, linking a channel to its playout JSON files, and describing how to normalize the content.
+- [lineup.json](examples/lineup.json): an example lineup configuration, linking to all channels, and describing where to write the normalized content and how to serve it over HTTP.
 
 ## Getting Started
 
@@ -52,14 +52,14 @@ Finally, there are configuration examples under [examples](examples):
    ```
 
 3. **Configure your Channel:**
-   Copy [channel.toml](examples/channel.toml) to `config/channels/1/channel.toml`. Update the playout folder to point to the folder created in step 2.
+   Copy [channel.json](examples/channel.json) to `config/channels/1/channel.json`. Update the playout folder to point to the folder created in step 2.
 
 4. **Configure your Lineup:**
-   Copy [lineup.toml](examples/lineup.toml) to `config/lineup.toml`. Update the channel path to point to your `config/channels/1/channel.toml`.
+   Copy [lineup.json](examples/lineup.json) to `config/lineup.json`. Update the channel path to point to your `config/channels/1/channel.json`.
 
 5. **Run the server:**
    ```bash
-   cargo run --bin ersatztv -- config/lineup.toml
+   cargo run --bin ersatztv -- config/lineup.json
    ```
 
 6. **Watch:**

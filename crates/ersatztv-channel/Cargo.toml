@@ -18,7 +18,6 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
-toml = { workspace = true }
 uuid = { workspace = true }
 
 [[bin]]
