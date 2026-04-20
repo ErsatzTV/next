@@ -114,8 +114,11 @@ pub struct VideoNormalizationConfig {
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VaapiDriver {
+    #[serde(alias = "ihd", alias = "iHD")]
     Ihd,
+    #[serde(alias = "i965")]
     I965,
+    #[serde(alias = "radeonsi", alias = "RadeonSI")]
     RadeonSI,
 }
 
