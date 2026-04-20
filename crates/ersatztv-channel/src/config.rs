@@ -35,7 +35,9 @@ pub struct PlayoutConfig {
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct FfmpegConfig {
+    #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub ffmpeg_path: Option<PathBuf>,
+    #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub ffprobe_path: Option<PathBuf>,
     #[serde(default)]
     pub disabled_filters: Vec<String>,
@@ -362,4 +364,8 @@ fn deserialize_bit_depth<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u8>, 
         }
         other => Ok(other),
     }
+}
+
+fn deserialize_optional_path<'de, D: Deserializer<'de>>(d: D) -> Result<Option<PathBuf>, D::Error> {
+    Ok(Option::<PathBuf>::deserialize(d)?.filter(|p| !p.as_os_str().is_empty()))
 }
