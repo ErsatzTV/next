@@ -100,7 +100,7 @@ impl FilterChain {
                             };
                             download.apply_to(&mut current_state);
                             resolved.push(PipelineFilter::Video(download));
-                        } else {
+                        } else if current_state.surface == FrameSurface::System {
                             let is_format_supported = match accel {
                                 Some(a) => a.supports_pixel_format(&current_state.pixel_format),
                                 None => true,
@@ -136,6 +136,12 @@ impl FilterChain {
                                     best = video_filter.clone();
                                 }
                             }
+                        } else if let Some(map) = accel
+                            .as_ref()
+                            .and_then(|a| a.hw_map_filter(&current_state.surface, &required))
+                        {
+                            map.apply_to(&mut current_state);
+                            resolved.push(PipelineFilter::Video(map));
                         }
                     }
 
@@ -169,13 +175,19 @@ impl FilterChain {
                 };
                 download.apply_to(&mut current_state);
                 resolved.push(PipelineFilter::Video(download));
-            } else {
+            } else if current_state.surface == FrameSurface::System {
                 let upload = VideoFilter::HwUpload {
                     target_surface: encoder_surface.clone(),
                     source_format: current_state.pixel_format.clone(),
                 };
                 upload.apply_to(&mut current_state);
                 resolved.push(PipelineFilter::Video(upload))
+            } else if let Some(map) = accel
+                .as_ref()
+                .and_then(|a| a.hw_map_filter(&current_state.surface, encoder_surface))
+            {
+                map.apply_to(&mut current_state);
+                resolved.push(PipelineFilter::Video(map));
             }
         }
 
@@ -306,5 +318,188 @@ impl FilterChain {
         } else {
             args!["-filter_complex", self.complex_filter.to_owned(),]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use crate::accel::opencl::TonemapOpencl;
+    use crate::accel::vaapi::{Vaapi, VaapiDriver};
+    use crate::capabilities::vaapi::VaapiCapabilities;
+    use crate::frame_size::FrameSize;
+    use crate::hw_accel::HardwareAccel;
+
+    fn vaapi_accel() -> HardwareAccel {
+        HardwareAccel::Vaapi(Vaapi {
+            device: String::from("/dev/dri/renderD128"),
+            driver: VaapiDriver::Ihd,
+            capabilities: VaapiCapabilities {
+                vendor: String::from("test"),
+                supported: HashSet::new(),
+                vpp_pixel_formats: HashSet::new(),
+            },
+            needs_opencl_device: true,
+        })
+    }
+
+    fn hdr_vaapi_state() -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 3840,
+                height: 2160,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::Vaapi,
+            pixel_format: PixelFormat::P010le,
+            is_hdr: true,
+        }
+    }
+
+    #[test]
+    fn resolve_inserts_hwmap_for_opencl_tonemap_on_vaapi() {
+        let accel = vaapi_accel();
+        let initial_state = hdr_vaapi_state();
+        let ffmpeg_info = FfmpegInfo::default();
+
+        let tonemap = VideoFilter::Hardware(Box::new(TonemapOpencl {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }));
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
+
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            video_filters.len() >= 3,
+            "expected at least 3 video filters (hwmap + tonemap + hwmap), got {}",
+            video_filters.len()
+        );
+
+        assert!(
+            matches!(
+                video_filters[0],
+                VideoFilter::HwMap {
+                    from_surface: FrameSurface::Vaapi,
+                    to_surface: FrameSurface::OpenCL,
+                }
+            ),
+            "first filter should be HwMap from Vaapi to OpenCL"
+        );
+
+        assert!(
+            matches!(video_filters[1], VideoFilter::Hardware(_)),
+            "second filter should be the tonemap Hardware filter"
+        );
+
+        assert!(
+            matches!(
+                video_filters[2],
+                VideoFilter::HwMap {
+                    from_surface: FrameSurface::OpenCL,
+                    to_surface: FrameSurface::Vaapi,
+                }
+            ),
+            "third filter should be HwMap from OpenCL back to Vaapi"
+        );
+    }
+
+    #[test]
+    fn resolve_and_build_produces_correct_filter_complex_for_opencl_tonemap() {
+        let accel = vaapi_accel();
+        let initial_state = hdr_vaapi_state();
+        let ffmpeg_info = FfmpegInfo::default();
+
+        let tonemap = VideoFilter::Hardware(Box::new(TonemapOpencl {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }));
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
+
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+        chain.build("0:v", "0:v");
+
+        let args = chain.as_arg();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-filter_complex");
+
+        let filter_complex = &args[1];
+        assert!(
+            filter_complex.contains("hwmap=derive_device=opencl"),
+            "filter_complex should contain hwmap to opencl: {filter_complex}"
+        );
+        assert!(
+            filter_complex.contains("tonemap_opencl="),
+            "filter_complex should contain tonemap_opencl: {filter_complex}"
+        );
+        assert!(
+            filter_complex.contains("hwmap=derive_device=vaapi"),
+            "filter_complex should contain hwmap back to vaapi: {filter_complex}"
+        );
+
+        let expected_order = "hwmap=derive_device=opencl,tonemap_opencl=";
+        assert!(
+            filter_complex.contains(expected_order),
+            "hwmap to opencl should appear immediately before tonemap_opencl: {filter_complex}"
+        );
+    }
+
+    #[test]
+    fn resolve_does_not_insert_hwmap_when_surfaces_match() {
+        let accel = vaapi_accel();
+        let initial_state = hdr_vaapi_state();
+        let ffmpeg_info = FfmpegInfo::default();
+
+        let format_filter = VideoFilter::Format {
+            format: PixelFormat::Nv12,
+        };
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(format_filter)]);
+
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let has_hwmap = chain
+            .filters
+            .iter()
+            .any(|f| matches!(f, PipelineFilter::Video(VideoFilter::HwMap { .. })));
+
+        assert!(
+            !has_hwmap,
+            "no HwMap should be inserted when no hw-to-hw transition is needed"
+        );
     }
 }

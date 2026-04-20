@@ -1,4 +1,7 @@
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::convert::Into;
+use std::iter::Iterator;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -28,6 +31,8 @@ pub enum KnownHardwareAccel {
     VideoToolbox,
     #[strum(serialize = "vulkan")]
     Vulkan,
+    #[strum(serialize = "opencl")]
+    Opencl,
 }
 
 /// Convert a KnownHardwareAccel to a Cow-wrapped &'static str.
@@ -53,6 +58,10 @@ pub enum KnownVideoFilter {
     ScaleVaapi,
     #[strum(serialize = "scale_vulkan")]
     ScaleVulkan,
+    #[strum(serialize = "tonemap_opencl")]
+    TonemapOpencl,
+    #[strum(serialize = "tonemap_vaapi")]
+    TonemapVaapi,
     #[strum(serialize = "vpp_qsv")]
     VppQsv,
     #[strum(serialize = "w3fdif")]
@@ -63,9 +72,9 @@ pub enum KnownVideoFilter {
 
 #[derive(Debug, Clone, Default)]
 pub struct FfmpegInfo {
-    hwaccels: Vec<String>,
-    video_filters: Vec<String>,
-    pub(crate) preferred_filters: Vec<String>,
+    hwaccels: HashSet<String>,
+    video_filters: HashSet<String>,
+    pub(crate) preferred_filters: HashMap<String, usize>,
 }
 
 impl FfmpegInfo {
@@ -78,10 +87,10 @@ impl FfmpegInfo {
         let video_filters = Self::load_video_filters(path, disabled_filters).await?;
 
         // filter preferred by known video filters
-        let mut preferred: Vec<String> = Vec::new();
-        for filter in preferred_filters {
+        let mut preferred: HashMap<String, usize> = HashMap::new();
+        for (idx, filter) in preferred_filters.iter().enumerate() {
             if video_filters.contains(filter) {
-                preferred.push(filter.clone());
+                preferred.insert(filter.clone(), idx);
             }
         }
 
@@ -93,14 +102,40 @@ impl FfmpegInfo {
     }
 
     pub fn has_hw_accel(&self, hw_accel: &KnownHardwareAccel) -> bool {
-        self.hwaccels.contains(&hw_accel.to_string())
+        let accel_string = hw_accel.to_string();
+        self.hwaccels.iter().any(|f| f == &accel_string)
     }
 
     pub fn has_video_filter(&self, filter: &KnownVideoFilter) -> bool {
         self.video_filters.contains(&filter.to_string())
     }
 
-    async fn load_hw_accels(path: &Path) -> Result<Vec<String>, FFPipelineError> {
+    /// Returns the "best" known filter from the inputted set. "Best" in this case is defined
+    /// as 1. is a filter that the queried ffmpeg contains and 2. has the lowest preference index
+    /// (i.e. index-0 in the preference list has higher priority than index-1)
+    /// NOTE: If NONE of the inputted filters exist in the preference list, the _first_ entry
+    /// in the inputted list will be returned.
+    pub fn find_best_fit<'a>(
+        &self,
+        filter_options: &'a [KnownVideoFilter],
+    ) -> Option<&'a KnownVideoFilter> {
+        filter_options
+            .iter()
+            .filter(|f| self.has_video_filter(f))
+            .min_by_key(|f| self.preference_position(f))
+    }
+
+    /// Returns the preference index for the video filter. If the filter is not known, or does not
+    /// exist in the preference list, returns `usize::MAX`.
+    fn preference_position(&self, filter: &KnownVideoFilter) -> usize {
+        let filter_string = filter.to_string();
+        self.preferred_filters
+            .get(&filter_string)
+            .copied()
+            .unwrap_or(usize::MAX)
+    }
+
+    async fn load_hw_accels(path: &Path) -> Result<HashSet<String>, FFPipelineError> {
         let output = Command::new(path)
             .args(["-hide_banner", "-hwaccels"])
             .output()
@@ -109,7 +144,7 @@ impl FfmpegInfo {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
-        let mut accels: Vec<String> = Vec::new();
+        let mut accels: HashSet<String> = HashSet::new();
 
         for line in stdout.lines() {
             let trimmed = line.trim();
@@ -119,7 +154,7 @@ impl FfmpegInfo {
             }
 
             if KNOWN_ACCELS.contains(&trimmed) {
-                accels.push(trimmed.to_owned());
+                accels.insert(trimmed.to_owned());
             }
         }
 
@@ -129,7 +164,7 @@ impl FfmpegInfo {
     async fn load_video_filters(
         path: &Path,
         disabled_filters: &[String],
-    ) -> Result<Vec<String>, FFPipelineError> {
+    ) -> Result<HashSet<String>, FFPipelineError> {
         let output = Command::new(path)
             .args(["-hide_banner", "-filters"])
             .output()
@@ -138,7 +173,7 @@ impl FfmpegInfo {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
-        let mut filters: Vec<String> = Vec::new();
+        let mut filters: HashSet<String> = HashSet::new();
 
         for line in stdout.lines() {
             //  .. scale_cuda        V->V       GPU accelerated video resizer
@@ -146,10 +181,78 @@ impl FfmpegInfo {
                 && KNOWN_FILTERS.contains(&filter)
                 && !disabled_filters.iter().any(|f| f == filter)
             {
-                filters.push(filter.to_owned());
+                filters.insert(filter.to_owned());
             }
         }
 
         Ok(filters)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_best_fit_no_preference_select_first() {
+        let mut video_filters = HashSet::new();
+        video_filters.extend(
+            [
+                KnownVideoFilter::TonemapOpencl,
+                KnownVideoFilter::TonemapVaapi,
+            ]
+            .iter()
+            .map(ToString::to_string),
+        );
+
+        let info: FfmpegInfo = FfmpegInfo {
+            hwaccels: HashSet::new(),
+            video_filters,
+            preferred_filters: HashMap::new(),
+        };
+
+        let best_fit = info.find_best_fit(
+            [
+                KnownVideoFilter::TonemapOpencl,
+                KnownVideoFilter::TonemapVaapi,
+            ]
+            .as_ref(),
+        );
+
+        assert!(info.has_video_filter(&KnownVideoFilter::TonemapOpencl));
+        assert_eq!(best_fit, Some(&KnownVideoFilter::TonemapOpencl));
+    }
+
+    #[test]
+    fn test_best_fit_preference_select_by_preference() {
+        let mut video_filters = HashSet::new();
+        video_filters.extend(
+            [
+                KnownVideoFilter::TonemapOpencl,
+                KnownVideoFilter::TonemapVaapi,
+            ]
+            .iter()
+            .map(ToString::to_string),
+        );
+
+        let mut preferred_filters = HashMap::new();
+        preferred_filters.insert(KnownVideoFilter::TonemapOpencl.to_string(), 1);
+        preferred_filters.insert(KnownVideoFilter::TonemapVaapi.to_string(), 0);
+
+        let info = FfmpegInfo {
+            hwaccels: HashSet::new(),
+            video_filters,
+            preferred_filters,
+        };
+
+        let best_fit = info.find_best_fit(
+            [
+                KnownVideoFilter::TonemapOpencl,
+                KnownVideoFilter::TonemapVaapi,
+            ]
+            .as_ref(),
+        );
+
+        assert_eq!(best_fit, Some(&KnownVideoFilter::TonemapVaapi));
     }
 }

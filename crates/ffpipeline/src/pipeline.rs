@@ -73,6 +73,21 @@ pub enum FrameSurface {
     Vaapi,
     VideoToolbox,
     Vulkan,
+    OpenCL,
+}
+
+impl FrameSurface {
+    pub(crate) fn device_name(&self) -> Option<&'static str> {
+        match self {
+            FrameSurface::Cuda => Some("cuda"),
+            FrameSurface::OpenCL => Some("opencl"),
+            FrameSurface::Qsv => Some("qsv"),
+            FrameSurface::Vaapi => Some("vaapi"),
+            FrameSurface::Vulkan => Some("vulkan"),
+            FrameSurface::VideoToolbox => Some("videotoolbox"),
+            FrameSurface::System => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -634,4 +649,23 @@ pub fn generate_pipeline(
     output_settings: OutputSettings,
 ) -> Result<Pipeline, FFPipelineError> {
     Pipeline::full(ffmpeg_info, input_settings, output_settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_name_returns_correct_ffmpeg_device_strings() {
+        assert_eq!(FrameSurface::Cuda.device_name(), Some("cuda"));
+        assert_eq!(FrameSurface::OpenCL.device_name(), Some("opencl"));
+        assert_eq!(FrameSurface::Qsv.device_name(), Some("qsv"));
+        assert_eq!(FrameSurface::Vaapi.device_name(), Some("vaapi"));
+        assert_eq!(FrameSurface::Vulkan.device_name(), Some("vulkan"));
+        assert_eq!(
+            FrameSurface::VideoToolbox.device_name(),
+            Some("videotoolbox")
+        );
+        assert_eq!(FrameSurface::System.device_name(), None);
+    }
 }

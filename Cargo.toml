@@ -1,15 +1,15 @@
 [workspace]
 members = [
-  "crates/ersatztv",
-  "crates/ersatztv-channel",
-  "crates/ersatztv-core",
-  "crates/ersatztv-playout",
-  "crates/ersatztv-playout-generator",
-  "crates/ffpipeline",
-  "crates/libnvidia-sys",
-  "crates/libva-sys",
-  "crates/libvpl-sys",
-  "crates/libvt-sys",
+    "crates/ersatztv",
+    "crates/ersatztv-channel",
+    "crates/ersatztv-core",
+    "crates/ersatztv-playout",
+    "crates/ersatztv-playout-generator",
+    "crates/ffpipeline",
+    "crates/libnvidia-sys",
+    "crates/libva-sys",
+    "crates/libvpl-sys",
+    "crates/libvt-sys",
 ]
 resolver = "3"
 
@@ -35,8 +35,8 @@ schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simple-expand-tilde = "0.5.3"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "time"] }
 strum = { version = "0.28", features = ["derive"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "time"] }
 tempfile = "3"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing", "serde"] }

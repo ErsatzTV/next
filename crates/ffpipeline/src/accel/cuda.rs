@@ -108,10 +108,21 @@ impl HwAccel for Cuda {
 
     fn decoder_arg(&self) -> ArgVec {
         log::debug!("decoder arg, is_hdr: {}", self.is_vulkan_hdr);
+
         if self.is_vulkan_hdr {
-            args!["-hwaccel", "vulkan", "-hwaccel_output_format", "vulkan",]
+            args![
+                "-hwaccel",
+                KnownHardwareAccel::Vulkan,
+                "-hwaccel_output_format",
+                KnownHardwareAccel::Vulkan,
+            ]
         } else {
-            args!["-hwaccel", "cuda", "-hwaccel_output_format", "cuda",]
+            args![
+                "-hwaccel",
+                KnownHardwareAccel::Cuda,
+                "-hwaccel_output_format",
+                KnownHardwareAccel::Cuda,
+            ]
         }
     }
 

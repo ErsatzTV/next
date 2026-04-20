@@ -30,10 +30,96 @@ pub enum SoftwareDeinterlaceFilter {
     W3fdif,
 }
 
+impl TryFrom<&KnownVideoFilter> for SoftwareDeinterlaceFilter {
+    type Error = String;
+    fn try_from(known_filter: &KnownVideoFilter) -> Result<SoftwareDeinterlaceFilter, Self::Error> {
+        match known_filter {
+            KnownVideoFilter::Bwdif => Ok(SoftwareDeinterlaceFilter::Bwdif),
+            KnownVideoFilter::Yadif => Ok(SoftwareDeinterlaceFilter::Yadif),
+            KnownVideoFilter::W3fdif => Ok(SoftwareDeinterlaceFilter::W3fdif),
+            _ => Err(format!(
+                "Unknown software deinterlace filter: {}",
+                known_filter
+            )),
+        }
+    }
+}
+
 pub trait HwVideoFilter: DynClone {
+    /// Evaluates the current state of a video frame and determines the
+    /// appropriate video filter to be applied.
+    ///
+    /// # Parameters
+    /// - `&self`: A reference to the instance of the containing type.
+    /// - `state`: A reference to the current `FrameState` which contains
+    ///   information about the video frame to be evaluated.
+    ///
+    /// # Returns
+    /// - `Option<VideoFilter>`: Returns `Some(VideoFilter)` if a suitable video
+    ///   filter is determined based on the frame state. Returns `None` if no filter
+    ///   is applicable.
+    ///
+    /// # Usage
+    /// This function is designed to analyze the provided `FrameState` to determine
+    /// whether a filter should be applied to the video frame and, if so, what type
+    /// of filter it should be. It returns `None` when no filtering logic is necessary.
+    ///
+    /// # Example
+    /// ```rust
+    /// let frame_state = FrameState::new(...);
+    /// let filter =
     fn evaluate(&self, state: &FrameState) -> Option<VideoFilter>;
+    /// Applies the current object's logic or transformations to the given `FrameState` object.
+    ///
+    /// This method modifies the provided `FrameState` in place. Implementations of this function
+    /// define the specific behavior to be applied to the state, such as updating properties,
+    /// performing calculations, or appending data.
+    ///
+    /// # Parameters
+    /// - `state`: A mutable reference to a `FrameState` object that represents the current state
+    ///   of the frame. The function alters this object directly.
+    ///
+    /// # Example
+    /// ```
+    /// let mut frame_state = FrameState::new();
+    /// some_object.apply_to(&mut frame_state);
+    /// // The frame_state is now modified based on the logic of `apply_to`.
+    /// ```
+    ///
+    /// # Note
+    /// This method assumes that the caller has properly instantiated and initialized the
+    /// `FrameState` object before invoking this function.
     fn apply_to(&self, state: &mut FrameState);
+    /// Returns the `FrameSurface` that is required for the current context.
+    ///
+    /// This method determines and returns the necessary `FrameSurface` that
+    /// corresponds to the operations or rendering tasks associated with the
+    /// object it is called on.
+    ///
+    /// # Returns
+    ///
+    /// * `FrameSurface` - Specifies the type of frame surface that is necessary for this filter's operations
+    ///   to be executed, based on the underlying implementation or hardware requirements.
     fn required_surface(&self) -> FrameSurface;
+    /// Converts the implementer into an optional `String` representation.
+    ///
+    /// # Returns
+    /// - `Some(String)` if the implementer can be represented as a `String`.
+    /// - `None` if the implementer cannot be converted to a `String`.
+    ///
+    /// # Examples
+    /// ```rust
+    /// struct MyType;
+    ///
+    /// impl MyType {
+    ///     fn as_arg(&self) -> Option<String> {
+    ///         Some("example".to_string())
+    ///     }
+    /// }
+    ///
+    /// let my_obj = MyType;
+    /// assert_eq!(my_obj.as_arg(), Some("example".to_string()));
+    /// ```
     fn as_arg(&self) -> Option<String>;
 }
 
@@ -70,6 +156,10 @@ pub enum VideoFilter {
         filter: SoftwareDeinterlaceFilter,
         input_is_interlaced: bool,
     },
+    HwMap {
+        from_surface: FrameSurface,
+        to_surface: FrameSurface,
+    },
     Hardware(Box<dyn HwVideoFilter>),
 }
 
@@ -84,6 +174,7 @@ impl VideoFilter {
             // hardware filters aren't present at the point where this is called
             VideoFilter::HwUpload { .. } => None,
             VideoFilter::HwDownload { .. } => None,
+            VideoFilter::HwMap { .. } => None,
             VideoFilter::Format { .. } => None,
 
             VideoFilter::Hardware(filter) => filter.evaluate(state),
@@ -131,27 +222,22 @@ impl VideoFilter {
                 ..
             } => {
                 if *input_is_interlaced {
-                    let mut filter_options = [
-                        (KnownVideoFilter::Yadif, SoftwareDeinterlaceFilter::Yadif),
-                        (KnownVideoFilter::Bwdif, SoftwareDeinterlaceFilter::Bwdif),
-                        (KnownVideoFilter::W3fdif, SoftwareDeinterlaceFilter::W3fdif),
-                    ];
+                    let best_software_deinterlace_filter = ffmpeg_info
+                        .find_best_fit(&[
+                            KnownVideoFilter::Yadif,
+                            KnownVideoFilter::Bwdif,
+                            KnownVideoFilter::W3fdif,
+                        ])
+                        .and_then(|known_filter| {
+                            SoftwareDeinterlaceFilter::try_from(known_filter).ok()
+                        });
 
-                    filter_options.sort_by_key(|(k, _)| {
-                        ffmpeg_info
-                            .preferred_filters
-                            .iter()
-                            .position(|p| p == &k.to_string())
-                            .unwrap_or(usize::MAX)
-                    });
-
-                    for (known_filter, software_filter) in filter_options {
-                        if ffmpeg_info.has_video_filter(&known_filter) {
-                            return Some(VideoFilter::Deinterlace {
-                                filter: software_filter,
-                                input_is_interlaced: *input_is_interlaced,
-                            });
-                        }
+                    if let Some(best_software_deinterlace_filter) = best_software_deinterlace_filter
+                    {
+                        return Some(VideoFilter::Deinterlace {
+                            filter: best_software_deinterlace_filter,
+                            input_is_interlaced: *input_is_interlaced,
+                        });
                     }
                 }
 
@@ -175,6 +261,9 @@ impl VideoFilter {
             } => {
                 state.surface = FrameSurface::System;
                 state.pixel_format = target_pixel_format.clone();
+            }
+            VideoFilter::HwMap { to_surface, .. } => {
+                state.surface = to_surface.clone();
             }
             VideoFilter::Hardware(hardware_filter) => {
                 hardware_filter.apply_to(state);
@@ -215,6 +304,7 @@ impl VideoFilter {
         match self {
             VideoFilter::HwUpload { .. } => None,
             VideoFilter::HwDownload { .. } => None,
+            VideoFilter::HwMap { .. } => None,
             VideoFilter::Hardware(hardware_filter) => Some(hardware_filter.required_surface()),
 
             VideoFilter::Scale { .. } => Some(FrameSurface::System),
@@ -260,6 +350,9 @@ impl VideoFilter {
                 "hwdownload,format={}",
                 target_pixel_format.as_arg()
             )),
+            VideoFilter::HwMap { to_surface, .. } => to_surface
+                .device_name()
+                .map(|name| format!("hwmap=derive_device={name}")),
             VideoFilter::Hardware(hardware_filter) => hardware_filter.as_arg(),
             VideoFilter::Scale {
                 size: Some(size),
@@ -308,5 +401,79 @@ impl VideoFilter {
                 ..
             } => Some(String::from("w3fdif=1")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hw_map_as_arg_produces_derive_device() {
+        let filter = VideoFilter::HwMap {
+            from_surface: FrameSurface::Vaapi,
+            to_surface: FrameSurface::OpenCL,
+        };
+        assert_eq!(
+            filter.as_arg(),
+            Some(String::from("hwmap=derive_device=opencl"))
+        );
+    }
+
+    #[test]
+    fn hw_map_as_arg_reverse_direction() {
+        let filter = VideoFilter::HwMap {
+            from_surface: FrameSurface::OpenCL,
+            to_surface: FrameSurface::Vaapi,
+        };
+        assert_eq!(
+            filter.as_arg(),
+            Some(String::from("hwmap=derive_device=vaapi"))
+        );
+    }
+
+    #[test]
+    fn hw_map_as_arg_returns_none_for_system() {
+        let filter = VideoFilter::HwMap {
+            from_surface: FrameSurface::Vaapi,
+            to_surface: FrameSurface::System,
+        };
+        assert_eq!(filter.as_arg(), None);
+    }
+
+    #[test]
+    fn hw_map_apply_to_updates_surface() {
+        let mut state = FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::Vaapi,
+            pixel_format: PixelFormat::P010le,
+            is_hdr: true,
+        };
+
+        let filter = VideoFilter::HwMap {
+            from_surface: FrameSurface::Vaapi,
+            to_surface: FrameSurface::OpenCL,
+        };
+        filter.apply_to(&mut state);
+
+        assert_eq!(state.surface, FrameSurface::OpenCL);
+        assert_eq!(state.pixel_format, PixelFormat::P010le);
+        assert!(state.is_hdr);
+    }
+
+    #[test]
+    fn hw_map_required_surface_is_none() {
+        let filter = VideoFilter::HwMap {
+            from_surface: FrameSurface::Vaapi,
+            to_surface: FrameSurface::OpenCL,
+        };
+        assert_eq!(filter.required_surface(), None);
     }
 }

@@ -44,6 +44,9 @@ pub trait HwAccel {
     fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {
         None
     }
+    fn hw_map_filter(&self, _from: &FrameSurface, _to: &FrameSurface) -> Option<VideoFilter> {
+        None
+    }
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self;
     fn init_hw_device(&self) -> ArgVec;
     fn known_accel(&self) -> &KnownHardwareAccel;

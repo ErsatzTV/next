@@ -64,6 +64,7 @@ async fn make_vaapi_accel() -> Option<&'static HardwareAccel> {
                 device,
                 driver,
                 capabilities,
+                needs_opencl_device: false,
             }))
         })
         .await
