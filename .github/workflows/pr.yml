@@ -48,24 +48,31 @@ jobs:
           - os: windows-latest
             target: windows-x64
             rust_target: x86_64-pc-windows-msvc
+            should_run_tests: true
           - os: ubuntu-latest
             target: linux-x64
             rust_target: x86_64-unknown-linux-gnu
+            should_run_tests: true
           - os: ubuntu-latest
             target: linux-musl-x64
             rust_target: x86_64-unknown-linux-musl
+            should_run_tests: false
           - os: ubuntu-latest
             target: linux-arm
             rust_target: armv7-unknown-linux-gnueabihf
+            should_run_tests: false
           - os: ubuntu-24.04-arm
             target: linux-arm64
             rust_target: aarch64-unknown-linux-gnu
+            should_run_tests: true
           - os: macos-15-intel
             target: macos-x64
             rust_target: x86_64-apple-darwin
+            should_run_tests: true
           - os: macos-15
             target: macos-arm64
             rust_target: aarch64-apple-darwin
+            should_run_tests: true
     steps:
       - uses: actions/checkout@v6
 
@@ -88,3 +95,10 @@ jobs:
 
       - name: Build
         run: cargo build --locked --workspace --all-features --target ${{ matrix.rust_target }}
+
+      - name: Compile Tests
+        run: cargo test --locked --no-run --workspace --all-features --target ${{ matrix.rust_target }}
+
+      - name: Run Tests
+        if: matrix.should_run_tests
+        run: cargo test --locked --workspace --all-features --target ${{ matrix.rust_target }}
