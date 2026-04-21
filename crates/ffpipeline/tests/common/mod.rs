@@ -56,24 +56,15 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ETV_TEST_FFMPEG") {
         return Some(PathBuf::from(path));
     }
-    std::process::Command::new("which")
-        .arg("ffmpeg")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+
+    which::which("ffmpeg").ok()
 }
 
 pub fn find_ffprobe() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ETV_TEST_FFPROBE") {
         return Some(PathBuf::from(path));
     }
-    std::process::Command::new("which")
-        .arg("ffprobe")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+    which::which("ffprobe").ok()
 }
 
 pub fn find_binaries() -> Option<(PathBuf, PathBuf)> {

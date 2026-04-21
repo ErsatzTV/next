@@ -11,7 +11,6 @@ libva-sys = { workspace = true }
 libvpl-sys = { workspace = true }
 libvt-sys = { workspace = true }
 log = { workspace = true }
-rstest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 simple-expand-tilde = { workspace = true }
@@ -22,3 +21,5 @@ tokio = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = { workspace = true }
+rstest = { workspace = true }
+which = { workspace = true }
