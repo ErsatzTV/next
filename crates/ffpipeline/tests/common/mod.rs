@@ -33,6 +33,11 @@ pub struct TestCase {
 pub async fn test_env() -> Option<&'static TestEnv> {
     TEST_ENV
         .get_or_init(|| async {
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+                .is_test(true)
+                .try_init()
+                .ok();
+
             let (ffmpeg, ffprobe) = find_binaries().expect("ffmpeg/ffprobe not found");
             let ffmpeg_info = load_ffmpeg_info(&ffmpeg).await;
             Some(TestEnv {
@@ -56,6 +61,8 @@ pub async fn run_test_case(test_env: &TestEnv, test_case: TestCase) {
 
     let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
     pipeline.optimize();
+    let args = pipeline.args();
+    log::debug!("optimized pipeline: {}", args.join(" "));
 
     let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
     assert!(success, "ffmpeg failed:\n{stderr}");

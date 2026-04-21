@@ -186,8 +186,6 @@ impl Pipeline {
             input_settings.video_input.out_point - input_settings.video_input.in_point,
         );
 
-        log::debug!("duration is {:?}", duration);
-
         let audio_codec = match final_output_settings.audio.format {
             Some(AudioFormat::Aac) => AudioCodec::Aac,
             Some(AudioFormat::Ac3) => AudioCodec::Ac3,

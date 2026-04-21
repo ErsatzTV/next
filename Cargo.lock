@@ -608,6 +608,7 @@ version = "0.1.0"
 dependencies = [
  "dyn-clone",
  "enum_dispatch",
+ "env_logger",
  "libnvidia-sys",
  "libva-sys",
  "libvpl-sys",
