@@ -27,22 +27,21 @@ async fn make_videotoolbox_accel() -> Option<&'static HardwareAccel> {
 #[tokio::test]
 #[ignore]
 async fn transcode_matrix(
-    #[values(AudioFormat::Aac, AudioFormat::Ac3)] af: AudioFormat,
-    #[values(VideoFormat::H264, VideoFormat::Hevc)] vf: VideoFormat,
-    #[values(FrameSize { width: 1920, height: 1080 }, FrameSize { width: 1280, height: 720 })]
-    target_size: FrameSize,
-    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264.ts")] fixture_name: &'static str,
+    #[values("aac", "ac3")] af: AudioFormat,
+    #[values("h264", "hevc")] vf: VideoFormat,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264.ts")] fix: &'static str,
 ) {
     run_videotoolbox_test_case(TestCase {
-        fixture_name,
+        fixture_name: fix,
         params: TestOutputParams {
             audio_format: Some(af),
             video_format: Some(vf),
-            video_size: Some(target_size.clone()),
+            video_size: Some(res.clone()),
             ..TestOutputParams::default()
         },
         expected_video_codec: vf.to_string(),
-        expected_video_size: target_size, // TODO: derive Copy on FrameSize
+        expected_video_size: res, // TODO: derive Copy on FrameSize
         expected_audio_codec: af.to_string(),
     })
     .await;

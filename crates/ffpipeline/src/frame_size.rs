@@ -1,9 +1,27 @@
+use std::str::FromStr;
+
 use crate::pipeline::FrameState;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameSize {
     pub width: u32,
     pub height: u32,
+}
+
+impl FromStr for FrameSize {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let split: Vec<&str> = s.split('x').collect();
+        if split.len() == 2
+            && let Ok(width) = split[0].parse::<u32>()
+            && let Ok(height) = split[1].parse::<u32>()
+        {
+            Ok(FrameSize { width, height })
+        } else {
+            Err(())
+        }
+    }
 }
 
 impl FrameSize {

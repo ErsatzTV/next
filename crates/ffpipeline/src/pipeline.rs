@@ -1,7 +1,7 @@
 use std::fmt::Formatter;
 use std::time::Duration;
 
-use strum::Display;
+use strum::{Display, EnumString};
 
 use crate::ArgVec;
 use crate::audio_codec::AudioCodec;
@@ -25,7 +25,7 @@ use crate::video_filter::{SoftwareDeinterlaceFilter, VideoFilter};
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
 pub const SEGMENT_SECONDS: u32 = 4;
 
-#[derive(Debug, Clone, Copy, Display)]
+#[derive(Debug, Clone, Copy, Display, EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum AudioFormat {
     Aac,
@@ -38,7 +38,7 @@ pub struct Kbps(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hz(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum VideoFormat {
     Av1,
