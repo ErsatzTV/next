@@ -93,10 +93,7 @@ async fn custom_frame_rate() {
 }
 
 async fn run_software_test_case(test_case: TestCase) {
-    let Some((ffmpeg, ffprobe)) = find_binaries() else {
-        eprintln!("skip: ffmpeg/ffprobe not found");
-        return;
-    };
-    let ffmpeg_info = load_ffmpeg_info(&ffmpeg).await;
-    run_test_case(&ffmpeg, &ffprobe, &ffmpeg_info, test_case).await;
+    if let Some(env) = test_env().await {
+        run_test_case(env, test_case).await;
+    }
 }

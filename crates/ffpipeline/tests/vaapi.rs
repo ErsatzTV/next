@@ -87,22 +87,18 @@ async fn transcode_matrix(
 }
 
 async fn run_vaapi_test_case(mut test_case: TestCase) {
-    let Some((ffmpeg, ffprobe)) = find_binaries() else {
-        eprintln!("skip: ffmpeg/ffprobe not found");
-        return;
-    };
+    if let Some(env) = test_env().await {
+        if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
+            eprintln!("skip: vaapi not available in ffmpeg");
+            return;
+        };
 
-    let ffmpeg_info = load_ffmpeg_info(&ffmpeg).await;
-    if !ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
-        eprintln!("skip: vaapi not available in ffmpeg");
-        return;
-    };
+        let Some(accel) = make_vaapi_accel() else {
+            eprintln!("skip: no usable VAAPI device/driver found");
+            return;
+        };
 
-    let Some(accel) = make_vaapi_accel() else {
-        eprintln!("skip: no usable VAAPI device/driver found");
-        return;
-    };
-
-    test_case.params.accel = Some(accel);
-    run_test_case(&ffmpeg, &ffprobe, &ffmpeg_info, test_case).await;
+        test_case.params.accel = Some(accel);
+        run_test_case(env, test_case).await;
+    }
 }

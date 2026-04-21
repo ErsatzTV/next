@@ -11,6 +11,15 @@ use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{AudioLoudnessSettings, AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
 use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
+use tokio::sync::OnceCell;
+
+static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
+
+pub struct TestEnv {
+    pub ffmpeg: PathBuf,
+    pub ffprobe: PathBuf,
+    pub ffmpeg_info: FfmpegInfo,
+}
 
 #[allow(dead_code)]
 pub struct TestCase {
@@ -21,28 +30,38 @@ pub struct TestCase {
     pub expected_audio_codec: String,
 }
 
+pub async fn test_env() -> Option<&'static TestEnv> {
+    TEST_ENV
+        .get_or_init(|| async {
+            let (ffmpeg, ffprobe) = find_binaries()?;
+            let ffmpeg_info = load_ffmpeg_info(&ffmpeg).await;
+            Some(TestEnv {
+                ffmpeg,
+                ffprobe,
+                ffmpeg_info,
+            })
+        })
+        .await
+        .as_ref()
+}
+
 #[allow(dead_code)]
-pub async fn run_test_case(
-    ffmpeg: &Path,
-    ffprobe: &Path,
-    ffmpeg_info: &FfmpegInfo,
-    test_case: TestCase,
-) {
+pub async fn run_test_case(test_env: &TestEnv, test_case: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
-    let probe = probe_file(ffmpeg, ffprobe, &source).await;
+    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
 
     let input = build_input(&source, probe, Duration::from_secs(1));
     let output = build_output(dir.path(), test_case.params);
 
-    let mut pipeline = generate_pipeline(ffmpeg_info, input, output).unwrap();
+    let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
     pipeline.optimize();
 
-    let (success, stderr) = run_ffmpeg_pipeline(ffmpeg, &pipeline).await;
+    let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
     assert!(success, "ffmpeg failed:\n{stderr}");
 
     let segment = find_first_segment(dir.path());
-    let output_probe = probe_file(ffmpeg, ffprobe, &segment).await;
+    let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
     assert_video(
         &output_probe,
         &test_case.expected_video_codec,
