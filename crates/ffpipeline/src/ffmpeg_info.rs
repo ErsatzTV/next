@@ -46,6 +46,8 @@ impl From<KnownHardwareAccel> for Cow<'static, str> {
 pub enum KnownVideoFilter {
     #[strum(serialize = "bwdif")]
     Bwdif,
+    #[strum(serialize = "bwdif_cuda")]
+    BwdifCuda,
     #[strum(serialize = "libplacebo")]
     LibPlacebo,
     #[strum(serialize = "pad_cuda")]
@@ -68,13 +70,15 @@ pub enum KnownVideoFilter {
     W3fdif,
     #[strum(serialize = "yadif")]
     Yadif,
+    #[strum(serialize = "yadif_cuda")]
+    YadifCuda,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct FfmpegInfo {
     hwaccels: HashSet<String>,
     video_filters: HashSet<String>,
-    pub(crate) preferred_filters: HashMap<String, usize>,
+    preferred_filters: HashMap<String, usize>,
 }
 
 impl FfmpegInfo {

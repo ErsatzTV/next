@@ -56,6 +56,19 @@ impl HwAccel for Cuda {
                     },
                 }))
             }
+            VideoFilter::Deinterlace { .. } => {
+                let best_cuda_filter = ffmpeg_info
+                    .find_best_fit(&[KnownVideoFilter::YadifCuda, KnownVideoFilter::BwdifCuda])
+                    .and_then(|known_filter| CudaDeinterlaceFilter::try_from(known_filter).ok());
+
+                if let Some(best_cuda_filter) = best_cuda_filter {
+                    return VideoFilter::Hardware(Box::new(DeinterlaceCuda {
+                        filter: best_cuda_filter,
+                    }));
+                }
+
+                video_filter.clone()
+            }
             _ => video_filter.clone(),
         }
     }
@@ -350,5 +363,49 @@ impl HwVideoFilter for Libplacebo {
             vulkan_format.as_arg(),
             cuda_format
         ))
+    }
+}
+
+#[derive(Clone)]
+struct DeinterlaceCuda {
+    filter: CudaDeinterlaceFilter,
+}
+
+#[derive(Clone)]
+pub enum CudaDeinterlaceFilter {
+    Bwdif,
+    Yadif,
+}
+
+impl TryFrom<&KnownVideoFilter> for CudaDeinterlaceFilter {
+    type Error = String;
+    fn try_from(known_filter: &KnownVideoFilter) -> Result<CudaDeinterlaceFilter, Self::Error> {
+        match known_filter {
+            KnownVideoFilter::BwdifCuda => Ok(CudaDeinterlaceFilter::Bwdif),
+            KnownVideoFilter::YadifCuda => Ok(CudaDeinterlaceFilter::Yadif),
+            _ => Err(format!("Unknown cuda deinterlace filter: {}", known_filter)),
+        }
+    }
+}
+
+impl HwVideoFilter for DeinterlaceCuda {
+    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
+        // called before this is used
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.is_interlaced = false;
+    }
+
+    fn required_surface(&self) -> FrameSurface {
+        FrameSurface::Cuda
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        match self.filter {
+            CudaDeinterlaceFilter::Bwdif => Some(String::from("bwdif_cuda=1")),
+            CudaDeinterlaceFilter::Yadif => Some(String::from("yadif_cuda=1")),
+        }
     }
 }
