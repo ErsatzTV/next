@@ -41,6 +41,8 @@ pub struct FfmpegConfig {
     pub ffprobe_path: Option<PathBuf>,
     #[serde(default)]
     pub disabled_filters: Vec<String>,
+    #[serde(default)]
+    pub preferred_filters: Vec<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
@@ -111,6 +113,8 @@ pub struct VideoNormalizationConfig {
     pub vaapi_device: Option<PathBuf>,
     pub vaapi_driver: Option<VaapiDriver>,
     pub tonemap_algorithm: Option<String>,
+    #[serde(default)]
+    pub deinterlace: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]

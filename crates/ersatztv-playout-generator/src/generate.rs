@@ -70,6 +70,11 @@ pub async fn generate_playout(
         let is_image = probe_result.streams.len() == 1
             && matches!(probe_result.streams.first(), Some(ProbeResultStream::Video(video_stream)) if IMAGE_EXTENSIONS.contains(&video_stream.codec.as_str()));
 
+        let has_audio = probe_result
+            .streams
+            .iter()
+            .any(|s| matches!(s, ProbeResultStream::Audio(_)));
+
         // use 10-sec duration for images
         let image_duration = std::time::Duration::from_secs(10);
         let duration = match probe_result.duration {
@@ -94,25 +99,20 @@ pub async fn generate_playout(
             )
         {
             // use separate tracks with lavfi audio for images
-            if is_image {
+            if !has_audio {
                 playout_item.tracks = Some(PlayoutItemTracks {
-                    audio: Some(TrackSelection::Source {
-                        source: PlayoutItemSource::Lavfi {
-                            params: format!(
-                                "sine=frequency=1000:sample_rate=48000:d={}",
-                                image_duration.as_secs()
+                    audio: Some(TrackSelection {
+                        source: Some(PlayoutItemSource::Lavfi {
+                            params: String::from(
+                                "anullsrc=channel_layout=stereo:sample_rate=48000",
                             ),
-                        },
-                        // source: PlayoutItemSource::Local {
-                        //     path: String::from("~/Music/silence.mp3"),
-                        //     in_point_ms: None,
-                        //     out_point_ms: Some(image_duration.as_millis() as u64),
-                        // },
+                        }),
+                        stream_index: None,
                     }),
-                    video: playout_item
-                        .source
-                        .as_ref()
-                        .map(|s| TrackSelection::Source { source: s.clone() }),
+                    video: playout_item.source.as_ref().map(|s| TrackSelection {
+                        source: Some(s.clone()),
+                        stream_index: None,
+                    }),
                 });
 
                 playout_item.source = None;

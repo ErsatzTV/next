@@ -41,7 +41,7 @@ pub fn find_binaries() -> Option<(PathBuf, PathBuf)> {
 }
 
 pub async fn load_ffmpeg_info(ffmpeg: &Path) -> FfmpegInfo {
-    FfmpegInfo::load(ffmpeg, &[])
+    FfmpegInfo::load(ffmpeg, &[], &[])
         .await
         .expect("failed to load ffmpeg info")
 }
@@ -99,6 +99,7 @@ pub struct TestOutputParams {
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
+    pub deinterlace: bool,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate: Option<Kbps>,
     pub audio_channels: Option<u32>,
@@ -115,6 +116,7 @@ impl Default for TestOutputParams {
             video_bitrate: Some(Kbps(5000)),
             video_buffer: Some(Kbps(10000)),
             video_size: None,
+            deinterlace: false,
             audio_format: Some(AudioFormat::Aac),
             audio_bitrate: Some(Kbps(192)),
             audio_channels: Some(2),
@@ -141,6 +143,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         video_buffer: params.video_buffer,
         video_size: params.video_size,
         tonemap_algorithm: None,
+        deinterlace: params.deinterlace,
         accel: params.accel,
         format: OutputFormat::Hls {
             playlist: dir.join("live.m3u8").to_string_lossy().into_owned(),

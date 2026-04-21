@@ -1,5 +1,6 @@
 use dyn_clone::DynClone;
 
+use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 
@@ -22,6 +23,13 @@ impl ForceOriginalAspectRatio {
     }
 }
 
+#[derive(Clone)]
+pub enum SoftwareDeinterlaceFilter {
+    Bwdif,
+    Yadif,
+    W3fdif,
+}
+
 pub trait HwVideoFilter: DynClone {
     fn evaluate(&self, state: &FrameState) -> Option<VideoFilter>;
     fn apply_to(&self, state: &mut FrameState);
@@ -35,7 +43,7 @@ dyn_clone::clone_trait_object!(HwVideoFilter);
 pub enum VideoFilter {
     HwUpload {
         target_surface: FrameSurface,
-        bit_depth: u8,
+        source_format: PixelFormat,
     },
     HwDownload {
         target_pixel_format: PixelFormat,
@@ -58,12 +66,20 @@ pub enum VideoFilter {
         algorithm: Option<String>,
         format: PixelFormat,
     },
+    Deinterlace {
+        filter: SoftwareDeinterlaceFilter,
+        input_is_interlaced: bool,
+    },
     Hardware(Box<dyn HwVideoFilter>),
 }
 
 impl VideoFilter {
     /// Determines whether the filter is needed given the input frame state.
-    pub(crate) fn evaluate(&self, state: &FrameState) -> Option<VideoFilter> {
+    pub(crate) fn evaluate(
+        &self,
+        state: &FrameState,
+        ffmpeg_info: &FfmpegInfo,
+    ) -> Option<VideoFilter> {
         match self {
             // hardware filters aren't present at the point where this is called
             VideoFilter::HwUpload { .. } => None,
@@ -110,6 +126,37 @@ impl VideoFilter {
                     Some(self.clone())
                 }
             }
+            VideoFilter::Deinterlace {
+                input_is_interlaced,
+                ..
+            } => {
+                if *input_is_interlaced {
+                    let mut filter_options = [
+                        (KnownVideoFilter::Yadif, SoftwareDeinterlaceFilter::Yadif),
+                        (KnownVideoFilter::Bwdif, SoftwareDeinterlaceFilter::Bwdif),
+                        (KnownVideoFilter::W3fdif, SoftwareDeinterlaceFilter::W3fdif),
+                    ];
+
+                    filter_options.sort_by_key(|(k, _)| {
+                        ffmpeg_info
+                            .preferred_filters
+                            .iter()
+                            .position(|p| p == &k.to_string())
+                            .unwrap_or(usize::MAX)
+                    });
+
+                    for (known_filter, software_filter) in filter_options {
+                        if ffmpeg_info.has_video_filter(&known_filter) {
+                            return Some(VideoFilter::Deinterlace {
+                                filter: software_filter,
+                                input_is_interlaced: *input_is_interlaced,
+                            });
+                        }
+                    }
+                }
+
+                None
+            }
         }
     }
 
@@ -154,6 +201,13 @@ impl VideoFilter {
                 state.pixel_format = format.clone();
                 state.is_hdr = false;
             }
+            VideoFilter::Deinterlace { .. } => {
+                state.is_interlaced = false;
+                state.pixel_format = match state.pixel_format.bit_depth() {
+                    10 => PixelFormat::Yuv420p10le,
+                    _ => PixelFormat::Yuv420p,
+                }
+            }
         }
     }
 
@@ -168,6 +222,7 @@ impl VideoFilter {
             VideoFilter::Loop { .. } => Some(FrameSurface::System),
             VideoFilter::Format { .. } => Some(FrameSurface::System),
             VideoFilter::ToneMap { .. } => Some(FrameSurface::System),
+            VideoFilter::Deinterlace { .. } => Some(FrameSurface::System),
         }
     }
 
@@ -175,21 +230,30 @@ impl VideoFilter {
         match self {
             VideoFilter::HwUpload {
                 target_surface,
-                bit_depth,
-            } => match target_surface {
-                // TODO: refactor this into each hwaccel, maybe a hw_upload_filter() fn?
-                FrameSurface::Cuda => Some(String::from("hwupload_cuda")),
-                FrameSurface::Qsv => Some(String::from("hwupload=extra_hw_frames=64")),
-                FrameSurface::Vaapi => Some(String::from("hwupload")),
-                FrameSurface::Vulkan => {
-                    let format = match bit_depth {
-                        10 => "p010le",
-                        _ => "nv12",
-                    };
-                    Some(format!("format={},hwupload", format))
+                source_format,
+            } => {
+                let target_format = match source_format.bit_depth() {
+                    10 => PixelFormat::P010le,
+                    _ => PixelFormat::Nv12,
+                };
+
+                let format_filter = if source_format == &target_format {
+                    String::new()
+                } else {
+                    format!("format={},", target_format.as_arg())
+                };
+
+                match target_surface {
+                    // TODO: refactor this into each hwaccel, maybe a hw_upload_filter() fn?
+                    FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
+                    FrameSurface::Qsv => {
+                        Some(format!("{format_filter}hwupload=extra_hw_frames=64"))
+                    }
+                    FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
+                    FrameSurface::Vulkan => Some(format!("{format_filter}hwupload")),
+                    _ => None,
                 }
-                _ => None,
-            },
+            }
             VideoFilter::HwDownload {
                 target_pixel_format,
             } => Some(format!(
@@ -231,6 +295,18 @@ impl VideoFilter {
                 algorithm.as_deref().unwrap_or("linear"),
                 format.as_arg()
             )),
+            VideoFilter::Deinterlace {
+                filter: SoftwareDeinterlaceFilter::Yadif,
+                ..
+            } => Some(String::from("yadif=1")),
+            VideoFilter::Deinterlace {
+                filter: SoftwareDeinterlaceFilter::Bwdif,
+                ..
+            } => Some(String::from("bwdif=1")),
+            VideoFilter::Deinterlace {
+                filter: SoftwareDeinterlaceFilter::W3fdif,
+                ..
+            } => Some(String::from("w3fdif=1")),
         }
     }
 }

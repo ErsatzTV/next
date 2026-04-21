@@ -1,210 +1,94 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ersatztv.org/playout/version/0.0.1",
   "title": "Playout",
-  "description": "A playout schedule for a single time window.\n\nFiles should be named `{start}_{finish}.json` using compact ISO 8601\n(no separators), e.g. `20260413T000000.000000000-0500_20260414T002131.620000000-0500.json`,\nso that the channel can locate the correct file for the current time.",
+  "description": "A playout schedule for a single time window.\n\nFiles should be named `{start}_{finish}.json` using compact ISO 8601 (no separators), e.g. `20260413T000000.000000000-0500_20260414T002131.620000000-0500.json`, so that the channel can locate the correct file for the current time.",
   "type": "object",
-  "properties": {
-    "items": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/PlayoutItem"
-      }
-    },
-    "version": {
-      "description": "URI identifying the schema version, e.g. \"https://ersatztv.org/playout/version/0.0.1\"",
-      "type": "string"
-    }
-  },
   "required": [
     "version",
     "items"
   ],
-  "$defs": {
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "URI identifying the schema version, e.g. \"https://ersatztv.org/playout/version/0.0.1\"."
+    },
+    "items": {
+      "type": "array",
+      "description": "Ordered list of scheduled items for this window.",
+      "items": {
+        "$ref": "#/definitions/PlayoutItem"
+      }
+    }
+  },
+  "definitions": {
     "PlayoutItem": {
       "type": "object",
-      "properties": {
-        "finish": {
-          "description": "RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00",
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "source": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PlayoutItemSource"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "start": {
-          "description": "RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00",
-          "type": "string"
-        },
-        "tracks": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PlayoutItemTracks"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
+      "description": "A single scheduled item in the playout.\n\nAn item must supply media for its tracks. You can do this two ways, and they can be combined:\n\n1. Set `source` to use one shared source for every track. Track details (which stream, etc.) are chosen naively, or may be refined via `tracks`.\n2. Set `tracks` to specify each track (video, audio) individually. A track may provide its own `source`; if it doesn't, the item's top-level `source` is used.\n\nAt least one of `source` or `tracks` must be present, and every track that is selected must have an effective source (either its own or the item's).",
       "required": [
         "id",
         "start",
         "finish"
-      ]
-    },
-    "PlayoutItemSource": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "in_point_ms": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
-            },
-            "out_point_ms": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
-            },
-            "path": {
-              "type": "string"
-            },
-            "source_type": {
-              "type": "string",
-              "const": "local"
-            }
-          },
-          "required": [
-            "source_type",
-            "path"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "params": {
-              "type": "string"
-            },
-            "source_type": {
-              "type": "string",
-              "const": "lavfi"
-            }
-          },
-          "required": [
-            "source_type",
-            "params"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "headers": {
-              "description": "Custom HTTP headers, e.g. [\"Authorization: Bearer {{TOKEN}}\"]",
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "string"
-              }
-            },
-            "in_point_ms": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
-            },
-            "out_point_ms": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
-            },
-            "reconnect": {
-              "description": "Enable reconnect on failure (default: true)",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "reconnect_delay_max": {
-              "description": "Max reconnect delay in seconds",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint32",
-              "minimum": 0
-            },
-            "source_type": {
-              "type": "string",
-              "const": "http"
-            },
-            "timeout_us": {
-              "description": "Socket timeout in microseconds",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
-            },
-            "uri": {
-              "description": "URI template, e.g. \"https://example.com/file.mkv?token={{MY_SECRET}}\"",
-              "type": "string"
-            },
-            "user_agent": {
-              "description": "Custom user-agent string",
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          "required": [
-            "source_type",
-            "uri"
-          ]
-        }
-      ]
-    },
-    "PlayoutItemTracks": {
-      "type": "object",
+      ],
       "properties": {
-        "audio": {
-          "anyOf": [
+        "id": {
+          "type": "string",
+          "description": "Stable identifier for this item, unique within the playout."
+        },
+        "start": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC3339 formatted start time, e.g. 2026-04-13T00:24:21.527-05:00."
+        },
+        "finish": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC3339 formatted finish time, e.g. 2026-04-13T00:54:21.527-05:00."
+        },
+        "source": {
+          "description": "The default source shared by any track that doesn't specify its own. Required unless every selected track in `tracks` provides its own `source`.",
+          "oneOf": [
             {
-              "$ref": "#/$defs/TrackSelection"
+              "$ref": "#/definitions/PlayoutItemSource"
             },
             {
               "type": "null"
             }
           ]
         },
-        "video": {
-          "anyOf": [
+        "tracks": {
+          "description": "Per-track selection. Omit to let the server pick the first video and first audio track of the item's `source`.",
+          "oneOf": [
             {
-              "$ref": "#/$defs/TrackSelection"
+              "$ref": "#/definitions/PlayoutItemTracks"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "PlayoutItemTracks": {
+      "type": "object",
+      "description": "Per-track overrides for a playout item. Omit a field to use the server default for that track kind (first stream of that kind in the item's `source`, if any).",
+      "properties": {
+        "video": {
+          "description": "Video track selection.",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TrackSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "audio": {
+          "description": "Audio track selection.",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TrackSelection"
             },
             {
               "type": "null"
@@ -214,32 +98,172 @@
       }
     },
     "TrackSelection": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "source": {
-              "$ref": "#/$defs/PlayoutItemSource"
+      "type": "object",
+      "description": "Selects a single track (video or audio).\n\n- `source` absent: inherit the parent `PlayoutItem.source`.\n- `source` present: use this source for this track, overriding the parent.\n- `stream_index` absent: server picks the first stream of the track's kind in the effective source.\n- `stream_index` present: use this specific stream within the effective source.",
+      "properties": {
+        "source": {
+          "description": "Source to pull this track from. If omitted, inherits from the parent `PlayoutItem.source`.",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/PlayoutItemSource"
+            },
+            {
+              "type": "null"
             }
-          },
-          "required": [
-            "source"
           ]
         },
+        "stream_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Zero-based stream index within the effective source. If omitted, the server picks the first stream of this track's kind."
+        }
+      }
+    },
+    "PlayoutItemSource": {
+      "description": "A media source. Exactly one variant, distinguished by `source_type`.",
+      "discriminator": {
+        "propertyName": "source_type"
+      },
+      "oneOf": [
         {
-          "type": "object",
-          "properties": {
-            "stream_index": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "stream_index"
-          ]
+          "$ref": "#/definitions/LocalSource"
+        },
+        {
+          "$ref": "#/definitions/LavfiSource"
+        },
+        {
+          "$ref": "#/definitions/HttpSource"
         }
       ]
+    },
+    "LocalSource": {
+      "type": "object",
+      "description": "A file on the local filesystem reachable by the server.",
+      "required": [
+        "source_type",
+        "path"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "const": "local"
+        },
+        "path": {
+          "type": "string",
+          "description": "Absolute path to the media file."
+        },
+        "in_point_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional start offset into the source, in milliseconds."
+        },
+        "out_point_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional end offset into the source, in milliseconds."
+        }
+      }
+    },
+    "LavfiSource": {
+      "type": "object",
+      "description": "A synthetic source produced by an ffmpeg lavfi filter graph.",
+      "required": [
+        "source_type",
+        "params"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "const": "lavfi"
+        },
+        "params": {
+          "type": "string",
+          "description": "The lavfi filter graph parameters, passed verbatim to ffmpeg's `-f lavfi -i`."
+        }
+      }
+    },
+    "HttpSource": {
+      "type": "object",
+      "description": "A remote source fetched over HTTP(S).",
+      "required": [
+        "source_type",
+        "uri"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "const": "http"
+        },
+        "uri": {
+          "type": "string",
+          "description": "URI template, e.g. \"https://example.com/file.mkv?token={{MY_SECRET}}\"."
+        },
+        "in_point_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional start offset into the source, in milliseconds."
+        },
+        "out_point_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional end offset into the source, in milliseconds."
+        },
+        "headers": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Custom HTTP headers, e.g. [\"Authorization: Bearer {{TOKEN}}\"]."
+        },
+        "user_agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Custom User-Agent string."
+        },
+        "timeout_us": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Socket timeout in microseconds."
+        },
+        "reconnect": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Enable reconnect on failure. Default: true."
+        },
+        "reconnect_delay_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Maximum reconnect delay in seconds. Maps to ffmpeg's `reconnect_delay_max`."
+        }
+      }
     }
   }
 }

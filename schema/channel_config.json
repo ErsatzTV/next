@@ -127,13 +127,22 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "ffprobe_path": {
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
+        },
+        "preferred_filters": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -234,6 +243,10 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "deinterlace": {
+          "type": "boolean",
+          "default": false
         },
         "format": {
           "anyOf": [
