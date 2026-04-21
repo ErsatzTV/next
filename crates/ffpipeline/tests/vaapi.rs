@@ -11,6 +11,9 @@ use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::pipeline::{AudioFormat, VideoFormat};
 use rstest::rstest;
+use tokio::sync::OnceCell;
+
+static VAAPI_ACCEL: OnceCell<Option<HardwareAccel>> = OnceCell::const_new();
 
 fn find_vaapi_device() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ETV_TEST_VAAPI_DEVICE") {
@@ -52,13 +55,18 @@ fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities)> {
     None
 }
 
-fn make_vaapi_accel() -> Option<HardwareAccel> {
-    let (device, driver, capabilities) = probe_vaapi()?;
-    Some(HardwareAccel::Vaapi(Vaapi {
-        device,
-        driver,
-        capabilities,
-    }))
+async fn make_vaapi_accel() -> Option<&'static HardwareAccel> {
+    VAAPI_ACCEL
+        .get_or_init(|| async {
+            let (device, driver, capabilities) = probe_vaapi()?;
+            Some(HardwareAccel::Vaapi(Vaapi {
+                device,
+                driver,
+                capabilities,
+            }))
+        })
+        .await
+        .as_ref()
 }
 
 #[rstest]
@@ -93,12 +101,12 @@ async fn run_vaapi_test_case(mut test_case: TestCase) {
             return;
         };
 
-        let Some(accel) = make_vaapi_accel() else {
+        let Some(accel) = make_vaapi_accel().await else {
             eprintln!("skip: no usable VAAPI device/driver found");
             return;
         };
 
-        test_case.params.accel = Some(accel);
+        test_case.params.accel = Some(accel.clone());
         run_test_case(env, test_case).await;
     }
 }

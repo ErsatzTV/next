@@ -9,10 +9,18 @@ use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::pipeline::{AudioFormat, VideoFormat};
 use rstest::rstest;
+use tokio::sync::OnceCell;
 
-fn make_videotoolbox_accel() -> Option<HardwareAccel> {
-    let capabilities = VideoToolboxCapabilities::probe().ok()?;
-    Some(HardwareAccel::VideoToolbox(VideoToolbox { capabilities }))
+static VIDEOTOOLBOX_ACCEL: OnceCell<Option<HardwareAccel>> = OnceCell::const_new();
+
+async fn make_videotoolbox_accel() -> Option<&'static HardwareAccel> {
+    VIDEOTOOLBOX_ACCEL
+        .get_or_init(|| async {
+            let capabilities = VideoToolboxCapabilities::probe().ok()?;
+            Some(HardwareAccel::VideoToolbox(VideoToolbox { capabilities }))
+        })
+        .await
+        .as_ref()
 }
 
 #[rstest]
@@ -50,12 +58,12 @@ async fn run_videotoolbox_test_case(mut test_case: TestCase) {
             return;
         }
 
-        let Some(accel) = make_videotoolbox_accel() else {
+        let Some(accel) = make_videotoolbox_accel().await else {
             eprintln!("skip: videotoolbox accel failed to probe");
             return;
         };
 
-        test_case.params.accel = Some(accel);
+        test_case.params.accel = Some(accel.clone());
         run_test_case(env, test_case).await;
     }
 }

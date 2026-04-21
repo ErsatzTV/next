@@ -12,10 +12,18 @@ use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::pipeline::{AudioFormat, VideoFormat};
 use rstest::rstest;
+use tokio::sync::OnceCell;
 
-fn make_qsv_accel() -> Option<HardwareAccel> {
-    let capabilities = QsvCapabilities::probe().ok()?;
-    Some(HardwareAccel::Qsv(Qsv { capabilities }))
+static QSV_ACCEL: OnceCell<Option<HardwareAccel>> = OnceCell::const_new();
+
+async fn make_qsv_accel() -> Option<&'static HardwareAccel> {
+    QSV_ACCEL
+        .get_or_init(|| async {
+            let capabilities = QsvCapabilities::probe().ok()?;
+            Some(HardwareAccel::Qsv(Qsv { capabilities }))
+        })
+        .await
+        .as_ref()
 }
 
 #[rstest]
@@ -50,12 +58,12 @@ async fn run_qsv_test_case(mut test_case: TestCase) {
             return;
         }
 
-        let Some(accel) = make_qsv_accel() else {
+        let Some(accel) = make_qsv_accel().await else {
             eprintln!("skip: qsv accel failed to probe");
             return;
         };
 
-        test_case.params.accel = Some(accel);
+        test_case.params.accel = Some(accel.clone());
         run_test_case(env, test_case).await;
     }
 }
