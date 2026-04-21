@@ -54,13 +54,11 @@ async fn run_videotoolbox_test_case(mut test_case: TestCase) {
             .ffmpeg_info
             .has_hw_accel(&KnownHardwareAccel::VideoToolbox)
         {
-            eprintln!("skip: videotoolbox not available");
-            return;
+            panic!("videotoolbox not available");
         }
 
         let Some(accel) = make_videotoolbox_accel().await else {
-            eprintln!("skip: videotoolbox accel failed to probe");
-            return;
+            panic!("videotoolbox accel failed to probe");
         };
 
         test_case.params.accel = Some(accel.clone());

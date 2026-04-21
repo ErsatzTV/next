@@ -33,7 +33,7 @@ pub struct TestCase {
 pub async fn test_env() -> Option<&'static TestEnv> {
     TEST_ENV
         .get_or_init(|| async {
-            let (ffmpeg, ffprobe) = find_binaries()?;
+            let (ffmpeg, ffprobe) = find_binaries().expect("ffmpeg/ffprobe not found");
             let ffmpeg_info = load_ffmpeg_info(&ffmpeg).await;
             Some(TestEnv {
                 ffmpeg,

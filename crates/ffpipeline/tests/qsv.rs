@@ -54,13 +54,11 @@ async fn transcode_matrix(
 async fn run_qsv_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Qsv) {
-            eprintln!("skip: qsv not available");
-            return;
+            panic!("qsv not available");
         }
 
         let Some(accel) = make_qsv_accel().await else {
-            eprintln!("skip: qsv accel failed to probe");
-            return;
+            panic!("qsv accel failed to probe");
         };
 
         test_case.params.accel = Some(accel.clone());

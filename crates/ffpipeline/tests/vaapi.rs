@@ -97,13 +97,11 @@ async fn transcode_matrix(
 async fn run_vaapi_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
-            eprintln!("skip: vaapi not available in ffmpeg");
-            return;
+            panic!("vaapi not available in ffmpeg");
         };
 
         let Some(accel) = make_vaapi_accel().await else {
-            eprintln!("skip: no usable VAAPI device/driver found");
-            return;
+            panic!("no usable VAAPI device/driver found");
         };
 
         test_case.params.accel = Some(accel.clone());
