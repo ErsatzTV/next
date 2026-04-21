@@ -61,8 +61,6 @@ pub async fn run_test_case(test_env: &TestEnv, test_case: TestCase) {
 
     let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
     pipeline.optimize();
-    let args = pipeline.args();
-    log::debug!("optimized pipeline: {}", args.join(" "));
 
     let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
     assert!(success, "ffmpeg failed:\n{stderr}");
@@ -215,6 +213,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
 pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, String) {
     let args = pipeline.args();
     let envs = pipeline.envs();
+    log::debug!("optimized pipeline: {}", args.join(" "));
 
     let output = tokio::time::timeout(
         Duration::from_secs(30),
@@ -231,6 +230,9 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
     .expect("failed to spawn ffmpeg");
 
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !output.status.success() {
+        log::error!("ffmpeg exited with {}", output.status);
+    }
     (output.status.success(), stderr)
 }
 
