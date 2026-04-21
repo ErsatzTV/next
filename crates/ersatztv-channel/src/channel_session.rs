@@ -342,41 +342,13 @@ impl ChannelSession {
         realtime: bool,
         pts_duration: Option<Duration>,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
-        let current_source = current_item.source.clone();
-        let audio_source = match current_source.as_ref() {
-            Some(source) => Ok(source.to_owned()),
-            None => {
-                let audio_track_source = current_item
-                    .tracks
-                    .as_ref()
-                    .and_then(|t| t.audio.as_ref())
-                    .and_then(|a| match a {
-                        TrackSelection::Source { source, .. } => Some(source.to_owned()),
-                        _ => None,
-                    });
-                match audio_track_source {
-                    Some(source) => Ok(source),
-                    None => Err(ChannelError::PlayoutJsonAudioSourceRequired),
-                }
-            }
-        }?;
-        let video_source = match current_source.as_ref() {
-            Some(source) => Ok(source.to_owned()),
-            None => {
-                let video_track_source = current_item
-                    .tracks
-                    .as_ref()
-                    .and_then(|t| t.video.as_ref())
-                    .and_then(|v| match v {
-                        TrackSelection::Source { source, .. } => Some(source.clone()),
-                        _ => None,
-                    });
-                match video_track_source {
-                    Some(source) => Ok(source),
-                    None => Err(ChannelError::PlayoutJsonVideoSourceRequired),
-                }
-            }
-        }?;
+        // prioritize source from audio tracks, then default source
+        let audio_source = Self::resolve_source(current_item, |t| t.audio.as_ref())
+            .ok_or(ChannelError::PlayoutJsonAudioSourceRequired)?;
+
+        // prioritize source from video tracks, then default source
+        let video_source = Self::resolve_source(current_item, |t| t.video.as_ref())
+            .ok_or(ChannelError::PlayoutJsonVideoSourceRequired)?;
 
         let audio_input_source = Self::playout_source_to_input_source(audio_source.clone())?;
         let video_input_source = if video_source == audio_source {
@@ -453,19 +425,13 @@ impl ChannelSession {
             .tracks
             .as_ref()
             .and_then(|t| t.video.as_ref())
-            .and_then(|v| match v {
-                TrackSelection::StreamIndex { stream_index } => Some(*stream_index),
-                _ => None,
-            });
+            .and_then(|v| v.stream_index);
 
         let audio_index = current_item
             .tracks
             .as_ref()
             .and_then(|t| t.audio.as_ref())
-            .and_then(|a| match a {
-                TrackSelection::StreamIndex { stream_index } => Some(*stream_index),
-                _ => None,
-            });
+            .and_then(|a| a.stream_index);
 
         let input_settings = InputSettings {
             audio_input: ProbedInput {
@@ -688,13 +654,14 @@ impl ChannelSession {
             finish: next_start.unwrap_or(self.transcoded_until + Duration::from_mins(1)),
             source: None,
             tracks: Some(PlayoutItemTracks {
-                audio: Some(TrackSelection::Source {
-                    source: PlayoutItemSource::Lavfi {
+                audio: Some(TrackSelection {
+                    source: Some(PlayoutItemSource::Lavfi {
                         params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
-                    },
+                    }),
+                    stream_index: None,
                 }),
-                video: Some(TrackSelection::Source {
-                    source: PlayoutItemSource::Lavfi {
+                video: Some(TrackSelection {
+                    source: Some(PlayoutItemSource::Lavfi {
                         params: format!(
                             "color=c=black:s={}x{}",
                             self.channel_config
@@ -708,9 +675,21 @@ impl ChannelSession {
                                 .height
                                 .unwrap_or(1080),
                         ),
-                    },
+                    }),
+                    stream_index: None,
                 }),
             }),
         }
+    }
+
+    fn resolve_source<F>(item: &PlayoutItem, pick: F) -> Option<PlayoutItemSource>
+    where
+        F: FnOnce(&PlayoutItemTracks) -> Option<&TrackSelection>,
+    {
+        item.tracks
+            .as_ref()
+            .and_then(pick)
+            .and_then(|sel| sel.source.clone())
+            .or_else(|| item.source.clone())
     }
 }
