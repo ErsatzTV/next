@@ -166,6 +166,7 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
             .envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .output(),
     )
     .await
