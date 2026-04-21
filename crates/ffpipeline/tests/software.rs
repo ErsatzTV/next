@@ -11,7 +11,15 @@ use rstest::rstest;
 #[tokio::test]
 #[ignore]
 async fn pipeline(
-    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264.ts")] src: &'static str,
+    #[values(
+        "1080p_h264.ts",
+        "720p_h264.ts",
+        "480p_h264.ts",
+        "1080p_hevc_10.ts",
+        "720p_hevc_10.ts",
+        "480p_hevc_10.ts"
+    )]
+    src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values("h264", "hevc")] vf: VideoFormat,
     #[values("aac", "ac3")] af: AudioFormat,
