@@ -9,8 +9,48 @@ use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{InputSettings, InputSource, LocalInputSource, ProbedInput};
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{AudioLoudnessSettings, AudioOutputSettings, OutputSettings};
-use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat};
+use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
 use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
+
+#[allow(dead_code)]
+pub struct TestCase {
+    pub fixture_name: &'static str,
+    pub params: TestOutputParams,
+    pub expected_video_codec: String,
+    pub expected_video_size: FrameSize,
+    pub expected_audio_codec: String,
+}
+
+#[allow(dead_code)]
+pub async fn run_test_case(
+    ffmpeg: &Path,
+    ffprobe: &Path,
+    ffmpeg_info: &FfmpegInfo,
+    test_case: TestCase,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_path(test_case.fixture_name);
+    let probe = probe_file(ffmpeg, ffprobe, &source).await;
+
+    let input = build_input(&source, probe, Duration::from_secs(1));
+    let output = build_output(dir.path(), test_case.params);
+
+    let mut pipeline = generate_pipeline(ffmpeg_info, input, output).unwrap();
+    pipeline.optimize();
+
+    let (success, stderr) = run_ffmpeg_pipeline(ffmpeg, &pipeline).await;
+    assert!(success, "ffmpeg failed:\n{stderr}");
+
+    let segment = find_first_segment(dir.path());
+    let output_probe = probe_file(ffmpeg, ffprobe, &segment).await;
+    assert_video(
+        &output_probe,
+        &test_case.expected_video_codec,
+        test_case.expected_video_size.width,
+        test_case.expected_video_size.height,
+    );
+    assert_audio(&output_probe, &test_case.expected_audio_codec);
+}
 
 pub fn find_ffmpeg() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ETV_TEST_FFMPEG") {
