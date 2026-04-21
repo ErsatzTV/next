@@ -42,10 +42,10 @@ fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities)> {
     }
 
     for driver in [VaapiDriver::Ihd, VaapiDriver::I965, VaapiDriver::RadeonSI] {
-        if let Ok(caps) = VaapiCapabilities::probe(device_str, &driver.to_string()) {
-            if caps.count() > 0 {
-                return Some((device_str.to_owned(), driver, caps));
-            }
+        if let Ok(caps) = VaapiCapabilities::probe(device_str, &driver.to_string())
+            && caps.count() > 0
+        {
+            return Some((device_str.to_owned(), driver, caps));
         }
     }
 
