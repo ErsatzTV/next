@@ -292,6 +292,7 @@ impl HwVideoFilter for FormatCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.format.clone();
+        state.surface = FrameSurface::Cuda;
     }
 
     fn required_surface(&self) -> FrameSurface {
@@ -312,7 +313,9 @@ impl HwVideoFilter for HwUploadCudaWorkaround {
         Some(VideoFilter::Hardware(Box::new(self.clone())))
     }
 
-    fn apply_to(&self, _state: &mut FrameState) {}
+    fn apply_to(&self, state: &mut FrameState) {
+        state.surface = FrameSurface::Cuda;
+    }
 
     fn required_surface(&self) -> FrameSurface {
         // saying cuda because we don't want the pipeline to download before uploading
@@ -371,7 +374,7 @@ struct DeinterlaceCuda {
     filter: CudaDeinterlaceFilter,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum CudaDeinterlaceFilter {
     Bwdif,
     Yadif,
@@ -396,6 +399,7 @@ impl HwVideoFilter for DeinterlaceCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.is_interlaced = false;
+        state.surface = FrameSurface::Cuda;
     }
 
     fn required_surface(&self) -> FrameSurface {
