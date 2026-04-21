@@ -83,7 +83,9 @@ pub struct PlayoutItemTracks {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TrackSelection {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<PlayoutItemSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_index: Option<u32>,
 }
 

@@ -98,7 +98,7 @@ pub async fn generate_playout(
                 path,
             )
         {
-            // use lavfi audio for video-only content
+            // use separate tracks with lavfi audio for images
             if !has_audio {
                 playout_item.tracks = Some(PlayoutItemTracks {
                     audio: Some(TrackSelection {
@@ -108,31 +108,6 @@ pub async fn generate_playout(
                             ),
                         }),
                         stream_index: None,
-                    }),
-                    video: playout_item.source.as_ref().map(|s| TrackSelection {
-                        source: Some(s.clone()),
-                        stream_index: None,
-                    }),
-                });
-
-                playout_item.source = None;
-            }
-            // use separate tracks with lavfi audio for images
-            else if is_image {
-                playout_item.tracks = Some(PlayoutItemTracks {
-                    audio: Some(TrackSelection {
-                        source: Some(PlayoutItemSource::Lavfi {
-                            params: format!(
-                                "anullsrc=channel_layout=stereo:sample_rate=48000:d={}",
-                                image_duration.as_secs()
-                            ),
-                        }),
-                        stream_index: None,
-                        // source: PlayoutItemSource::Local {
-                        //     path: String::from("~/Music/silence.mp3"),
-                        //     in_point_ms: None,
-                        //     out_point_ms: Some(image_duration.as_millis() as u64),
-                        // },
                     }),
                     video: playout_item.source.as_ref().map(|s| TrackSelection {
                         source: Some(s.clone()),
