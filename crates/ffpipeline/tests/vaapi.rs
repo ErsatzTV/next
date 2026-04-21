@@ -72,14 +72,14 @@ async fn make_vaapi_accel() -> Option<&'static HardwareAccel> {
 #[rstest]
 #[tokio::test]
 #[ignore]
-async fn transcode_matrix(
-    #[values("aac", "ac3")] af: AudioFormat,
-    #[values("h264", "hevc")] vf: VideoFormat,
+async fn pipeline(
+    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264.ts")] src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264.ts")] fix: &'static str,
+    #[values("h264", "hevc")] vf: VideoFormat,
+    #[values("aac", "ac3")] af: AudioFormat,
 ) {
     run_vaapi_test_case(TestCase {
-        fixture_name: fix,
+        fixture_name: src,
         params: TestOutputParams {
             audio_format: Some(af),
             video_format: Some(vf),
