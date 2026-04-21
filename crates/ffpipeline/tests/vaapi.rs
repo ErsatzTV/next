@@ -10,7 +10,7 @@ use ffpipeline::capabilities::vaapi::VaapiCapabilities;
 use ffpipeline::ffmpeg_info::KnownHardwareAccel;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
-use ffpipeline::pipeline::{generate_pipeline, VideoFormat};
+use ffpipeline::pipeline::{VideoFormat, generate_pipeline};
 
 fn find_vaapi_device() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ETV_TEST_VAAPI_DEVICE") {

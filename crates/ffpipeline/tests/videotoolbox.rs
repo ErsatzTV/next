@@ -5,9 +5,15 @@ use std::time::Duration;
 
 use common::*;
 use ffpipeline::accel::video_toolbox::VideoToolbox;
+use ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities;
 use ffpipeline::ffmpeg_info::KnownHardwareAccel;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::pipeline::{VideoFormat, generate_pipeline};
+
+fn make_videotoolbox_accel() -> Option<HardwareAccel> {
+    let capabilities = VideoToolboxCapabilities::probe().ok()?;
+    Some(HardwareAccel::VideoToolbox(VideoToolbox { capabilities }))
+}
 
 #[tokio::test]
 #[ignore]
@@ -23,6 +29,11 @@ async fn videotoolbox_h264() {
         return;
     }
 
+    let Some(accel) = make_videotoolbox_accel() else {
+        eprintln!("skip: videotoolbox accel failed to probe");
+        return;
+    };
+
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path("1080p_h264.ts");
     let probe = probe_file(&ffmpeg, &ffprobe, &source).await;
@@ -31,7 +42,7 @@ async fn videotoolbox_h264() {
     let output = build_output(
         dir.path(),
         TestOutputParams {
-            accel: Some(HardwareAccel::VideoToolbox(VideoToolbox)),
+            accel: Some(accel),
             ..TestOutputParams::default()
         },
     );
@@ -63,6 +74,11 @@ async fn videotoolbox_hevc() {
         return;
     }
 
+    let Some(accel) = make_videotoolbox_accel() else {
+        eprintln!("skip: videotoolbox accel failed to probe");
+        return;
+    };
+
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path("1080p_h264.ts");
     let probe = probe_file(&ffmpeg, &ffprobe, &source).await;
@@ -72,7 +88,7 @@ async fn videotoolbox_hevc() {
         dir.path(),
         TestOutputParams {
             video_format: Some(VideoFormat::Hevc),
-            accel: Some(HardwareAccel::VideoToolbox(VideoToolbox)),
+            accel: Some(accel),
             ..TestOutputParams::default()
         },
     );
