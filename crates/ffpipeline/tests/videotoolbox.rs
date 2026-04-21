@@ -1,6 +1,8 @@
 #![cfg(target_os = "macos")]
 mod common;
 
+use std::str::FromStr;
+
 use common::*;
 use ffpipeline::accel::video_toolbox::VideoToolbox;
 use ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities;
@@ -37,22 +39,26 @@ async fn pipeline(
     )]
     src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values("h264", "hevc")] vf: VideoFormat,
+    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
-    run_videotoolbox_test_case(TestCase {
-        fixture_name: src,
-        params: TestOutputParams {
-            audio_format: Some(af),
-            video_format: Some(vf),
-            video_size: Some(res.clone()),
-            ..TestOutputParams::default()
-        },
-        expected_video_codec: vf.to_string(),
-        expected_video_size: res, // TODO: derive Copy on FrameSize
-        expected_audio_codec: af.to_string(),
-    })
-    .await;
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_videotoolbox_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                audio_format: Some(af),
+                video_format: Some(vf),
+                video_size: Some(res.clone()),
+                bit_depth: Some(bpp),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res, // TODO: derive Copy on FrameSize
+            expected_audio_codec: af.to_string(),
+        })
+        .await;
+    }
 }
 
 async fn run_videotoolbox_test_case(mut test_case: TestCase) {
