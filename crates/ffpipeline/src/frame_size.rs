@@ -9,18 +9,27 @@ pub struct FrameSize {
 }
 
 impl FromStr for FrameSize {
-    type Err = ();
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let split: Vec<&str> = s.split('x').collect();
-        if split.len() == 2
-            && let Ok(width) = split[0].parse::<u32>()
-            && let Ok(height) = split[1].parse::<u32>()
-        {
-            Ok(FrameSize { width, height })
-        } else {
-            Err(())
-        }
+        let mut parts = s.split('x');
+        let (w, h) = match (parts.next(), parts.next(), parts.next()) {
+            (Some(w), Some(h), None) => (w, h),
+            _ => {
+                return Err(format!(
+                    "invalid frame size format: '{s}', expected 'WIDTHxHEIGHT'"
+                ));
+            }
+        };
+        let width = w
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| format!("invalid width '{w}': {e}"))?;
+        let height = h
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| format!("invalid height '{h}': {e}"))?;
+        Ok(FrameSize { width, height })
     }
 }
 
