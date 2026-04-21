@@ -22,7 +22,7 @@ impl VplLib {
         #[cfg(target_os = "linux")]
         let name = "libvpl.so.2";
         #[cfg(target_os = "windows")]
-        let name = "vpl.dll";
+        let name = "libvpl.dll";
         unsafe {
             let lib = Library::new(name)?;
             let MFXLoad = *lib.get(b"MFXLoad\0")?;
