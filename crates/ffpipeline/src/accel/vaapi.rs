@@ -138,7 +138,7 @@ impl HwAccel for Vaapi {
                 // WORKAROUND: RadeonSI doesn't always output appropriate crop
                 // metadata with HEVC encoder; it doesn't hurt anything to always specify
                 if self.driver == VaapiDriver::RadeonSI
-                    && let Some(1080) = video_size.map(|s| s.height)
+                    && video_size.map(|s| s.height) == Some(1080)
                 {
                     options = &["-bsf:v", "hevc_metadata=crop_bottom=8"];
                 }
