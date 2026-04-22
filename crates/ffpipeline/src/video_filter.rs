@@ -428,7 +428,7 @@ mod tests {
         };
         assert_eq!(
             filter.as_arg(),
-            Some(String::from("hwmap=derive_device=vaapi"))
+            Some(String::from("hwmap=derive_device=vaapi:reverse=1"))
         );
     }
 

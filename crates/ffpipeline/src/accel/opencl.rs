@@ -29,7 +29,7 @@ impl HwVideoFilter for TonemapOpencl {
 
     fn as_arg(&self) -> Option<String> {
         format!(
-            "tonemap_opencl=tonemap={}:desat=0:t=bt709:m=bt709:p=bt709=format={}",
+            "tonemap_opencl=tonemap={}:desat=0:t=bt709:m=bt709:p=bt709:format={}",
             self.algorithm.as_deref().unwrap_or("hable"),
             self.output_format.as_arg()
         )
