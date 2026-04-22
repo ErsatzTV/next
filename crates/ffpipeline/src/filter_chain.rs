@@ -128,26 +128,13 @@ impl FilterChain {
                 *encoder_surface
             );
 
-            if *encoder_surface == FrameSurface::System {
-                let target_pixel_format = match current_state.pixel_format.bit_depth() {
-                    10 => PixelFormat::P010le,
-                    _ => PixelFormat::Nv12,
-                };
-
-                let download = VideoFilter::HwDownload {
-                    target_pixel_format,
-                };
-                download.apply_to(&mut current_state);
-                resolved.push(PipelineFilter::Video(download));
-            } else {
-                let _ = self.transfer_surface(
-                    accel,
-                    &mut resolved,
-                    &mut current_state,
-                    encoder_surface.clone(),
-                    encoder_pixel_format,
-                );
-            }
+            let _ = self.transfer_surface(
+                accel,
+                &mut resolved,
+                &mut current_state,
+                encoder_surface.clone(),
+                encoder_pixel_format,
+            );
         }
 
         if let Some(pixel_format) = encoder_pixel_format
