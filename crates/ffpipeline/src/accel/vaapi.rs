@@ -8,7 +8,10 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{ForceOriginalAspectRatio, HwVideoFilter, VideoFilter};
+use crate::video_filter::{
+    ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter,
+    VideoFilterOp,
+};
 
 #[derive(Debug, Clone)]
 pub enum VaapiDriver {
@@ -43,40 +46,37 @@ impl HwAccel for Vaapi {
         _current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale {
+            VideoFilter::Scale(ScaleFilter {
                 size,
                 input_is_anamorphic,
                 force_original_aspect_ratio,
-            } if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi) => {
-                VideoFilter::Hardware(Box::new(ScaleVaapi {
-                    size: size.clone(),
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
-                }))
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi) => ScaleVaapi {
+                size: size.clone(),
+                input_is_anamorphic: *input_is_anamorphic,
+                force_original_aspect_ratio: force_original_aspect_ratio.clone(),
             }
-            VideoFilter::Pad { size }
+            .into(),
+            VideoFilter::Pad(PadFilter { size })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadVaapi) =>
             {
-                VideoFilter::Hardware(Box::new(PadVaapi { size: size.clone() }))
+                PadVaapi { size: size.clone() }.into()
             }
 
-            VideoFilter::ToneMap { algorithm, format } => {
+            VideoFilter::ToneMap(ToneMapFilter { algorithm, format }) => {
                 if let Some(hw_filter) = ffmpeg_info.find_best_fit(&[
                     KnownVideoFilter::TonemapOpencl,
                     KnownVideoFilter::TonemapVaapi,
                 ]) {
                     match hw_filter {
-                        KnownVideoFilter::TonemapOpencl => {
-                            VideoFilter::Hardware(Box::new(TonemapOpencl {
-                                algorithm: algorithm.clone(),
-                                output_format: match format.bit_depth() {
-                                    10 => PixelFormat::P010le,
-                                    _ => PixelFormat::Nv12,
-                                },
-                            }))
+                        KnownVideoFilter::TonemapOpencl => TonemapOpencl {
+                            algorithm: algorithm.clone(),
+                            output_format: match format.bit_depth() {
+                                10 => PixelFormat::P010le,
+                                _ => PixelFormat::Nv12,
+                            },
                         }
+                        .into(),
                         // TODO: Implement tonemap vaapi
-                        // KnownVideoFilter::TonemapVaapi => VideoFilter::Hardware(Box::new())
                         _ => video_filter.clone(),
                     }
                 } else {
@@ -173,24 +173,33 @@ impl HwAccel for Vaapi {
 
     fn hw_map_filter(&self, from: &FrameSurface, to: &FrameSurface) -> Option<VideoFilter> {
         match (from, to) {
-            (FrameSurface::Vaapi, FrameSurface::OpenCL) => Some(VideoFilter::HwMap {
-                from_surface: from.clone(),
-                to_surface: to.clone(),
-                reverse: false,
-            }),
-            (FrameSurface::OpenCL, FrameSurface::Vaapi) => Some(VideoFilter::HwMap {
-                from_surface: from.clone(),
-                to_surface: to.clone(),
-                reverse: true,
-            }),
+            (FrameSurface::Vaapi, FrameSurface::OpenCL) => Some(
+                HwMapFilter {
+                    from_surface: from.clone(),
+                    to_surface: to.clone(),
+                    reverse: false,
+                }
+                .into(),
+            ),
+            (FrameSurface::OpenCL, FrameSurface::Vaapi) => Some(
+                HwMapFilter {
+                    from_surface: from.clone(),
+                    to_surface: to.clone(),
+                    reverse: true,
+                }
+                .into(),
+            ),
             _ => None,
         }
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(VideoFilter::Hardware(Box::new(FormatVaapi {
-            format: pixel_format.clone(),
-        })))
+        Some(
+            FormatVaapi {
+                format: pixel_format.clone(),
+            }
+            .into(),
+        )
     }
 
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self {
@@ -233,15 +242,14 @@ impl HwAccel for Vaapi {
 }
 
 #[derive(Clone)]
-struct ScaleVaapi {
-    size: Option<FrameSize>,
-    input_is_anamorphic: bool,
-    force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
+pub struct ScaleVaapi {
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) input_is_anamorphic: bool,
+    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
-impl HwVideoFilter for ScaleVaapi {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for ScaleVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -255,8 +263,8 @@ impl HwVideoFilter for ScaleVaapi {
         }
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vaapi
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -284,13 +292,12 @@ impl HwVideoFilter for ScaleVaapi {
 }
 
 #[derive(Clone)]
-struct PadVaapi {
-    size: Option<FrameSize>,
+pub struct PadVaapi {
+    pub(crate) size: Option<FrameSize>,
 }
 
-impl HwVideoFilter for PadVaapi {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for PadVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -301,8 +308,8 @@ impl HwVideoFilter for PadVaapi {
         }
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vaapi
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -313,13 +320,12 @@ impl HwVideoFilter for PadVaapi {
 }
 
 #[derive(Clone)]
-struct FormatVaapi {
-    format: PixelFormat,
+pub struct FormatVaapi {
+    pub(crate) format: PixelFormat,
 }
 
-impl HwVideoFilter for FormatVaapi {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for FormatVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -327,8 +333,8 @@ impl HwVideoFilter for FormatVaapi {
         state.pixel_format = self.format.clone();
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vaapi
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
     }
 
     fn as_arg(&self) -> Option<String> {

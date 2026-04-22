@@ -1,5 +1,6 @@
+use crate::ffmpeg_info::FfmpegInfo;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
-use crate::video_filter::{HwVideoFilter, VideoFilter};
+use crate::video_filter::{VideoFilter, VideoFilterOp};
 
 #[derive(Clone)]
 pub struct TonemapOpencl {
@@ -12,8 +13,8 @@ pub struct TonemapOpencl {
     pub output_format: PixelFormat,
 }
 
-impl HwVideoFilter for TonemapOpencl {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
+impl VideoFilterOp for TonemapOpencl {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -23,8 +24,8 @@ impl HwVideoFilter for TonemapOpencl {
         state.surface = FrameSurface::OpenCL;
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::OpenCL
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::OpenCL)
     }
 
     fn as_arg(&self) -> Option<String> {

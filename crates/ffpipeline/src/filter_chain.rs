@@ -3,7 +3,9 @@ use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
-use crate::video_filter::VideoFilter;
+use crate::video_filter::{
+    FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
+};
 
 #[derive(Clone)]
 pub enum PipelineFilter {
@@ -150,9 +152,10 @@ impl FilterChain {
 
             match (&current_state.surface, accel) {
                 (FrameSurface::System, _) => {
-                    let format = VideoFilter::Format {
+                    let format: VideoFilter = FormatFilter {
                         format: pixel_format.to_owned(),
-                    };
+                    }
+                    .into();
                     format.apply_to(&mut current_state);
                     resolved.push(PipelineFilter::Video(format))
                 }
@@ -183,9 +186,10 @@ impl FilterChain {
                 _ => PixelFormat::Nv12,
             };
 
-            let download = VideoFilter::HwDownload {
+            let download: VideoFilter = HwDownloadFilter {
                 target_pixel_format,
-            };
+            }
+            .into();
             download.apply_to(current_state);
             resolved.push(PipelineFilter::Video(download))
         } else {
@@ -195,10 +199,11 @@ impl FilterChain {
             };
 
             if is_format_supported {
-                let upload = VideoFilter::HwUpload {
+                let upload: VideoFilter = HwUploadFilter {
                     target_surface: required.clone(),
                     source_format: current_state.pixel_format.clone(),
-                };
+                }
+                .into();
                 upload.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(upload));
             } else if current_state.surface == FrameSurface::System {
@@ -208,16 +213,18 @@ impl FilterChain {
                         .is_some_and(|pf| pf.bit_depth() == 8);
 
                 if can_convert_down {
-                    let format = VideoFilter::Format {
+                    let format: VideoFilter = FormatFilter {
                         format: PixelFormat::Nv12,
-                    };
+                    }
+                    .into();
                     format.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(format));
 
-                    let upload = VideoFilter::HwUpload {
+                    let upload: VideoFilter = HwUploadFilter {
                         target_surface: required,
                         source_format: current_state.pixel_format.clone(),
-                    };
+                    }
+                    .into();
                     upload.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(upload));
                 } else {
@@ -241,8 +248,8 @@ impl FilterChain {
         if let Some(tonemap_index) = self
             .filters
             .iter()
-            .position(|f| matches!(f, PipelineFilter::Video(VideoFilter::ToneMap { .. })))
-            && let Some(PipelineFilter::Video(VideoFilter::Scale { .. })) =
+            .position(|f| matches!(f, PipelineFilter::Video(VideoFilter::ToneMap(_))))
+            && let Some(PipelineFilter::Video(VideoFilter::Scale(_))) =
                 self.filters.get(tonemap_index + 1)
         {
             log::debug!("swapping software scale filter before software tonemap filter");
@@ -345,6 +352,7 @@ mod tests {
     use crate::capabilities::vaapi::VaapiCapabilities;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
+    use crate::video_filter::HwMapFilter;
 
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
@@ -381,10 +389,11 @@ mod tests {
         let initial_state = hdr_vaapi_state();
         let ffmpeg_info = FfmpegInfo::default();
 
-        let tonemap = VideoFilter::Hardware(Box::new(TonemapOpencl {
+        let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
             output_format: PixelFormat::Nv12,
-        }));
+        }
+        .into();
 
         let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
 
@@ -414,28 +423,28 @@ mod tests {
         assert!(
             matches!(
                 video_filters[0],
-                VideoFilter::HwMap {
+                VideoFilter::HwMap(HwMapFilter {
                     from_surface: FrameSurface::Vaapi,
                     to_surface: FrameSurface::OpenCL,
                     reverse: false
-                }
+                })
             ),
             "first filter should be HwMap from Vaapi to OpenCL"
         );
 
         assert!(
-            matches!(video_filters[1], VideoFilter::Hardware(_)),
-            "second filter should be the tonemap Hardware filter"
+            matches!(video_filters[1], VideoFilter::TonemapOpencl(_)),
+            "second filter should be the tonemap opencl filter"
         );
 
         assert!(
             matches!(
                 video_filters[2],
-                VideoFilter::HwMap {
+                VideoFilter::HwMap(HwMapFilter {
                     from_surface: FrameSurface::OpenCL,
                     to_surface: FrameSurface::Vaapi,
                     reverse: true,
-                }
+                })
             ),
             "third filter should be HwMap from OpenCL back to Vaapi"
         );
@@ -447,10 +456,11 @@ mod tests {
         let initial_state = hdr_vaapi_state();
         let ffmpeg_info = FfmpegInfo::default();
 
-        let tonemap = VideoFilter::Hardware(Box::new(TonemapOpencl {
+        let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
             output_format: PixelFormat::Nv12,
-        }));
+        }
+        .into();
 
         let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
 
@@ -494,9 +504,10 @@ mod tests {
         let initial_state = hdr_vaapi_state();
         let ffmpeg_info = FfmpegInfo::default();
 
-        let format_filter = VideoFilter::Format {
+        let format_filter: VideoFilter = FormatFilter {
             format: PixelFormat::Nv12,
-        };
+        }
+        .into();
 
         let mut chain = FilterChain::new(vec![PipelineFilter::Video(format_filter)]);
 
@@ -511,7 +522,7 @@ mod tests {
         let has_hwmap = chain
             .filters
             .iter()
-            .any(|f| matches!(f, PipelineFilter::Video(VideoFilter::HwMap { .. })));
+            .any(|f| matches!(f, PipelineFilter::Video(VideoFilter::HwMap(_))));
 
         assert!(
             !has_hwmap,

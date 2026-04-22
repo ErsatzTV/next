@@ -5,7 +5,7 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{HwVideoFilter, VideoFilter};
+use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone)]
 pub struct Qsv {
@@ -20,14 +20,10 @@ impl HwAccel for Qsv {
         _current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale { size, .. }
+            VideoFilter::Scale(ScaleFilter { size, .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
             {
-                VideoFilter::Hardware(Box::new(ScaleQsv {
-                    size: size.clone(),
-                    //input_is_anamorphic: *input_is_anamorphic,
-                    //force_original_aspect_ratio: force_original_aspect_ratio.clone(),
-                }))
+                ScaleQsv { size: size.clone() }.into()
             }
             _ => video_filter.clone(),
         }
@@ -85,9 +81,12 @@ impl HwAccel for Qsv {
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(VideoFilter::Hardware(Box::new(FormatQsv {
-            format: pixel_format.clone(),
-        })))
+        Some(
+            FormatQsv {
+                format: pixel_format.clone(),
+            }
+            .into(),
+        )
     }
 
     fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
@@ -108,13 +107,12 @@ impl HwAccel for Qsv {
 }
 
 #[derive(Clone)]
-struct ScaleQsv {
-    size: Option<FrameSize>,
+pub struct ScaleQsv {
+    pub(crate) size: Option<FrameSize>,
 }
 
-impl HwVideoFilter for ScaleQsv {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for ScaleQsv {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -126,8 +124,8 @@ impl HwVideoFilter for ScaleQsv {
         }
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Qsv
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Qsv)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -138,13 +136,12 @@ impl HwVideoFilter for ScaleQsv {
 }
 
 #[derive(Clone)]
-struct FormatQsv {
-    format: PixelFormat,
+pub struct FormatQsv {
+    pub(crate) format: PixelFormat,
 }
 
-impl HwVideoFilter for FormatQsv {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for FormatQsv {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -153,8 +150,8 @@ impl HwVideoFilter for FormatQsv {
         state.surface = FrameSurface::Qsv;
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Qsv
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Qsv)
     }
 
     fn as_arg(&self) -> Option<String> {

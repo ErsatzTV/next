@@ -4,7 +4,7 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{HwVideoFilter, VideoFilter};
+use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone)]
 pub struct Vulkan;
@@ -17,29 +17,30 @@ impl HwAccel for Vulkan {
         current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale {
+            VideoFilter::Scale(ScaleFilter {
                 size,
                 input_is_anamorphic,
                 ..
-            } if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
                 && current_state.pixel_format.bit_depth() == 8 =>
             {
-                VideoFilter::Hardware(Box::new(ScaleVulkan {
+                ScaleVulkan {
                     size: size.clone(),
                     input_is_anamorphic: *input_is_anamorphic,
-                    //force_original_aspect_ratio: force_original_aspect_ratio.clone(),
-                }))
+                }
+                .into()
             }
-            VideoFilter::ToneMap { algorithm, format }
+            VideoFilter::ToneMap(ToneMapFilter { algorithm, format })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) =>
             {
-                VideoFilter::Hardware(Box::new(Libplacebo {
+                LibplaceboVulkan {
                     algorithm: algorithm.clone(),
                     format: match format {
                         PixelFormat::Yuv420p10le => PixelFormat::P010le,
                         _ => PixelFormat::Nv12,
                     },
-                }))
+                }
+                .into()
             }
             _ => video_filter.clone(),
         }
@@ -78,9 +79,12 @@ impl HwAccel for Vulkan {
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(VideoFilter::Hardware(Box::new(FormatVulkan {
-            format: pixel_format.clone(),
-        })))
+        Some(
+            FormatVulkan {
+                format: pixel_format.clone(),
+            }
+            .into(),
+        )
     }
 
     fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
@@ -97,13 +101,12 @@ impl HwAccel for Vulkan {
 }
 
 #[derive(Clone)]
-struct FormatVulkan {
-    format: PixelFormat,
+pub struct FormatVulkan {
+    pub(crate) format: PixelFormat,
 }
 
-impl HwVideoFilter for FormatVulkan {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for FormatVulkan {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -111,8 +114,8 @@ impl HwVideoFilter for FormatVulkan {
         state.pixel_format = self.format.clone();
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vulkan
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vulkan)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -121,14 +124,13 @@ impl HwVideoFilter for FormatVulkan {
 }
 
 #[derive(Clone)]
-struct Libplacebo {
-    algorithm: Option<String>,
-    format: PixelFormat,
+pub struct LibplaceboVulkan {
+    pub(crate) algorithm: Option<String>,
+    pub(crate) format: PixelFormat,
 }
 
-impl HwVideoFilter for Libplacebo {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for LibplaceboVulkan {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -137,8 +139,8 @@ impl HwVideoFilter for Libplacebo {
         state.is_hdr = false;
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vulkan
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vulkan)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -151,15 +153,13 @@ impl HwVideoFilter for Libplacebo {
 }
 
 #[derive(Clone)]
-struct ScaleVulkan {
-    size: Option<FrameSize>,
-    input_is_anamorphic: bool,
-    //force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
+pub struct ScaleVulkan {
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) input_is_anamorphic: bool,
 }
 
-impl HwVideoFilter for ScaleVulkan {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for ScaleVulkan {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -173,17 +173,12 @@ impl HwVideoFilter for ScaleVulkan {
         }
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vulkan
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vulkan)
     }
 
     fn as_arg(&self) -> Option<String> {
         if let Some(size) = &self.size {
-            // let aspect_ratio = self
-            //     .force_original_aspect_ratio
-            //     .as_ref()
-            //     .map_or(String::new(), |f| f.as_arg());
-            //
             if self.input_is_anamorphic {
                 Some(format!(
                     "scale_vulkan=iw*sar:ih,setsar=1,scale_vulkan={}:{}",

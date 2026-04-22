@@ -6,7 +6,10 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{ForceOriginalAspectRatio, HwVideoFilter, VideoFilter};
+use crate::video_filter::{
+    DeinterlaceFilter, ForceOriginalAspectRatio, PadFilter, ScaleFilter, ToneMapFilter,
+    VideoFilter, VideoFilterOp,
+};
 
 #[derive(Debug, Clone)]
 pub struct Cuda {
@@ -31,40 +34,41 @@ impl HwAccel for Cuda {
         _current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale {
+            VideoFilter::Scale(ScaleFilter {
                 size,
                 input_is_anamorphic,
                 force_original_aspect_ratio,
-            } if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda) => {
-                VideoFilter::Hardware(Box::new(ScaleCuda {
-                    size: size.clone(),
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
-                }))
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda) => ScaleCuda {
+                size: size.clone(),
+                input_is_anamorphic: *input_is_anamorphic,
+                force_original_aspect_ratio: force_original_aspect_ratio.clone(),
             }
-            VideoFilter::Pad { size }
+            .into(),
+            VideoFilter::Pad(PadFilter { size })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda) =>
             {
-                VideoFilter::Hardware(Box::new(PadCuda { size: size.clone() }))
+                PadCuda { size: size.clone() }.into()
             }
-            VideoFilter::ToneMap { algorithm, format } if self.is_vulkan_hdr => {
-                VideoFilter::Hardware(Box::new(Libplacebo {
+            VideoFilter::ToneMap(ToneMapFilter { algorithm, format }) if self.is_vulkan_hdr => {
+                LibplaceboCuda {
                     algorithm: algorithm.clone(),
                     format: match format {
                         PixelFormat::Yuv420p10le => PixelFormat::P010le,
                         _ => PixelFormat::Nv12,
                     },
-                }))
+                }
+                .into()
             }
-            VideoFilter::Deinterlace { .. } => {
+            VideoFilter::Deinterlace(DeinterlaceFilter { .. }) => {
                 let best_cuda_filter = ffmpeg_info
                     .find_best_fit(&[KnownVideoFilter::YadifCuda, KnownVideoFilter::BwdifCuda])
                     .and_then(|known_filter| CudaDeinterlaceFilter::try_from(known_filter).ok());
 
                 if let Some(best_cuda_filter) = best_cuda_filter {
-                    return VideoFilter::Hardware(Box::new(DeinterlaceCuda {
+                    return DeinterlaceCuda {
                         filter: best_cuda_filter,
-                    }));
+                    }
+                    .into();
                 }
 
                 video_filter.clone()
@@ -144,9 +148,7 @@ impl HwAccel for Cuda {
         if self.is_vulkan_hdr {
             Vec::new()
         } else {
-            vec![PipelineFilter::Video(VideoFilter::Hardware(Box::new(
-                HwUploadCudaWorkaround,
-            )))]
+            vec![PipelineFilter::Video(HwUploadCudaWorkaround.into())]
         }
     }
 
@@ -163,9 +165,12 @@ impl HwAccel for Cuda {
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(VideoFilter::Hardware(Box::new(FormatCuda {
-            format: pixel_format.clone(),
-        })))
+        Some(
+            FormatCuda {
+                format: pixel_format.clone(),
+            }
+            .into(),
+        )
     }
 
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self {
@@ -197,15 +202,14 @@ impl HwAccel for Cuda {
 }
 
 #[derive(Clone)]
-struct ScaleCuda {
-    size: Option<FrameSize>,
-    input_is_anamorphic: bool,
-    force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
+pub struct ScaleCuda {
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) input_is_anamorphic: bool,
+    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
-impl HwVideoFilter for ScaleCuda {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for ScaleCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -219,8 +223,8 @@ impl HwVideoFilter for ScaleCuda {
         }
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Cuda
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Cuda)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -248,13 +252,12 @@ impl HwVideoFilter for ScaleCuda {
 }
 
 #[derive(Clone)]
-struct PadCuda {
-    size: Option<FrameSize>,
+pub struct PadCuda {
+    pub(crate) size: Option<FrameSize>,
 }
 
-impl HwVideoFilter for PadCuda {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for PadCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -265,8 +268,8 @@ impl HwVideoFilter for PadCuda {
         }
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Cuda
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Cuda)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -280,13 +283,12 @@ impl HwVideoFilter for PadCuda {
 }
 
 #[derive(Clone)]
-struct FormatCuda {
-    format: PixelFormat,
+pub struct FormatCuda {
+    pub(crate) format: PixelFormat,
 }
 
-impl HwVideoFilter for FormatCuda {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for FormatCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -295,8 +297,8 @@ impl HwVideoFilter for FormatCuda {
         state.surface = FrameSurface::Cuda;
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Cuda
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Cuda)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -305,21 +307,21 @@ impl HwVideoFilter for FormatCuda {
 }
 
 #[derive(Clone)]
-struct HwUploadCudaWorkaround;
+pub struct HwUploadCudaWorkaround;
 
-impl HwVideoFilter for HwUploadCudaWorkaround {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
+impl VideoFilterOp for HwUploadCudaWorkaround {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         // we always need to keep this filter
-        Some(VideoFilter::Hardware(Box::new(self.clone())))
+        Some(self.clone().into())
     }
 
     fn apply_to(&self, state: &mut FrameState) {
         state.surface = FrameSurface::Cuda;
     }
 
-    fn required_surface(&self) -> FrameSurface {
+    fn required_surface(&self) -> Option<FrameSurface> {
         // saying cuda because we don't want the pipeline to download before uploading
-        FrameSurface::Cuda
+        Some(FrameSurface::Cuda)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -328,14 +330,14 @@ impl HwVideoFilter for HwUploadCudaWorkaround {
 }
 
 #[derive(Clone)]
-struct Libplacebo {
-    algorithm: Option<String>,
-    format: PixelFormat,
+pub struct LibplaceboCuda {
+    /// algorithm to use for tonemapping
+    pub(crate) algorithm: Option<String>,
+    pub(crate) format: PixelFormat,
 }
 
-impl HwVideoFilter for Libplacebo {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for LibplaceboCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -345,8 +347,8 @@ impl HwVideoFilter for Libplacebo {
         state.surface = FrameSurface::Cuda;
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Vulkan
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vulkan)
     }
 
     fn as_arg(&self) -> Option<String> {
@@ -370,8 +372,8 @@ impl HwVideoFilter for Libplacebo {
 }
 
 #[derive(Clone)]
-struct DeinterlaceCuda {
-    filter: CudaDeinterlaceFilter,
+pub struct DeinterlaceCuda {
+    pub(crate) filter: CudaDeinterlaceFilter,
 }
 
 #[derive(Clone, Copy)]
@@ -391,9 +393,8 @@ impl TryFrom<&KnownVideoFilter> for CudaDeinterlaceFilter {
     }
 }
 
-impl HwVideoFilter for DeinterlaceCuda {
-    fn evaluate(&self, _state: &FrameState) -> Option<VideoFilter> {
-        // called before this is used
+impl VideoFilterOp for DeinterlaceCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
@@ -402,8 +403,8 @@ impl HwVideoFilter for DeinterlaceCuda {
         state.surface = FrameSurface::Cuda;
     }
 
-    fn required_surface(&self) -> FrameSurface {
-        FrameSurface::Cuda
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Cuda)
     }
 
     fn as_arg(&self) -> Option<String> {

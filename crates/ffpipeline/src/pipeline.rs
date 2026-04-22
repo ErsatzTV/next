@@ -20,7 +20,10 @@ use crate::output_settings::OutputSettings;
 use crate::probe::{ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
-use crate::video_filter::{SoftwareDeinterlaceFilter, VideoFilter};
+use crate::video_filter::{
+    DeinterlaceFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
+    ToneMapFilter, VideoFilterOp,
+};
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
 pub const SEGMENT_SECONDS: u32 = 4;
@@ -293,28 +296,43 @@ impl Pipeline {
         filters.extend(video_decoder.filters());
 
         filters.extend([
-            PipelineFilter::Video(VideoFilter::Loop {
-                codec: video_stream.codec.to_owned(),
-            }),
-            PipelineFilter::Video(VideoFilter::ToneMap {
-                algorithm: final_output_settings.tonemap_algorithm.clone(),
-                format: match final_output_settings.bit_depth {
-                    Some(10) => PixelFormat::Yuv420p10le,
-                    _ => PixelFormat::Yuv420p,
-                },
-            }),
-            PipelineFilter::Video(VideoFilter::Deinterlace {
-                filter: SoftwareDeinterlaceFilter::Yadif,
-                input_is_interlaced: initial_state.is_interlaced,
-            }),
-            PipelineFilter::Video(VideoFilter::Scale {
-                size: initial_scaled_size,
-                input_is_anamorphic: initial_state.is_anamorphic,
-                force_original_aspect_ratio: None,
-            }),
-            PipelineFilter::Video(VideoFilter::Pad {
-                size: final_output_settings.video_size.to_owned(),
-            }),
+            PipelineFilter::Video(
+                LoopFilter {
+                    codec: video_stream.codec.to_owned(),
+                }
+                .into(),
+            ),
+            PipelineFilter::Video(
+                ToneMapFilter {
+                    algorithm: final_output_settings.tonemap_algorithm.clone(),
+                    format: match final_output_settings.bit_depth {
+                        Some(10) => PixelFormat::Yuv420p10le,
+                        _ => PixelFormat::Yuv420p,
+                    },
+                }
+                .into(),
+            ),
+            PipelineFilter::Video(
+                DeinterlaceFilter {
+                    filter: SoftwareDeinterlaceFilter::Yadif,
+                    input_is_interlaced: initial_state.is_interlaced,
+                }
+                .into(),
+            ),
+            PipelineFilter::Video(
+                ScaleFilter {
+                    size: initial_scaled_size,
+                    input_is_anamorphic: initial_state.is_anamorphic,
+                    force_original_aspect_ratio: None,
+                }
+                .into(),
+            ),
+            PipelineFilter::Video(
+                PadFilter {
+                    size: final_output_settings.video_size.to_owned(),
+                }
+                .into(),
+            ),
         ]);
 
         Ok(Pipeline {
