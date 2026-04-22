@@ -161,6 +161,7 @@ pub struct TestOutputParams {
     pub loudness: Option<AudioLoudnessSettings>,
     pub accel: Option<HardwareAccel>,
     pub frame_rate: Option<FrameRate>,
+    pub tonemap_algorithm: Option<String>,
 }
 
 impl Default for TestOutputParams {
@@ -178,6 +179,7 @@ impl Default for TestOutputParams {
             loudness: None,
             accel: None,
             frame_rate: None,
+            tonemap_algorithm: None,
         }
     }
 }
@@ -197,7 +199,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         video_bitrate: params.video_bitrate,
         video_buffer: params.video_buffer,
         video_size: params.video_size,
-        tonemap_algorithm: None,
+        tonemap_algorithm: params.tonemap_algorithm,
         deinterlace: params.deinterlace,
         accel: params.accel,
         format: OutputFormat::Hls {
@@ -263,7 +265,8 @@ pub fn assert_video(probe: &ProbeResult, codec: &str, width: u32, height: u32) {
             _ => None,
         })
         .expect("no video stream found in output");
-    assert_eq!(video.codec, codec, "unexpected video codec");
+    log::info!("{}, {}", video.codec.to_lowercase(), codec);
+    assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
     assert_eq!(video.width, width, "unexpected video width");
     assert_eq!(video.height, height, "unexpected video height");
 }

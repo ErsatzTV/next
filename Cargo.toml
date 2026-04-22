@@ -16,6 +16,7 @@ resolver = "3"
 [workspace.dependencies]
 axum = "0.8"
 clap = { version = "4.6", features = ["derive"] }
+derive_more = { version = "2.1.1", features = ["display"] }
 dyn-clone = "1.0"
 enum_dispatch = "0.3.13"
 env_logger = "0.11"

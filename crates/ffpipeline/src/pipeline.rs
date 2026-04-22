@@ -68,7 +68,7 @@ pub(crate) struct OutputContext {
     pub(crate) preferred_pixel_format: Option<PixelFormat>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, strum::Display)]
 pub enum FrameSurface {
     System,
     Cuda,
@@ -135,7 +135,13 @@ impl PixelFormat {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, derive_more::Display)]
+#[display(
+    "FrameState(size={},is_anamorphic={},surface={})",
+    size,
+    is_anamorphic,
+    surface
+)]
 pub struct FrameState {
     pub(crate) size: FrameSize,
     pub(crate) is_anamorphic: bool,

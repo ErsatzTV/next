@@ -180,6 +180,13 @@ impl FilterChain {
         required: FrameSurface,
         encoder_pixel_format: &Option<PixelFormat>,
     ) -> bool {
+        log::trace!(
+            "Determining surface transfer. State: {}, accel: {:?}, required surface: {}",
+            current_state,
+            accel,
+            required
+        );
+        // Check if we're moving down to system (software) frames
         if required == FrameSurface::System {
             let target_pixel_format = match current_state.pixel_format.bit_depth() {
                 10 => PixelFormat::P010le,
@@ -191,8 +198,14 @@ impl FilterChain {
             }
             .into();
             download.apply_to(current_state);
-            resolved.push(PipelineFilter::Video(download))
-        } else {
+            resolved.push(PipelineFilter::Video(download));
+            return true;
+        }
+
+        // If we're moving into hardware from software
+        // first check if the current pixel formats are compatiable, otherwise
+        // we will need explicit converesion
+        if current_state.surface == FrameSurface::System {
             let is_format_supported = match accel {
                 Some(a) => a.supports_pixel_format(&current_state.pixel_format),
                 None => true,
@@ -206,40 +219,44 @@ impl FilterChain {
                 .into();
                 upload.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(upload));
-            } else if current_state.surface == FrameSurface::System {
-                let can_convert_down = current_state.pixel_format.bit_depth() == 10
-                    && encoder_pixel_format
-                        .as_ref()
-                        .is_some_and(|pf| pf.bit_depth() == 8);
-
-                if can_convert_down {
-                    let format: VideoFilter = FormatFilter {
-                        format: PixelFormat::Nv12,
-                    }
-                    .into();
-                    format.apply_to(current_state);
-                    resolved.push(PipelineFilter::Video(format));
-
-                    let upload: VideoFilter = HwUploadFilter {
-                        target_surface: required,
-                        source_format: current_state.pixel_format.clone(),
-                    }
-                    .into();
-                    upload.apply_to(current_state);
-                    resolved.push(PipelineFilter::Video(upload));
-                } else {
-                    return false;
-                }
-            } else if let Some(map) = accel
-                .as_ref()
-                .and_then(|a| a.hw_map_filter(&current_state.surface, &required))
+                return true;
+            } else if current_state.pixel_format.bit_depth() == 10
+                && encoder_pixel_format
+                    .as_ref()
+                    .is_some_and(|pf| pf.bit_depth() == 8)
             {
-                map.apply_to(current_state);
-                resolved.push(PipelineFilter::Video(map));
+                let format: VideoFilter = FormatFilter {
+                    format: PixelFormat::Nv12,
+                }
+                .into();
+                format.apply_to(current_state);
+                resolved.push(PipelineFilter::Video(format));
+
+                let upload: VideoFilter = HwUploadFilter {
+                    target_surface: required,
+                    source_format: current_state.pixel_format.clone(),
+                }
+                .into();
+                upload.apply_to(current_state);
+                resolved.push(PipelineFilter::Video(upload));
+                return true;
+            } else {
+                return false;
             }
         }
 
-        true
+        // Lastly, if we're doing a hw -> hw transition, see if we can do so
+        // using the accel's hwmap impl.
+        if let Some(map) = accel
+            .as_ref()
+            .and_then(|a| a.hw_map_filter(&current_state.surface, &required))
+        {
+            map.apply_to(current_state);
+            resolved.push(PipelineFilter::Video(map));
+            return true;
+        }
+
+        false
     }
 
     pub(crate) fn optimize(&mut self) {

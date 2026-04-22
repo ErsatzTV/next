@@ -76,7 +76,10 @@ impl HwAccel for Vaapi {
                             },
                         }
                         .into(),
-                        // TODO: Implement tonemap vaapi
+                        KnownVideoFilter::TonemapVaapi => TonemapVaapi {
+                            output_format: self.output_format(format),
+                        }
+                        .into(),
                         _ => video_filter.clone(),
                     }
                 } else {
@@ -351,5 +354,34 @@ impl VideoFilterOp for FormatVaapi {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!("scale_vaapi=format={}", self.format.as_arg()))
+    }
+}
+
+#[derive(Clone)]
+pub struct TonemapVaapi {
+    pub(crate) output_format: PixelFormat,
+}
+
+impl VideoFilterOp for TonemapVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.is_hdr = false;
+        state.pixel_format = self.output_format.clone();
+        state.surface = FrameSurface::Vaapi;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        format!(
+            "tonemap_vaapi=format={}:t=bt709:m=bt709:p=bt709",
+            self.output_format.as_arg()
+        )
+        .into()
     }
 }

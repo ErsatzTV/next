@@ -65,8 +65,9 @@ pub trait HwAccel {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, strum::Display)]
 #[enum_dispatch(HwAccel)]
+#[strum(serialize_all = "lowercase")]
 pub enum HardwareAccel {
     Cuda(accel::cuda::Cuda),
     Qsv(accel::qsv::Qsv),

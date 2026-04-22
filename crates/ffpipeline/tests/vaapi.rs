@@ -107,6 +107,34 @@ async fn pipeline(
     }
 }
 
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn tonemap(
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
+    #[values("aac", "ac3")] af: AudioFormat,
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: "1080p_hevc_10_hdr.ts",
+            params: TestOutputParams {
+                audio_format: Some(af),
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                tonemap_algorithm: Some("hable".to_string()),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: af.to_string(),
+        })
+        .await;
+    }
+}
+
 async fn run_vaapi_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {

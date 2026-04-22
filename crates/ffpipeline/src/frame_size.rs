@@ -1,8 +1,11 @@
 use std::str::FromStr;
 
+use derive_more::Display;
+
 use crate::pipeline::FrameState;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Display)]
+#[display("FrameSize(w={},h={})", width, height)]
 pub struct FrameSize {
     pub width: u32,
     pub height: u32,
