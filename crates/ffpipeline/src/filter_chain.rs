@@ -67,6 +67,16 @@ impl FilterChain {
         self.filters = active_filters;
     }
 
+    /// Resolves the filter chain by walking each filter in order, tracking the
+    /// current frame state (surface, pixel format, etc.) and inserting any
+    /// surface transfers (hw download/upload/map) or pixel format conversions
+    /// needed between filters or before the encoder.
+    ///
+    /// Each video filter is passed through the hardware accelerator's
+    /// [`HwAccel::best_filter`] to select a hardware-optimized variant when
+    /// available. After all filters are resolved, the final state is reconciled
+    /// with the encoder's expected surface and pixel format, appending
+    /// additional transfer or format filters as needed.
     pub(crate) fn resolve(
         &mut self,
         ffmpeg_info: &FfmpegInfo,

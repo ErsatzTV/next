@@ -69,7 +69,10 @@ impl HwAccel for Vaapi {
                         KnownVideoFilter::TonemapOpencl => {
                             VideoFilter::Hardware(Box::new(TonemapOpencl {
                                 algorithm: algorithm.clone(),
-                                output_format: format.clone(),
+                                output_format: match format.bit_depth() {
+                                    10 => PixelFormat::P010le,
+                                    _ => PixelFormat::Nv12,
+                                },
                             }))
                         }
                         // TODO: Implement tonemap vaapi
