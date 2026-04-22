@@ -33,7 +33,7 @@ pub struct TestCase {
 pub async fn test_env() -> Option<&'static TestEnv> {
     TEST_ENV
         .get_or_init(|| async {
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
                 .is_test(true)
                 .try_init()
                 .ok();
@@ -213,7 +213,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
 pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, String) {
     let args = pipeline.args();
     let envs = pipeline.envs();
-    log::debug!("optimized pipeline: {}", args.join(" "));
+    log::info!("optimized pipeline: {}", args.join(" "));
 
     let output = tokio::time::timeout(
         Duration::from_secs(30),
