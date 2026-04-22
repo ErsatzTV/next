@@ -40,6 +40,9 @@ pub const MFX_PROFILE_VP9_3: u32 = 3;
 
 // AV1: Main profile supports 8 and 10-bit, so treat any profile as potentially 10-bit capable
 
+pub const MFX_FOURCC_NV12: u32 = u32::from_ne_bytes(*b"NV12");
+pub const MFX_FOURCC_P010: u32 = u32::from_ne_bytes(*b"P010");
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union mfxVariantValue {
@@ -135,6 +138,57 @@ pub struct mfxEncoderDescription_encoder_encprofile {
     pub NumMemTypes: u16,
     // 4 bytes implicit padding
     pub MemDesc: *mut c_void,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxVPPDescription {
+    pub Version: mfxStructVersion,
+    pub reserved: [u16; 7],
+    pub NumFilters: u16,
+    // 6 bytes implicit padding
+    pub Filters: *mut mfxVPPDescription_filter,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxVPPDescription_filter {
+    pub FilterFourCC: u32,
+    pub MaxDelayInFrames: u16,
+    pub reserved: [u16; 7],
+    pub NumMemTypes: u16,
+    // 4 bytes implicit padding
+    pub MemDesc: *mut mfxVPPDescription_filter_memdesc,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxVPPDescription_filter_memdesc {
+    pub MemHandleType: u32,
+    pub Width: mfxRange32U,
+    pub Height: mfxRange32U,
+    pub reserved: [u16; 7],
+    pub NumInFormats: u16,
+    // 4 bytes implicit padding
+    pub Formats: *mut mfxVPPDescription_filter_memdesc_format,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxVPPDescription_filter_memdesc_format {
+    pub InFormat: u32,
+    pub reserved: [u16; 5],
+    pub NumOutFormat: u16,
+    // 4 bytes implicit padding on 64-bit
+    pub OutFormats: *mut u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxRange32U {
+    pub Min: u32,
+    pub Max: u32,
+    pub Step: u32,
 }
 
 #[cfg(all(
