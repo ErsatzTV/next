@@ -618,10 +618,17 @@ impl Pipeline {
     }
 
     fn needs_hw_device(&self) -> Option<HardwareAccel> {
+        // if we decoded to hw, we need to init hw device
+        if self.initial_state.surface != FrameSurface::System {
+            return self.accel.clone();
+        }
+
+        // if we encode in hw, we need to init hw device
         if self.output_context.video_codec.is_hardware {
             return self.accel.clone();
         }
 
+        // if any filters are hw filters, we need to init hw device
         for filter in &self.filter_chain.filters {
             if let PipelineFilter::Video(video_filter) = filter {
                 match video_filter.required_surface() {
