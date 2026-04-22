@@ -128,13 +128,15 @@ impl FilterChain {
                 *encoder_surface
             );
 
-            let _ = self.transfer_surface(
+            if !self.transfer_surface(
                 accel,
                 &mut resolved,
                 &mut current_state,
                 encoder_surface.clone(),
                 encoder_pixel_format,
-            );
+            ) {
+                log::error!("failed to transfer surface to encoder");
+            }
         }
 
         if let Some(pixel_format) = encoder_pixel_format
