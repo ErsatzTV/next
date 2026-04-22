@@ -93,7 +93,7 @@ impl FrameSurface {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
     Yuv420p,
     Yuv420p10le,
@@ -102,9 +102,11 @@ pub enum PixelFormat {
     P016,
 }
 
+gen_subset!(HwPixelFormat, PixelFormat, Nv12, P010le);
+
 impl PixelFormat {
     pub(crate) fn parse(pix_fmt: &str) -> PixelFormat {
-        match pix_fmt {
+        match pix_fmt.to_lowercase().as_str() {
             "yuv420p" => PixelFormat::Yuv420p,
             "yuv420p10le" => PixelFormat::Yuv420p10le,
             "nv12" => PixelFormat::Nv12,
@@ -268,8 +270,8 @@ impl Pipeline {
             .map(|s| s.square_pixel_size(&initial_state));
 
         let preferred_pixel_format = match final_output_settings.bit_depth {
-            Some(10) => video_codec.preferred_pixel_format_10bit.clone(),
-            Some(8) => video_codec.preferred_pixel_format_8bit.clone(),
+            Some(10) => video_codec.preferred_pixel_format_10bit,
+            Some(8) => video_codec.preferred_pixel_format_8bit,
             _ => None,
         };
 

@@ -81,7 +81,7 @@ impl HwAccel for Vulkan {
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         Some(
             FormatVulkan {
-                format: pixel_format.clone(),
+                format: *pixel_format,
             }
             .into(),
         )
@@ -111,7 +111,7 @@ impl VideoFilterOp for FormatVulkan {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -135,7 +135,7 @@ impl VideoFilterOp for LibplaceboVulkan {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
         state.is_hdr = false;
     }
 

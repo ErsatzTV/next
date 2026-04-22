@@ -3,7 +3,7 @@ use enum_dispatch::enum_dispatch;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
 use crate::{ArgVec, accel};
@@ -54,10 +54,10 @@ pub trait HwAccel {
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self;
     fn init_hw_device(&self) -> ArgVec;
     fn known_accel(&self) -> &KnownHardwareAccel;
-    fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
+    fn output_format(&self, source_pixel_format: &PixelFormat) -> HwPixelFormat {
         match source_pixel_format.bit_depth() {
-            10 => PixelFormat::P010le,
-            _ => PixelFormat::Nv12,
+            10 => HwPixelFormat::P010le,
+            _ => HwPixelFormat::Nv12,
         }
     }
     fn supports_pixel_format(&self, _pixel_format: &PixelFormat) -> bool {

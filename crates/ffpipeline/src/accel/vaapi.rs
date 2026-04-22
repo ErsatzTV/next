@@ -4,7 +4,7 @@ use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
     ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter,
@@ -207,7 +207,7 @@ impl HwAccel for Vaapi {
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         Some(
             FormatVaapi {
-                format: pixel_format.clone(),
+                format: *pixel_format,
             }
             .into(),
         )
@@ -342,7 +342,7 @@ impl VideoFilterOp for FormatVaapi {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -356,7 +356,7 @@ impl VideoFilterOp for FormatVaapi {
 
 #[derive(Clone)]
 pub struct TonemapVaapi {
-    pub(crate) output_format: PixelFormat,
+    pub(crate) output_format: HwPixelFormat,
 }
 
 impl VideoFilterOp for TonemapVaapi {
@@ -366,7 +366,7 @@ impl VideoFilterOp for TonemapVaapi {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.is_hdr = false;
-        state.pixel_format = self.output_format.clone();
+        state.pixel_format = self.output_format.into();
         state.surface = FrameSurface::Vaapi;
     }
 

@@ -214,7 +214,7 @@ impl FilterChain {
             if is_format_supported {
                 let upload: VideoFilter = HwUploadFilter {
                     target_surface: required,
-                    source_format: current_state.pixel_format.clone(),
+                    source_format: current_state.pixel_format,
                 }
                 .into();
                 upload.apply_to(current_state);
@@ -234,7 +234,7 @@ impl FilterChain {
 
                 let upload: VideoFilter = HwUploadFilter {
                     target_surface: required,
-                    source_format: current_state.pixel_format.clone(),
+                    source_format: current_state.pixel_format,
                 }
                 .into();
                 upload.apply_to(current_state);

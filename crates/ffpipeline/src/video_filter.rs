@@ -93,7 +93,7 @@ impl VideoFilterOp for HwUploadFilter {
         state.pixel_format = match &state.pixel_format {
             PixelFormat::Yuv420p => PixelFormat::Nv12,
             PixelFormat::Yuv420p10le => PixelFormat::P010le,
-            other => other.clone(),
+            other => *other,
         }
     }
 
@@ -135,7 +135,7 @@ impl VideoFilterOp for HwDownloadFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.surface = FrameSurface::System;
-        state.pixel_format = self.target_pixel_format.clone();
+        state.pixel_format = self.target_pixel_format;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -289,7 +289,7 @@ impl VideoFilterOp for FormatFilter {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -317,7 +317,7 @@ impl VideoFilterOp for ToneMapFilter {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
         state.is_hdr = false;
     }
 

@@ -58,9 +58,11 @@ impl VideoDecoder {
 
     pub(crate) fn output_format(&self, source_pixel_format: &PixelFormat) -> PixelFormat {
         match self {
-            VideoDecoder::None => source_pixel_format.clone(),
-            VideoDecoder::Software => source_pixel_format.clone(),
-            VideoDecoder::HardwareAccel { accel } => accel.output_format(source_pixel_format),
+            VideoDecoder::None => *source_pixel_format,
+            VideoDecoder::Software => *source_pixel_format,
+            VideoDecoder::HardwareAccel { accel } => {
+                accel.output_format(source_pixel_format).into()
+            }
         }
     }
 

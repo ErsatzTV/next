@@ -88,7 +88,7 @@ impl HwAccel for Qsv {
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         Some(
             FormatQsv {
-                format: pixel_format.clone(),
+                format: *pixel_format,
             }
             .into(),
         )
@@ -151,7 +151,7 @@ impl VideoFilterOp for FormatQsv {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
         state.surface = FrameSurface::Qsv;
     }
 

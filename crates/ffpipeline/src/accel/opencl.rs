@@ -19,7 +19,7 @@ impl VideoFilterOp for TonemapOpencl {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.output_format.clone();
+        state.pixel_format = self.output_format;
         state.is_hdr = false;
         state.surface = FrameSurface::OpenCL;
     }

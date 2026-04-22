@@ -167,7 +167,7 @@ impl HwAccel for Cuda {
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         Some(
             FormatCuda {
-                format: pixel_format.clone(),
+                format: *pixel_format,
             }
             .into(),
         )
@@ -293,7 +293,7 @@ impl VideoFilterOp for FormatCuda {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
         state.surface = FrameSurface::Cuda;
     }
 
@@ -342,7 +342,7 @@ impl VideoFilterOp for LibplaceboCuda {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format.clone();
+        state.pixel_format = self.format;
         state.is_hdr = false;
         state.surface = FrameSurface::Cuda;
     }
