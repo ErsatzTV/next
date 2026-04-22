@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::ArgVec;
-use crate::pipeline::PixelFormat;
+use crate::pipeline::{FrameSurface, PixelFormat};
 
 #[derive(Clone, PartialEq)]
 pub struct VideoCodec {
@@ -9,7 +9,7 @@ pub struct VideoCodec {
     pub(crate) options: &'static [&'static str],
     pub(crate) preferred_pixel_format_8bit: Option<PixelFormat>,
     pub(crate) preferred_pixel_format_10bit: Option<PixelFormat>,
-    pub(crate) is_hardware: bool,
+    pub(crate) preferred_surface: FrameSurface,
 }
 
 impl VideoCodec {
@@ -18,7 +18,7 @@ impl VideoCodec {
         options: &[],
         preferred_pixel_format_8bit: None,
         preferred_pixel_format_10bit: None,
-        is_hardware: false,
+        preferred_surface: FrameSurface::System,
     };
 
     pub const LIBX264: VideoCodec = VideoCodec {
@@ -26,7 +26,7 @@ impl VideoCodec {
         options: &[],
         preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
         preferred_pixel_format_10bit: Some(PixelFormat::Yuv420p10le),
-        is_hardware: false,
+        preferred_surface: FrameSurface::System,
     };
 
     pub const LIBX265: VideoCodec = VideoCodec {
@@ -34,7 +34,7 @@ impl VideoCodec {
         options: &["-tag:v", "hvc1", "-x265-params", "log-level=error"],
         preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
         preferred_pixel_format_10bit: Some(PixelFormat::Yuv420p10le),
-        is_hardware: false,
+        preferred_surface: FrameSurface::System,
     };
 
     pub(crate) fn as_arg(&self) -> ArgVec {

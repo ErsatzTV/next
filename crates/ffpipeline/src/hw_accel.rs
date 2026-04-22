@@ -2,6 +2,7 @@ use enum_dispatch::enum_dispatch;
 
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
+use crate::frame_size::FrameSize;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
@@ -31,13 +32,16 @@ pub trait HwAccel {
             _ => false,
         }
     }
-    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec>;
+    fn codec_for_format(
+        &self,
+        format: &VideoFormat,
+        video_size: Option<FrameSize>,
+    ) -> Option<VideoCodec>;
     fn decoder_arg(&self) -> ArgVec;
     fn decoder_filters(&self) -> Vec<PipelineFilter> {
         Vec::new()
     }
     fn decoder_frame_surface(&self) -> FrameSurface;
-    fn encoder_frame_surface(&self) -> FrameSurface;
     fn envs(&self) -> Vec<(String, String)> {
         Vec::new()
     }

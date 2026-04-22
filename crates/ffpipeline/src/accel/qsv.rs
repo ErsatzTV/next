@@ -23,7 +23,7 @@ impl HwAccel for Qsv {
             VideoFilter::Scale(ScaleFilter { size, .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
             {
-                ScaleQsv { size: size.clone() }.into()
+                ScaleQsv { size: *size }.into()
             }
             _ => video_filter.clone(),
         }
@@ -48,21 +48,25 @@ impl HwAccel for Qsv {
         self.capabilities.can_encode(format, bit_depth)
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
+    fn codec_for_format(
+        &self,
+        format: &VideoFormat,
+        _video_size: Option<FrameSize>,
+    ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_qsv",
                 options: &["-low_power", "0", "-look_ahead", "0"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::Qsv,
             }),
             VideoFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_qsv",
                 options: &["-low_power", "0", "-look_ahead", "0", "-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::Qsv,
             }),
             _ => None,
         }
@@ -73,10 +77,6 @@ impl HwAccel for Qsv {
     }
 
     fn decoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::Qsv
-    }
-
-    fn encoder_frame_surface(&self) -> FrameSurface {
         FrameSurface::Qsv
     }
 
@@ -118,7 +118,7 @@ impl VideoFilterOp for ScaleQsv {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::Qsv;
             // TODO: anamorphic handling
         }

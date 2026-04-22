@@ -1,6 +1,7 @@
 use crate::ArgVec;
 use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
+use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
@@ -32,21 +33,25 @@ impl HwAccel for VideoToolbox {
         self.capabilities.can_encode(format, bit_depth)
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
+    fn codec_for_format(
+        &self,
+        format: &VideoFormat,
+        _video_size: Option<FrameSize>,
+    ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_videotoolbox",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::VideoToolbox,
             }),
             VideoFormat::Hevc if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_videotoolbox",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::VideoToolbox,
             }),
             _ => None,
         }
@@ -62,10 +67,6 @@ impl HwAccel for VideoToolbox {
     }
 
     fn decoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::VideoToolbox
-    }
-
-    fn encoder_frame_surface(&self) -> FrameSurface {
         FrameSurface::VideoToolbox
     }
 

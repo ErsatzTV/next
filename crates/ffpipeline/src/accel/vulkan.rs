@@ -25,7 +25,7 @@ impl HwAccel for Vulkan {
                 && current_state.pixel_format.bit_depth() == 8 =>
             {
                 ScaleVulkan {
-                    size: size.clone(),
+                    size: *size,
                     input_is_anamorphic: *input_is_anamorphic,
                 }
                 .into()
@@ -46,21 +46,25 @@ impl HwAccel for Vulkan {
         }
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
+    fn codec_for_format(
+        &self,
+        format: &VideoFormat,
+        _video_size: Option<FrameSize>,
+    ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_vulkan",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::Vulkan,
             }),
             VideoFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_vulkan",
                 options: &["-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::Vulkan,
             }),
             _ => None,
         }
@@ -71,10 +75,6 @@ impl HwAccel for Vulkan {
     }
 
     fn decoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::Vulkan
-    }
-
-    fn encoder_frame_surface(&self) -> FrameSurface {
         FrameSurface::Vulkan
     }
 
@@ -165,7 +165,7 @@ impl VideoFilterOp for ScaleVulkan {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::Vulkan;
             state.is_anamorphic = false;
             state.sample_aspect_ratio = Some(String::from("1:1"));

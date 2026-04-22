@@ -13,7 +13,7 @@ use crate::video_filter::{
     VideoFilterOp,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VaapiDriver {
     Ihd,
     I965,
@@ -51,7 +51,7 @@ impl HwAccel for Vaapi {
                 input_is_anamorphic,
                 force_original_aspect_ratio,
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi) => ScaleVaapi {
-                size: size.clone(),
+                size: *size,
                 input_is_anamorphic: *input_is_anamorphic,
                 force_original_aspect_ratio: force_original_aspect_ratio.clone(),
             }
@@ -59,7 +59,7 @@ impl HwAccel for Vaapi {
             VideoFilter::Pad(PadFilter { size })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadVaapi) =>
             {
-                PadVaapi { size: size.clone() }.into()
+                PadVaapi { size: *size }.into()
             }
 
             VideoFilter::ToneMap(ToneMapFilter { algorithm, format }) => {
@@ -119,22 +119,38 @@ impl HwAccel for Vaapi {
         result
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
+    fn codec_for_format(
+        &self,
+        format: &VideoFormat,
+        video_size: Option<FrameSize>,
+    ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_vaapi",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::Vaapi,
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
-                codec_name: "hevc_vaapi",
-                options: &[],
-                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
-            }),
+            VideoFormat::Hevc => {
+                let mut options: &'static [&'static str] = &[];
+
+                // WORKAROUND: RadeonSI doesn't always output appropriate crop
+                // metadata with HEVC encoder; it doesn't hurt anything to always specify
+                if self.driver == VaapiDriver::RadeonSI
+                    && let Some(1080) = video_size.map(|s| s.height)
+                {
+                    options = &["-bsf:v", "hevc_metadata=crop_bottom=8"];
+                }
+
+                Some(VideoCodec {
+                    codec_name: "hevc_vaapi",
+                    options,
+                    preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                    preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                    preferred_surface: FrameSurface::Vaapi,
+                })
+            }
             _ => None,
         }
     }
@@ -163,10 +179,6 @@ impl HwAccel for Vaapi {
         FrameSurface::Vaapi
     }
 
-    fn encoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::Vaapi
-    }
-
     fn envs(&self) -> Vec<(String, String)> {
         vec![(String::from("LIBVA_DRIVER_NAME"), self.driver.to_string())]
     }
@@ -175,16 +187,16 @@ impl HwAccel for Vaapi {
         match (from, to) {
             (FrameSurface::Vaapi, FrameSurface::OpenCL) => Some(
                 HwMapFilter {
-                    from_surface: from.clone(),
-                    to_surface: to.clone(),
+                    from_surface: *from,
+                    to_surface: *to,
                     reverse: false,
                 }
                 .into(),
             ),
             (FrameSurface::OpenCL, FrameSurface::Vaapi) => Some(
                 HwMapFilter {
-                    from_surface: from.clone(),
-                    to_surface: to.clone(),
+                    from_surface: *from,
+                    to_surface: *to,
                     reverse: true,
                 }
                 .into(),
@@ -255,7 +267,7 @@ impl VideoFilterOp for ScaleVaapi {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::Vaapi;
             state.is_anamorphic = false;
             state.sample_aspect_ratio = Some(String::from("1:1"));
@@ -303,7 +315,7 @@ impl VideoFilterOp for PadVaapi {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::Vaapi;
         }
     }

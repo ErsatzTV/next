@@ -87,7 +87,7 @@ impl VideoFilterOp for HwUploadFilter {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.surface = self.target_surface.clone();
+        state.surface = self.target_surface;
         state.pixel_format = match &state.pixel_format {
             PixelFormat::Yuv420p => PixelFormat::Nv12,
             PixelFormat::Yuv420p10le => PixelFormat::P010le,
@@ -171,7 +171,7 @@ impl VideoFilterOp for ScaleFilter {
 
                     Some(
                         ScaleFilter {
-                            size: Some(actual.clone()),
+                            size: Some(actual),
                             input_is_anamorphic: state.is_anamorphic,
                             force_original_aspect_ratio,
                         }
@@ -185,7 +185,7 @@ impl VideoFilterOp for ScaleFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.is_anamorphic = false;
             state.sample_aspect_ratio = Some(String::from("1:1"));
             state.display_aspect_ratio = None;
@@ -235,7 +235,7 @@ impl VideoFilterOp for PadFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::System;
         }
     }
@@ -401,7 +401,7 @@ impl VideoFilterOp for HwMapFilter {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.surface = self.to_surface.clone();
+        state.surface = self.to_surface;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {

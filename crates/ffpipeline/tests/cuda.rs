@@ -52,7 +52,7 @@ async fn pipeline(
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
-                video_size: Some(res.clone()),
+                video_size: Some(res),
                 bit_depth: Some(bpp),
                 ..TestOutputParams::default()
             },

@@ -68,7 +68,7 @@ pub(crate) struct OutputContext {
     pub(crate) preferred_pixel_format: Option<PixelFormat>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FrameSurface {
     System,
     Cuda,
@@ -223,7 +223,7 @@ impl Pipeline {
             final_output_settings.video_format,
         ) {
             (Some(a), Some(format)) => a
-                .codec_for_format(&format)
+                .codec_for_format(&format, final_output_settings.video_size)
                 .filter(|_| a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)))
                 .unwrap_or(match format {
                     VideoFormat::Hevc => VideoCodec::LIBX265,
@@ -273,14 +273,7 @@ impl Pipeline {
             video_codec: video_codec.clone(),
             pts_offset: final_output_settings.pts_offset,
             media_frame_rate: video_stream.frame_rate.to_owned(),
-            preferred_surface: if video_codec.is_hardware {
-                match final_output_settings.accel.as_ref() {
-                    Some(a) => a.encoder_frame_surface(),
-                    _ => FrameSurface::System,
-                }
-            } else {
-                FrameSurface::System
-            },
+            preferred_surface: video_codec.preferred_surface,
             preferred_pixel_format,
         };
 
@@ -642,7 +635,7 @@ impl Pipeline {
         }
 
         // if we encode in hw, we need to init hw device
-        if self.output_context.video_codec.is_hardware {
+        if self.output_context.video_codec.preferred_surface != FrameSurface::System {
             return self.accel.clone();
         }
 

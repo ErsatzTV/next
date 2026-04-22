@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use crate::pipeline::FrameState;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrameSize {
     pub width: u32,
     pub height: u32,

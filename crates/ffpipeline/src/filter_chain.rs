@@ -134,7 +134,7 @@ impl FilterChain {
                 accel,
                 &mut resolved,
                 &mut current_state,
-                encoder_surface.clone(),
+                *encoder_surface,
                 encoder_pixel_format,
             ) {
                 log::error!("failed to transfer surface to encoder");
@@ -200,7 +200,7 @@ impl FilterChain {
 
             if is_format_supported {
                 let upload: VideoFilter = HwUploadFilter {
-                    target_surface: required.clone(),
+                    target_surface: required,
                     source_format: current_state.pixel_format.clone(),
                 }
                 .into();

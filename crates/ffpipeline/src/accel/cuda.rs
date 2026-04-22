@@ -39,7 +39,7 @@ impl HwAccel for Cuda {
                 input_is_anamorphic,
                 force_original_aspect_ratio,
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda) => ScaleCuda {
-                size: size.clone(),
+                size: *size,
                 input_is_anamorphic: *input_is_anamorphic,
                 force_original_aspect_ratio: force_original_aspect_ratio.clone(),
             }
@@ -47,7 +47,7 @@ impl HwAccel for Cuda {
             VideoFilter::Pad(PadFilter { size })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda) =>
             {
-                PadCuda { size: size.clone() }.into()
+                PadCuda { size: *size }.into()
             }
             VideoFilter::ToneMap(ToneMapFilter { algorithm, format }) if self.is_vulkan_hdr => {
                 LibplaceboCuda {
@@ -95,14 +95,18 @@ impl HwAccel for Cuda {
         self.capabilities.can_encode(format, bit_depth)
     }
 
-    fn codec_for_format(&self, format: &VideoFormat) -> Option<VideoCodec> {
+    fn codec_for_format(
+        &self,
+        format: &VideoFormat,
+        _video_size: Option<FrameSize>,
+    ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_nvenc",
                 options: &[],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                is_hardware: true,
+                preferred_surface: FrameSurface::Cuda,
             }),
             VideoFormat::Hevc => {
                 let options = if self.capabilities.b_frame_ref_mode(format) {
@@ -116,7 +120,7 @@ impl HwAccel for Cuda {
                     options,
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                    is_hardware: true,
+                    preferred_surface: FrameSurface::Cuda,
                 })
             }
             _ => None,
@@ -158,10 +162,6 @@ impl HwAccel for Cuda {
         } else {
             FrameSurface::Cuda
         }
-    }
-
-    fn encoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::Cuda
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
@@ -215,7 +215,7 @@ impl VideoFilterOp for ScaleCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::Cuda;
             state.is_anamorphic = false;
             state.sample_aspect_ratio = Some(String::from("1:1"));
@@ -263,7 +263,7 @@ impl VideoFilterOp for PadCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
-            state.size = size.clone();
+            state.size = *size;
             state.surface = FrameSurface::Cuda;
         }
     }
