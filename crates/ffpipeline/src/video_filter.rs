@@ -65,9 +65,10 @@ pub trait HwVideoFilter: DynClone {
     /// of filter it should be. It returns `None` when no filtering logic is necessary.
     ///
     /// # Example
-    /// ```rust
+    /// ```rust,ignore
     /// let frame_state = FrameState::new(...);
-    /// let filter =
+    /// let filter = hw_filter.evaluate(&frame_state);
+    /// ```
     fn evaluate(&self, state: &FrameState) -> Option<VideoFilter>;
     /// Applies the current object's logic or transformations to the given `FrameState` object.
     ///
@@ -80,7 +81,7 @@ pub trait HwVideoFilter: DynClone {
     ///   of the frame. The function alters this object directly.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut frame_state = FrameState::new();
     /// some_object.apply_to(&mut frame_state);
     /// // The frame_state is now modified based on the logic of `apply_to`.
