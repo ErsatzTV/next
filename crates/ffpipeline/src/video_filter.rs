@@ -159,6 +159,7 @@ pub enum VideoFilter {
     HwMap {
         from_surface: FrameSurface,
         to_surface: FrameSurface,
+        reverse: bool,
     },
     Hardware(Box<dyn HwVideoFilter>),
 }
@@ -350,9 +351,16 @@ impl VideoFilter {
                 "hwdownload,format={}",
                 target_pixel_format.as_arg()
             )),
-            VideoFilter::HwMap { to_surface, .. } => to_surface
-                .device_name()
-                .map(|name| format!("hwmap=derive_device={name}")),
+            VideoFilter::HwMap {
+                to_surface,
+                reverse,
+                ..
+            } => {
+                let reverse_part = if *reverse { ":reverse=1" } else { "" };
+                to_surface
+                    .device_name()
+                    .map(|name| format!("hwmap=derive_device={name}{reverse_part}"))
+            }
             VideoFilter::Hardware(hardware_filter) => hardware_filter.as_arg(),
             VideoFilter::Scale {
                 size: Some(size),
@@ -413,6 +421,7 @@ mod tests {
         let filter = VideoFilter::HwMap {
             from_surface: FrameSurface::Vaapi,
             to_surface: FrameSurface::OpenCL,
+            reverse: false,
         };
         assert_eq!(
             filter.as_arg(),
@@ -425,6 +434,7 @@ mod tests {
         let filter = VideoFilter::HwMap {
             from_surface: FrameSurface::OpenCL,
             to_surface: FrameSurface::Vaapi,
+            reverse: true,
         };
         assert_eq!(
             filter.as_arg(),
@@ -437,6 +447,7 @@ mod tests {
         let filter = VideoFilter::HwMap {
             from_surface: FrameSurface::Vaapi,
             to_surface: FrameSurface::System,
+            reverse: false,
         };
         assert_eq!(filter.as_arg(), None);
     }
@@ -460,6 +471,7 @@ mod tests {
         let filter = VideoFilter::HwMap {
             from_surface: FrameSurface::Vaapi,
             to_surface: FrameSurface::OpenCL,
+            reverse: false,
         };
         filter.apply_to(&mut state);
 
@@ -473,6 +485,7 @@ mod tests {
         let filter = VideoFilter::HwMap {
             from_surface: FrameSurface::Vaapi,
             to_surface: FrameSurface::OpenCL,
+            reverse: false,
         };
         assert_eq!(filter.required_surface(), None);
     }

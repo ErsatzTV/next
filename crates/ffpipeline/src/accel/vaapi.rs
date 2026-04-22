@@ -173,10 +173,15 @@ impl HwAccel for Vaapi {
 
     fn hw_map_filter(&self, from: &FrameSurface, to: &FrameSurface) -> Option<VideoFilter> {
         match (from, to) {
-            (FrameSurface::Vaapi, FrameSurface::OpenCL)
-            | (FrameSurface::OpenCL, FrameSurface::Vaapi) => Some(VideoFilter::HwMap {
+            (FrameSurface::Vaapi, FrameSurface::OpenCL) => Some(VideoFilter::HwMap {
                 from_surface: from.clone(),
                 to_surface: to.clone(),
+                reverse: false,
+            }),
+            (FrameSurface::OpenCL, FrameSurface::Vaapi) => Some(VideoFilter::HwMap {
+                from_surface: from.clone(),
+                to_surface: to.clone(),
+                reverse: true,
             }),
             _ => None,
         }

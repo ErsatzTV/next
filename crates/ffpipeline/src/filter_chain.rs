@@ -413,6 +413,7 @@ mod tests {
                 VideoFilter::HwMap {
                     from_surface: FrameSurface::Vaapi,
                     to_surface: FrameSurface::OpenCL,
+                    reverse: false
                 }
             ),
             "first filter should be HwMap from Vaapi to OpenCL"
@@ -429,6 +430,7 @@ mod tests {
                 VideoFilter::HwMap {
                     from_surface: FrameSurface::OpenCL,
                     to_surface: FrameSurface::Vaapi,
+                    reverse: true,
                 }
             ),
             "third filter should be HwMap from OpenCL back to Vaapi"
