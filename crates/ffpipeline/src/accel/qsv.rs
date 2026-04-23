@@ -174,6 +174,7 @@ impl VideoFilterOp for DeinterlaceQsv {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.is_interlaced = false;
+        state.surface = FrameSurface::Qsv;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
