@@ -48,6 +48,8 @@ pub enum KnownVideoFilter {
     Bwdif,
     #[strum(serialize = "bwdif_cuda")]
     BwdifCuda,
+    #[strum(serialize = "deinterlace_qsv")]
+    DeinterlaceQsv,
     #[strum(serialize = "libplacebo")]
     LibPlacebo,
     #[strum(serialize = "pad_cuda")]

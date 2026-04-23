@@ -5,7 +5,7 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
+use crate::video_filter::{DeinterlaceFilter, ScaleFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone)]
 pub struct Qsv {
@@ -24,6 +24,11 @@ impl HwAccel for Qsv {
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
             {
                 ScaleQsv { size: *size }.into()
+            }
+            VideoFilter::Deinterlace(DeinterlaceFilter { .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceQsv) =>
+            {
+                DeinterlaceQsv.into()
             }
             _ => video_filter.clone(),
         }
@@ -156,5 +161,26 @@ impl VideoFilterOp for FormatQsv {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!("vpp_qsv=format={}", self.format.as_arg()))
+    }
+}
+
+#[derive(Clone)]
+pub struct DeinterlaceQsv;
+
+impl VideoFilterOp for DeinterlaceQsv {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.is_interlaced = false;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Qsv)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("deinterlace_qsv"))
     }
 }
