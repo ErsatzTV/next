@@ -306,7 +306,7 @@ impl Pipeline {
             PipelineFilter::Video(
                 ToneMapFilter {
                     algorithm: final_output_settings.tonemap_algorithm.clone(),
-                    format: match final_output_settings.bit_depth {
+                    output_format: match final_output_settings.bit_depth {
                         Some(10) => PixelFormat::Yuv420p10le,
                         _ => PixelFormat::Yuv420p,
                     },
@@ -443,7 +443,9 @@ impl Pipeline {
         self.filter_chain.optimize();
 
         if let Some(accel) = self.needs_hw_device() {
-            self.global_options.push(GlobalOption::InitHwDevice(accel));
+            self.global_options.push(GlobalOption::InitHwDevice {
+                accel: Box::new(accel),
+            });
         }
     }
 

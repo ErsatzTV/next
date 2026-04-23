@@ -361,15 +361,17 @@ impl FilterChain {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use super::*;
     use crate::accel::opencl::TonemapOpencl;
-    use crate::accel::vaapi::{Vaapi, VaapiDriver};
+    use crate::accel::vaapi::{TonemapVaapi, Vaapi, VaapiDriver};
     use crate::capabilities::vaapi::VaapiCapabilities;
+    use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
-    use crate::video_filter::HwMapFilter;
+    use crate::pipeline::HwPixelFormat;
+    use crate::video_filter::{HwMapFilter, ToneMapFilter};
 
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
@@ -379,9 +381,46 @@ mod tests {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
                 vpp_pixel_formats: HashSet::new(),
+                can_hdr_to_sdr_tonemap: HashSet::new(),
+                can_hdr_to_hdr_tonemap: HashSet::new(),
             },
             needs_opencl_device: true,
         })
+    }
+
+    fn vaapi_accel_with_tonemap(driver: VaapiDriver, hdr_to_sdr: bool, hdr_to_hdr: bool) -> Vaapi {
+        let mut can_hdr_to_sdr_tonemap = HashSet::new();
+        let mut can_hdr_to_hdr_tonemap = HashSet::new();
+        if hdr_to_sdr {
+            can_hdr_to_sdr_tonemap.insert(libva_sys::VA_FOURCC_P010);
+        }
+        if hdr_to_hdr {
+            can_hdr_to_hdr_tonemap.insert(libva_sys::VA_FOURCC_P010);
+        }
+        Vaapi {
+            device: String::from("/dev/dri/renderD128"),
+            driver,
+            capabilities: VaapiCapabilities {
+                vendor: String::from("test"),
+                supported: HashSet::new(),
+                vpp_pixel_formats: HashSet::new(),
+                can_hdr_to_sdr_tonemap,
+                can_hdr_to_hdr_tonemap,
+            },
+            needs_opencl_device: false,
+        }
+    }
+
+    fn ffmpeg_info_with_filters(filters: &[KnownVideoFilter]) -> FfmpegInfo {
+        let mut video_filters = HashSet::new();
+        for f in filters {
+            video_filters.insert(f.to_string());
+        }
+        FfmpegInfo {
+            hwaccels: HashSet::new(),
+            video_filters,
+            preferred_filters: HashMap::new(),
+        }
     }
 
     fn hdr_vaapi_state() -> FrameState {
@@ -408,7 +447,7 @@ mod tests {
 
         let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
-            output_format: PixelFormat::Nv12,
+            output_format: HwPixelFormat::Nv12,
         }
         .into();
 
@@ -475,7 +514,7 @@ mod tests {
 
         let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
-            output_format: PixelFormat::Nv12,
+            output_format: HwPixelFormat::Nv12,
         }
         .into();
 
@@ -544,6 +583,247 @@ mod tests {
         assert!(
             !has_hwmap,
             "no HwMap should be inserted when no hw-to-hw transition is needed"
+        );
+    }
+
+    // -- tonemap_vaapi best_filter tests --
+
+    #[test]
+    fn best_filter_selects_tonemap_vaapi_for_hdr_to_sdr_when_capable() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let state = hdr_vaapi_state();
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(
+                result,
+                VideoFilter::TonemapVaapi(TonemapVaapi {
+                    output_format: HwPixelFormat::Nv12
+                })
+            ),
+            "expected TonemapVaapi with Nv12 output, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_selects_tonemap_vaapi_for_hdr_to_hdr_when_capable() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, true);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let state = hdr_vaapi_state();
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::P010le,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(
+                result,
+                VideoFilter::TonemapVaapi(TonemapVaapi {
+                    output_format: HwPixelFormat::P010le
+                })
+            ),
+            "expected TonemapVaapi with P010le output, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_falls_back_to_software_tonemap_without_vaapi_capability() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, false);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let state = hdr_vaapi_state();
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::ToneMap(_)),
+            "expected software ToneMap fallback, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_prefers_opencl_over_vaapi_on_ihd() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[
+            KnownVideoFilter::TonemapOpencl,
+            KnownVideoFilter::TonemapVaapi,
+        ]);
+        let state = hdr_vaapi_state();
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::TonemapOpencl(_)),
+            "expected TonemapOpencl on iHD when both are available, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_uses_vaapi_tonemap_on_ihd_when_opencl_unavailable() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let state = hdr_vaapi_state();
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::TonemapVaapi(_)),
+            "expected TonemapVaapi on iHD when opencl is unavailable, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_falls_back_to_software_when_no_hw_tonemap_filter() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[]);
+        let state = hdr_vaapi_state();
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::ToneMap(_)),
+            "expected software ToneMap when ffmpeg has no hw tonemap filters, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_falls_back_for_non_p010le_input() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+
+        let mut state = hdr_vaapi_state();
+        state.pixel_format = PixelFormat::Nv12;
+
+        let input: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::ToneMap(_)),
+            "expected software ToneMap for non-P010le input, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn resolve_tonemap_vaapi_does_not_insert_hwmap() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false);
+        let accel = HardwareAccel::Vaapi(vaapi);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let initial_state = hdr_vaapi_state();
+
+        let tonemap: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        let has_hwmap = video_filters
+            .iter()
+            .any(|f| matches!(f, VideoFilter::HwMap(_)));
+        assert!(
+            !has_hwmap,
+            "tonemap_vaapi stays on VAAPI surface, no HwMap needed"
+        );
+
+        assert!(
+            matches!(video_filters[0], VideoFilter::TonemapVaapi(_)),
+            "first video filter should be TonemapVaapi, got {:?}",
+            video_filters[0].as_arg()
+        );
+    }
+
+    #[test]
+    fn resolve_and_build_produces_correct_filter_complex_for_vaapi_tonemap() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false);
+        let accel = HardwareAccel::Vaapi(vaapi);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let initial_state = hdr_vaapi_state();
+
+        let tonemap: VideoFilter = ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format: PixelFormat::Nv12,
+        }
+        .into();
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+        chain.build("0:v", "0:v");
+
+        let args = chain.as_arg();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-filter_complex");
+
+        let filter_complex = &args[1];
+        assert!(
+            filter_complex.contains("tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709"),
+            "filter_complex should contain tonemap_vaapi: {filter_complex}"
+        );
+        assert!(
+            !filter_complex.contains("hwmap"),
+            "filter_complex should not contain hwmap for vaapi tonemap: {filter_complex}"
         );
     }
 }

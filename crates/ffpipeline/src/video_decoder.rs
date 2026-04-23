@@ -8,7 +8,7 @@ use crate::probe::ProbeResultVideoStream;
 pub enum VideoDecoder {
     None,
     Software,
-    HardwareAccel { accel: HardwareAccel },
+    HardwareAccel { accel: Box<HardwareAccel> },
 }
 
 impl VideoDecoder {
@@ -31,7 +31,7 @@ impl VideoDecoder {
                     &video_stream.pix_fmt,
                 ) {
                     VideoDecoder::HardwareAccel {
-                        accel: accel.clone(),
+                        accel: Box::new(accel.clone()),
                     }
                 } else {
                     VideoDecoder::Software

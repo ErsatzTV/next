@@ -9,22 +9,24 @@ mod linux;
 #[cfg(not(target_os = "linux"))]
 mod stub;
 
+type FourCC = u32;
+
 #[derive(Debug, Clone)]
 pub struct VaapiCapabilities {
     pub(crate) vendor: String,
     pub(crate) supported: HashSet<(i32, i32)>,
-    pub(crate) vpp_pixel_formats: HashSet<u32>,
+    /// FourCC of supported pixel formats.
+    pub(crate) vpp_pixel_formats: HashSet<FourCC>,
+    /// FourCC of supported HDR->SDR tonemap formats.
+    pub(crate) can_hdr_to_sdr_tonemap: HashSet<FourCC>,
+    /// FourCC of supported HDR->HDR tonemap formats.   
+    pub(crate) can_hdr_to_hdr_tonemap: HashSet<FourCC>,
 }
 
 impl VaapiCapabilities {
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
-        let fourcc = match pixel_format {
-            PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(VA_FOURCC_NV12),
-            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
-            _ => None,
-        };
-
-        fourcc.is_some_and(|c| self.vpp_pixel_formats.contains(&c))
+        self.as_fourcc(pixel_format)
+            .is_some_and(|c| self.vpp_pixel_formats.contains(&c))
     }
 
     pub fn can_decode(&self, codec: &str, profile: &str, bit_depth: u8) -> bool {
@@ -83,5 +85,23 @@ impl VaapiCapabilities {
 
     pub fn count(&self) -> usize {
         self.supported.len()
+    }
+
+    pub fn can_hdr_to_hdr_tonemap(&self, pixel_format: &PixelFormat) -> bool {
+        self.as_fourcc(pixel_format)
+            .is_some_and(|cc| self.can_hdr_to_hdr_tonemap.contains(&cc))
+    }
+
+    pub fn can_hdr_to_sdr_tonemap(&self, pixel_format: &PixelFormat) -> bool {
+        self.as_fourcc(pixel_format)
+            .is_some_and(|cc| self.can_hdr_to_sdr_tonemap.contains(&cc))
+    }
+
+    fn as_fourcc(&self, pixel_format: &PixelFormat) -> Option<u32> {
+        match pixel_format {
+            PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(VA_FOURCC_NV12),
+            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
+            _ => None,
+        }
     }
 }

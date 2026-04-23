@@ -4,7 +4,10 @@ use std::ffi::{c_char, c_int, c_uint, c_void};
 
 use libloading::Library;
 
-use crate::{VAConfigID, VADisplay, VAEntrypoint, VAProfile, VAStatus, VASurfaceAttrib};
+use crate::{
+    VAConfigID, VAContextID, VADisplay, VAEntrypoint, VAProcFilterCapHighDynamicRange,
+    VAProcFilterType, VAProfile, VAStatus, VASurfaceAttrib, VASurfaceID,
+};
 
 pub struct VaLib {
     _libva: Library,
@@ -30,6 +33,40 @@ pub struct VaLib {
     pub vaDestroyConfig: unsafe extern "C" fn(VADisplay, VAConfigID) -> VAStatus,
     pub vaQuerySurfaceAttributes:
         unsafe extern "C" fn(VADisplay, VAConfigID, *mut VASurfaceAttrib, *mut c_uint) -> VAStatus,
+    pub vaCreateContext: unsafe extern "C" fn(
+        VADisplay,
+        VAConfigID,
+        picture_width: c_int,
+        picture_height: c_int,
+        flag: c_int,
+        render_targets: *mut VASurfaceID,
+        num_render_targets: c_int,
+        context: *mut VAContextID,
+    ) -> VAStatus,
+    pub vaDestroyContext: unsafe extern "C" fn(VADisplay, VAContextID) -> VAStatus,
+    pub vaQueryVideoProcFilterCaps: unsafe extern "C" fn(
+        dpy: VADisplay,
+        ctx_id: VAContextID,
+        filter_type: VAProcFilterType,
+        filter_caps: *mut VAProcFilterCapHighDynamicRange,
+        num_filter_caps: *mut c_uint,
+    ) -> VAStatus,
+    pub vaCreateSurfaces: unsafe extern "C" fn(
+        dpy: VADisplay,
+        format: c_uint,
+        width: c_uint,
+        height: c_uint,
+        surfaces: *mut VASurfaceID,
+        num_surfaces: c_uint,
+        attrib_list: *mut VASurfaceAttrib,
+        num_attibs: c_uint,
+    ) -> VAStatus,
+    pub vaDestroySurfaces: unsafe extern "C" fn(
+        dpy: VADisplay,
+        surfaces: *mut VASurfaceID,
+        num_surfaces: c_uint,
+    ) -> VAStatus,
+    pub vaErrorStr: unsafe extern "C" fn(VAStatus) -> *const c_char,
 }
 
 impl VaLib {
@@ -47,6 +84,12 @@ impl VaLib {
             let vaDestroyConfig = *lib.get(b"vaDestroyConfig\0")?;
             let vaQuerySurfaceAttributes = *lib.get(b"vaQuerySurfaceAttributes\0")?;
             let lib_drm = Library::new("libva-drm.so.2")?;
+            let vaCreateContext = *lib.get(b"vaCreateContext\0")?;
+            let vaDestroyContext = *lib.get(b"vaDestroyContext\0")?;
+            let vaQueryVideoProcFilterCaps = *lib.get(b"vaQueryVideoProcFilterCaps\0")?;
+            let vaCreateSurfaces = *lib.get(b"vaCreateSurfaces\0")?;
+            let vaDestroySurfaces = *lib.get(b"vaDestroySurfaces\0")?;
+            let vaErrorStr = *lib.get(b"vaErrorStr\0")?;
             let vaGetDisplayDRM = *lib_drm.get(b"vaGetDisplayDRM\0")?;
             Ok(Self {
                 _libva: lib,
@@ -62,6 +105,12 @@ impl VaLib {
                 vaCreateConfig,
                 vaDestroyConfig,
                 vaQuerySurfaceAttributes,
+                vaCreateContext,
+                vaDestroyContext,
+                vaQueryVideoProcFilterCaps,
+                vaCreateSurfaces,
+                vaDestroySurfaces,
+                vaErrorStr,
             })
         }
     }

@@ -20,7 +20,7 @@ pub enum GlobalOption {
     HideBanner,
     LogLevel(LogLevel),
     StandardFormatFlags,
-    InitHwDevice(HardwareAccel),
+    InitHwDevice { accel: Box<HardwareAccel> },
 }
 
 impl GlobalOption {
@@ -31,7 +31,7 @@ impl GlobalOption {
             GlobalOption::HideBanner => args!["-hide_banner"],
             GlobalOption::LogLevel(level) => level.as_arg(),
             GlobalOption::StandardFormatFlags => args!["-fflags", "+genpts+discardcorrupt+igndts",],
-            GlobalOption::InitHwDevice(accel) => accel.init_hw_device(),
+            GlobalOption::InitHwDevice { accel } => accel.init_hw_device(),
         }
     }
 }

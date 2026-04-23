@@ -30,18 +30,17 @@ impl HwAccel for Vulkan {
                 }
                 .into()
             }
-            VideoFilter::ToneMap(ToneMapFilter { algorithm, format })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) =>
-            {
-                LibplaceboVulkan {
-                    algorithm: algorithm.clone(),
-                    format: match format {
-                        PixelFormat::Yuv420p10le => PixelFormat::P010le,
-                        _ => PixelFormat::Nv12,
-                    },
-                }
-                .into()
+            VideoFilter::ToneMap(ToneMapFilter {
+                algorithm,
+                output_format: format,
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) => LibplaceboVulkan {
+                algorithm: algorithm.clone(),
+                format: match format {
+                    PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                    _ => PixelFormat::Nv12,
+                },
             }
+            .into(),
             _ => video_filter.clone(),
         }
     }

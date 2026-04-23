@@ -78,9 +78,9 @@ pub enum KnownVideoFilter {
 
 #[derive(Debug, Clone, Default)]
 pub struct FfmpegInfo {
-    hwaccels: HashSet<String>,
-    video_filters: HashSet<String>,
-    preferred_filters: HashMap<String, usize>,
+    pub(crate) hwaccels: HashSet<String>,
+    pub(crate) video_filters: HashSet<String>,
+    pub(crate) preferred_filters: HashMap<String, usize>,
 }
 
 impl FfmpegInfo {

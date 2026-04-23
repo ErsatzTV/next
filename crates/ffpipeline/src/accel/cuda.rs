@@ -49,16 +49,17 @@ impl HwAccel for Cuda {
             {
                 PadCuda { size: *size }.into()
             }
-            VideoFilter::ToneMap(ToneMapFilter { algorithm, format }) if self.is_vulkan_hdr => {
-                LibplaceboCuda {
-                    algorithm: algorithm.clone(),
-                    format: match format {
-                        PixelFormat::Yuv420p10le => PixelFormat::P010le,
-                        _ => PixelFormat::Nv12,
-                    },
-                }
-                .into()
+            VideoFilter::ToneMap(ToneMapFilter {
+                algorithm,
+                output_format: format,
+            }) if self.is_vulkan_hdr => LibplaceboCuda {
+                algorithm: algorithm.clone(),
+                format: match format {
+                    PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                    _ => PixelFormat::Nv12,
+                },
             }
+            .into(),
             VideoFilter::Deinterlace(DeinterlaceFilter { .. }) => {
                 let best_cuda_filter = ffmpeg_info
                     .find_best_fit(&[KnownVideoFilter::YadifCuda, KnownVideoFilter::BwdifCuda])

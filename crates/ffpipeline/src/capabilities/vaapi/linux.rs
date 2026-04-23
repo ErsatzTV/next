@@ -36,6 +36,7 @@ impl VaapiCapabilities {
     }
 
     fn probe_inner(device: &str) -> Result<VaapiCapabilities, FFPipelineError> {
+        log::debug!("[vaapi] probing: device={}", device);
         let va =
             VaLib::load().map_err(|e| VaapiCapabilitiesError(format!("libva not found: {e}")))?;
 
@@ -81,7 +82,8 @@ impl VaapiCapabilities {
                 (va.vaTerminate)(display);
             }
             return Err(VaapiCapabilitiesError(format!(
-                "vaQueryConfigProfiles failed: {status}"
+                "vaQueryConfigProfiles failed: {}",
+                Self::va_status_to_string(&va, status)
             )));
         }
         profiles.truncate(num_profiles as usize);
@@ -108,6 +110,8 @@ impl VaapiCapabilities {
         }
 
         let mut vpp_pixel_formats = HashSet::new();
+        let mut can_hdr_to_hdr_tonemap: HashSet<u32> = HashSet::new();
+        let mut can_hdr_to_sdr_tonemap: HashSet<u32> = HashSet::new();
 
         if supported.contains(&(VA_PROFILE_NONE, VA_ENTRYPOINT_VIDEO_PROC)) {
             let mut config_id: VAConfigID = 0;
@@ -122,7 +126,9 @@ impl VaapiCapabilities {
                 )
             };
 
+            // createConfig success block.
             if status == VA_STATUS_SUCCESS {
+                // query surface attributes.
                 let mut num_attrs: c_uint = 0;
                 let status = unsafe {
                     (va.vaQuerySurfaceAttributes)(
@@ -133,7 +139,12 @@ impl VaapiCapabilities {
                     )
                 };
 
-                if status == VA_STATUS_SUCCESS && num_attrs > 0 {
+                if status != VA_STATUS_SUCCESS {
+                    log::warn!(
+                        "vaQuerySurfaceAttributes failed: {}",
+                        Self::va_status_to_string(&va, status)
+                    );
+                } else if status == VA_STATUS_SUCCESS && num_attrs > 0 {
                     let mut attrs =
                         unsafe { vec![std::mem::zeroed::<VASurfaceAttrib>(); num_attrs as usize] };
                     let status = unsafe {
@@ -157,6 +168,117 @@ impl VaapiCapabilities {
                     }
                 }
 
+                // Query well-known formats for tonemapping support.
+                for (fourcc, rt_fmt) in VA_FORMAT_MAPPING.iter() {
+                    // Should be rare.
+                    if !vpp_pixel_formats.contains(fourcc) {
+                        continue;
+                    }
+
+                    // Have to create a surface to query the format.
+                    let mut surfaces = unsafe { vec![std::mem::zeroed::<VASurfaceID>(); 1] };
+                    let mut status = unsafe {
+                        (va.vaCreateSurfaces)(
+                            display,
+                            *rt_fmt,
+                            1920,
+                            1080,
+                            surfaces.as_mut_ptr(),
+                            1,
+                            std::ptr::null_mut(),
+                            0,
+                        )
+                    };
+
+                    if status != VA_STATUS_SUCCESS {
+                        log::warn!(
+                            "vaCreateSurfaces failed: {}",
+                            Self::va_status_to_string(&va, status)
+                        );
+                        continue;
+                    }
+
+                    // query tonemap capabilities.
+                    let mut ctx_id: VAContextID = 0;
+                    status = unsafe {
+                        (va.vaCreateContext)(
+                            display,
+                            config_id,
+                            1920,
+                            1080,
+                            VA_PROGRESSIVE,
+                            surfaces.as_mut_ptr(),
+                            1,
+                            &mut ctx_id,
+                        )
+                    };
+
+                    if status == VA_STATUS_SUCCESS {
+                        let mut num_filter_caps: c_uint = 2;
+                        let mut filter_caps: Vec<VAProcFilterCapHighDynamicRange> = unsafe {
+                            vec![
+                                std::mem::zeroed::<VAProcFilterCapHighDynamicRange>();
+                                num_filter_caps as usize
+                            ]
+                        };
+
+                        log::trace!(
+                            "querying VAAPI HDR tonemap capabilities for {}.",
+                            String::from_utf8_lossy(&fourcc.to_ne_bytes())
+                        );
+                        // check tonemap
+                        let mut status = unsafe {
+                            (va.vaQueryVideoProcFilterCaps)(
+                                display,
+                                ctx_id,
+                                VA_PROC_FILTER_HIGH_DYNAMIC_RANGE_MAPPING,
+                                filter_caps.as_mut_ptr(),
+                                &mut num_filter_caps,
+                            )
+                        };
+
+                        if status == VA_STATUS_SUCCESS {
+                            let returned_caps = &filter_caps[..num_filter_caps as usize];
+                            let has_caps = returned_caps.iter().any(|cap| {
+                                cap.metadata_type != VA_PROC_HIGH_DYNAMIC_RANGE_METADATA_NONE
+                            });
+
+                            log::trace!("VAAPI HDR tonemap capabilities: {:?}", returned_caps);
+
+                            if has_caps {
+                                if returned_caps.iter().any(|cap| {
+                                    (VA_TONE_MAPPING_HDR_TO_HDR & (cap.caps_flag as i32)) > 0
+                                }) {
+                                    can_hdr_to_hdr_tonemap.insert(*fourcc);
+                                }
+
+                                if returned_caps.iter().any(|cap| {
+                                    (VA_TONE_MAPPING_HDR_TO_SDR & (cap.caps_flag as i32)) > 0
+                                }) {
+                                    can_hdr_to_sdr_tonemap.insert(*fourcc);
+                                }
+                            } else {
+                                log::debug!("no VAAPI HDR tonemap capabilities found.")
+                            }
+                        } else {
+                            log::warn!(
+                                "vaQueryVideoProcFilterCaps failed: {}",
+                                Self::va_status_to_string(&va, status)
+                            );
+                        }
+
+                        status = unsafe { (va.vaDestroyContext)(display, ctx_id) };
+                        if status != VA_STATUS_SUCCESS {
+                            log::warn!(
+                                "vaDestroyContext failed: {}",
+                                Self::va_status_to_string(&va, status)
+                            );
+                        }
+                    }
+
+                    unsafe { (va.vaDestroySurfaces)(display, surfaces.as_mut_ptr(), 1) };
+                }
+
                 unsafe { (va.vaDestroyConfig)(display, config_id) };
             }
         }
@@ -169,6 +291,19 @@ impl VaapiCapabilities {
             vendor,
             supported,
             vpp_pixel_formats,
+            can_hdr_to_hdr_tonemap,
+            can_hdr_to_sdr_tonemap,
         })
+    }
+
+    fn va_status_to_string(va: &VaLib, status: VAStatus) -> String {
+        unsafe {
+            let err_str = (va.vaErrorStr)(status);
+            if err_str.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(err_str).to_string_lossy().into_owned()
+            }
+        }
     }
 }

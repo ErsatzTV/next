@@ -1,5 +1,5 @@
 use crate::ffmpeg_info::FfmpegInfo;
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
+use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat};
 use crate::video_filter::{VideoFilter, VideoFilterOp};
 
 #[derive(Clone)]
@@ -10,7 +10,7 @@ pub struct TonemapOpencl {
     /// The pixel format to use for the output.
     /// Only nv12 and p010 are supported; there is no real
     /// way to only allow certain enum values of PixelFormat to be used here.
-    pub output_format: PixelFormat,
+    pub output_format: HwPixelFormat,
 }
 
 impl VideoFilterOp for TonemapOpencl {
@@ -19,7 +19,7 @@ impl VideoFilterOp for TonemapOpencl {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.output_format;
+        state.pixel_format = self.output_format.into();
         state.is_hdr = false;
         state.surface = FrameSurface::OpenCL;
     }

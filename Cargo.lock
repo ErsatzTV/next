@@ -1195,6 +1195,7 @@ dependencies = [
 name = "libva-sys"
 version = "0.1.0"
 dependencies = [
+ "derive_more",
  "libloading",
 ]
 

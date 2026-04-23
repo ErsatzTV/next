@@ -34,7 +34,7 @@ impl HwAccel for Vaapi {
         &self,
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
-        _current_state: &FrameState,
+        current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
@@ -53,7 +53,21 @@ impl HwAccel for Vaapi {
                 PadVaapi { size: *size }.into()
             }
 
-            VideoFilter::ToneMap(ToneMapFilter { algorithm, format }) => {
+            VideoFilter::ToneMap(ToneMapFilter {
+                algorithm,
+                output_format: format,
+            }) => {
+                let tonemap_output_format = self.output_format(format);
+                let can_vaapi_tonemap = match (&current_state.pixel_format, tonemap_output_format) {
+                    (fmt @ &PixelFormat::P010le, HwPixelFormat::P010le) => {
+                        self.capabilities.can_hdr_to_hdr_tonemap(fmt)
+                    }
+                    (fmt @ &PixelFormat::P010le, HwPixelFormat::Nv12) => {
+                        self.capabilities.can_hdr_to_sdr_tonemap(fmt)
+                    }
+                    _ => false,
+                };
+
                 let mut tonemap_options = vec![KnownVideoFilter::TonemapVaapi];
                 // Pipeline only supports OpenCL for the iHD driver currently.
                 // In the future, we may want to support OpenCL for Radeon as well, but
@@ -66,13 +80,10 @@ impl HwAccel for Vaapi {
                     match hw_filter {
                         KnownVideoFilter::TonemapOpencl => TonemapOpencl {
                             algorithm: algorithm.clone(),
-                            output_format: match format.bit_depth() {
-                                10 => PixelFormat::P010le,
-                                _ => PixelFormat::Nv12,
-                            },
+                            output_format: self.output_format(format),
                         }
                         .into(),
-                        KnownVideoFilter::TonemapVaapi => TonemapVaapi {
+                        KnownVideoFilter::TonemapVaapi if can_vaapi_tonemap => TonemapVaapi {
                             output_format: self.output_format(format),
                         }
                         .into(),

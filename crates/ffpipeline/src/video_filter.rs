@@ -304,7 +304,7 @@ impl VideoFilterOp for FormatFilter {
 #[derive(Clone)]
 pub struct ToneMapFilter {
     pub algorithm: Option<String>,
-    pub format: PixelFormat,
+    pub output_format: PixelFormat,
 }
 
 impl VideoFilterOp for ToneMapFilter {
@@ -317,7 +317,7 @@ impl VideoFilterOp for ToneMapFilter {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format;
+        state.pixel_format = self.output_format;
         state.is_hdr = false;
     }
 
@@ -329,7 +329,7 @@ impl VideoFilterOp for ToneMapFilter {
         Some(format!(
             "zscale=transfer=linear,tonemap={},zscale=transfer=bt709,format={}",
             self.algorithm.as_deref().unwrap_or("linear"),
-            self.format.as_arg()
+            self.output_format.as_arg()
         ))
     }
 }
