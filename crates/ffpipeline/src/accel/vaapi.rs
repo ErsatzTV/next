@@ -1,5 +1,4 @@
-use std::fmt::{Display, Formatter};
-
+use crate::ArgVec;
 use crate::accel::opencl::TonemapOpencl;
 use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
@@ -11,7 +10,6 @@ use crate::video_filter::{
     ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter,
     VideoFilterOp,
 };
-use crate::ArgVec;
 
 #[derive(Debug, Clone, PartialEq, strum::Display)]
 pub enum VaapiDriver {
@@ -223,6 +221,7 @@ impl HwAccel for Vaapi {
             // Logic is a bit disjoint. It would be better if "best" filter could
             // append state around the pipeline.
             needs_opencl_device: is_hdr
+                && self.driver == VaapiDriver::Ihd
                 && ffmpeg_info
                     .find_best_fit(&[
                         KnownVideoFilter::TonemapOpencl,

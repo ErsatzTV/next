@@ -64,7 +64,6 @@ async fn pipeline(
     }
 }
 
-
 #[rstest]
 #[tokio::test]
 #[ignore]
@@ -89,7 +88,7 @@ async fn tonemap(
             expected_video_size: res,
             expected_audio_codec: af.to_string(),
         })
-            .await;
+        .await;
     }
 }
 
