@@ -4,30 +4,22 @@ use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 use crate::video_filter::VideoFilter;
 
 #[derive(Clone)]
-#[enum_dispatch(OverlayFilterOp)]
-pub enum OverlayFilter {
-    Overlay(SoftwareOverlayFilter),
+pub struct OverlayFilter {
+    pub kind: OverlayKind,
+    pub secondary: Vec<VideoFilter>,
+    pub secondary_initial_state: FrameState,
 }
 
 #[derive(Clone)]
-pub struct SoftwareOverlayFilter {
-    pub secondary: Vec<VideoFilter>,
+#[enum_dispatch(OverlayKindOp)]
+pub enum OverlayKind {
+    Software(SoftwareOverlay),
 }
 
-impl OverlayFilterOp for SoftwareOverlayFilter {
-    fn secondary(&self) -> &Vec<VideoFilter> {
-        self.secondary.as_ref()
-    }
+#[derive(Clone)]
+pub struct SoftwareOverlay;
 
-    fn replace_secondary(&mut self, secondary: Vec<VideoFilter>) {
-        self.secondary = secondary;
-    }
-
-    fn secondary_initial_state(&self) -> FrameState {
-        // TODO: need to get probed state from subtitle stream
-        FrameState::default()
-    }
-
+impl OverlayKindOp for SoftwareOverlay {
     fn apply_to(&self, _state: &mut FrameState) {
         // no change to state when applying software overlay
     }
@@ -60,11 +52,7 @@ impl OverlayFilterOp for SoftwareOverlayFilter {
 }
 
 #[enum_dispatch]
-pub trait OverlayFilterOp {
-    fn secondary(&self) -> &Vec<VideoFilter>;
-    fn replace_secondary(&mut self, secondary: Vec<VideoFilter>);
-    fn secondary_initial_state(&self) -> FrameState;
-
+pub trait OverlayKindOp {
     fn apply_to(&self, state: &mut FrameState);
     fn main_input_state(&self, current_state: &FrameState) -> FrameState;
     fn secondary_input_state(&self, current_state: &FrameState) -> FrameState;

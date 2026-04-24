@@ -17,7 +17,7 @@ use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
 use crate::output_option::OutputOption;
 use crate::output_settings::OutputSettings;
-use crate::overlay_filter::{OverlayFilter, SoftwareOverlayFilter};
+use crate::overlay_filter::{OverlayFilter, SoftwareOverlay};
 use crate::probe::{
     ProbeResultAudioStream, ProbeResultStream, ProbeResultSubtitleStream, ProbeResultVideoStream,
 };
@@ -407,11 +407,13 @@ impl Pipeline {
                     seek: subtitle_input.in_point,
                 });
 
-                filters.push(PipelineFilter::Overlay(OverlayFilter::Overlay(
-                    SoftwareOverlayFilter {
-                        secondary: Vec::new(),
-                    },
-                )));
+                filters.push(PipelineFilter::Overlay(OverlayFilter {
+                    kind: SoftwareOverlay.into(),
+                    secondary: Vec::new(),
+
+                    // TODO: use probed state
+                    secondary_initial_state: FrameState::default(),
+                }));
             } else {
                 log::warn!("text subtitles are currently unsupported");
             }

@@ -2,7 +2,7 @@ use crate::ArgVec;
 use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
-use crate::overlay_filter::{OverlayFilter, OverlayFilterOp};
+use crate::overlay_filter::{OverlayFilter, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
@@ -67,7 +67,7 @@ impl FilterChain {
                 }
                 PipelineFilter::Overlay(of) => {
                     let new_filter = of.clone();
-                    new_filter.apply_to(&mut state);
+                    new_filter.kind.apply_to(&mut state);
                     active_filters.push(PipelineFilter::Overlay(new_filter));
                 }
             }
@@ -133,8 +133,8 @@ impl FilterChain {
                         _ => overlay.clone(),
                     };
 
-                    // ensure main input matches overlay required input surface
-                    let main_req = best.main_input_state(&current_state);
+                    // ensure main input matches overlay required surface
+                    let main_req = best.kind.main_input_state(&current_state);
                     if current_state.surface != main_req.surface {
                         self.transfer_surface(
                             accel,
@@ -145,37 +145,20 @@ impl FilterChain {
                         );
                     }
 
-                    // TODO: ensure main input matches overlay required input pixel format
+                    // ensure main input matches overlay required pixel format
                     if current_state.pixel_format != main_req.pixel_format {
-                        log::debug!(
-                            "current pixel format {:?} doesn't match overlay input {:?}",
-                            current_state.pixel_format,
-                            main_req.pixel_format
+                        Self::convert_pixel_format(
+                            &mut resolved,
+                            &mut current_state,
+                            &main_req.pixel_format,
+                            accel,
                         );
-
-                        match (&current_state.surface, accel) {
-                            (FrameSurface::System, _) => {
-                                let format: VideoFilter = FormatFilter {
-                                    format: main_req.pixel_format.to_owned(),
-                                }
-                                .into();
-                                format.apply_to(&mut current_state);
-                                resolved.push(PipelineFilter::Video(format))
-                            }
-                            (_, Some(a)) => {
-                                if let Some(f) = a.format_filter(&main_req.pixel_format) {
-                                    f.apply_to(&mut current_state);
-                                    resolved.push(PipelineFilter::Video(f));
-                                }
-                            }
-                            _ => {}
-                        }
                     }
 
-                    // ensure secondary input matches overlay required input surface
-                    let sec_req = best.secondary_input_state(&current_state);
+                    // ensure secondary input matches overlay required surface, pixel format
+                    let sec_req = best.kind.secondary_input_state(&current_state);
                     let mut sec = FilterChain::new(
-                        best.secondary()
+                        best.secondary
                             .iter()
                             .cloned()
                             .map(PipelineFilter::Video)
@@ -185,21 +168,20 @@ impl FilterChain {
                     sec.resolve(
                         ffmpeg_info,
                         accel,
-                        &best.secondary_initial_state(),
+                        &best.secondary_initial_state,
                         &sec_req.surface,
                         &Some(sec_req.pixel_format),
                     );
-                    best.replace_secondary(
-                        sec.filters
-                            .into_iter()
-                            .filter_map(|f| match f {
-                                PipelineFilter::Video(v) => Some(v),
-                                _ => None,
-                            })
-                            .collect(),
-                    );
+                    best.secondary = sec
+                        .filters
+                        .into_iter()
+                        .filter_map(|f| match f {
+                            PipelineFilter::Video(v) => Some(v),
+                            _ => None,
+                        })
+                        .collect();
 
-                    best.apply_to(&mut current_state);
+                    best.kind.apply_to(&mut current_state);
                     resolved.push(PipelineFilter::Overlay(best));
                 }
             }
@@ -226,29 +208,7 @@ impl FilterChain {
         if let Some(pixel_format) = encoder_pixel_format
             && current_state.pixel_format != *pixel_format
         {
-            log::debug!(
-                "current pixel format {:?} doesn't match encoder {:?}",
-                current_state.pixel_format,
-                *pixel_format
-            );
-
-            match (&current_state.surface, accel) {
-                (FrameSurface::System, _) => {
-                    let format: VideoFilter = FormatFilter {
-                        format: pixel_format.to_owned(),
-                    }
-                    .into();
-                    format.apply_to(&mut current_state);
-                    resolved.push(PipelineFilter::Video(format))
-                }
-                (_, Some(a)) => {
-                    if let Some(f) = a.format_filter(pixel_format) {
-                        f.apply_to(&mut current_state);
-                        resolved.push(PipelineFilter::Video(f));
-                    }
-                }
-                _ => {}
-            }
+            Self::convert_pixel_format(&mut resolved, &mut current_state, pixel_format, accel);
         }
 
         self.filters = resolved;
@@ -339,6 +299,37 @@ impl FilterChain {
         }
 
         false
+    }
+
+    fn convert_pixel_format(
+        resolved: &mut Vec<PipelineFilter>,
+        current_state: &mut FrameState,
+        pixel_format: &PixelFormat,
+        accel: &Option<HardwareAccel>,
+    ) {
+        log::debug!(
+            "current pixel format {:?} doesn't match required {:?}",
+            current_state.pixel_format,
+            *pixel_format
+        );
+
+        match (&current_state.surface, accel) {
+            (FrameSurface::System, _) => {
+                let format: VideoFilter = FormatFilter {
+                    format: pixel_format.to_owned(),
+                }
+                .into();
+                format.apply_to(current_state);
+                resolved.push(PipelineFilter::Video(format))
+            }
+            (_, Some(a)) => {
+                if let Some(f) = a.format_filter(pixel_format) {
+                    f.apply_to(current_state);
+                    resolved.push(PipelineFilter::Video(f));
+                }
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn optimize(&mut self) {
@@ -433,7 +424,7 @@ impl FilterChain {
                         }
 
                         let sec_args: Vec<String> = overlay
-                            .secondary()
+                            .secondary
                             .iter()
                             .filter_map(|f| f.as_arg())
                             .collect();
@@ -451,7 +442,7 @@ impl FilterChain {
                         };
 
                         let out_label = format!("v_o{}", overlay_num);
-                        if let Some(arg) = overlay.as_arg() {
+                        if let Some(arg) = overlay.kind.as_arg() {
                             filter_chains.push(format!(
                                 "[{}][{}]{}[{}]",
                                 current_in, sec_ref, arg, out_label
