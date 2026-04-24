@@ -485,19 +485,6 @@ impl Pipeline {
         let mut sorted_inputs: Vec<&PipelineInput> = self.inputs.iter().collect();
         sorted_inputs.sort_by_key(|i| i.sort_order());
 
-        for input in sorted_inputs.iter() {
-            let path = match input {
-                PipelineInput::Audio { path, .. } => path.as_str(),
-                PipelineInput::Video { path, .. } => path.as_str(),
-                PipelineInput::ImageSubtitle { path, .. } => path.as_str(),
-            };
-            if !distinct_paths.contains(&path) {
-                distinct_paths.push(path);
-            }
-        }
-
-        let mut included_paths = HashSet::new();
-
         result.extend(self.global_options.iter().flat_map(|o| o.as_arg()));
 
         for input in sorted_inputs.iter() {
@@ -511,6 +498,8 @@ impl Pipeline {
                     decoder,
                     ..
                 } => {
+                    distinct_paths.push(path.as_str());
+
                     result.extend(decoder.as_arg());
 
                     let video_input_index =
@@ -529,8 +518,6 @@ impl Pipeline {
                     // TODO: if audio has same input and args, should use here
 
                     result.extend(args!["-i", path.to_owned()]);
-
-                    included_paths.insert(path.as_str());
                 }
                 PipelineInput::Audio {
                     input_source,
@@ -539,20 +526,21 @@ impl Pipeline {
                     decoder,
                     ..
                 } => {
-                    result.extend(decoder.as_arg());
+                    // if we haven't yet used this input, add it
+                    if !distinct_paths.contains(&path.as_str()) {
+                        distinct_paths.push(path.as_str());
+
+                        result.extend(decoder.as_arg());
+
+                        // TODO: seek?
+
+                        result.extend(input_source.args_for_input());
+                        result.extend(args!["-i", path.to_owned()]);
+                    }
 
                     let audio_input_index =
                         distinct_paths.iter().position(|p| p == path).unwrap_or(0);
                     audio_label = format!("{}:{}", audio_input_index, index);
-
-                    // TODO: seek?
-
-                    // if we haven't yet used this input, add it
-                    if !included_paths.contains(path.as_str()) {
-                        result.extend(input_source.args_for_input());
-                        result.extend(args!["-i", path.to_owned()]);
-                        included_paths.insert(path.as_str());
-                    }
                 }
                 PipelineInput::ImageSubtitle {
                     input_source,
@@ -560,17 +548,18 @@ impl Pipeline {
                     path,
                     ..
                 } => {
+                    if !distinct_paths.contains(&path.as_str()) {
+                        distinct_paths.push(path.as_str());
+
+                        result.extend(input_source.args_for_input());
+                        result.extend(args!["-i", path.to_owned()]);
+                    }
+
                     // TODO: seek?
 
                     let subtitle_input_index =
                         distinct_paths.iter().position(|p| p == path).unwrap_or(0);
                     subtitle_label = Some(format!("{}:{}", subtitle_input_index, index));
-
-                    if !included_paths.contains(path.as_str()) {
-                        result.extend(input_source.args_for_input());
-                        result.extend(args!["-i", path.to_owned()]);
-                        included_paths.insert(path.as_str());
-                    }
                 }
             }
         }
