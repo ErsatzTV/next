@@ -113,6 +113,7 @@ pub async fn generate_playout(
                         source: Some(s.clone()),
                         stream_index: None,
                     }),
+                    subtitle: None,
                 });
 
                 playout_item.source = None;

@@ -93,9 +93,16 @@ pub struct ProbeResultAudioStream {
 }
 
 #[derive(Debug, Clone)]
+pub struct ProbeResultSubtitleStream {
+    pub stream_index: u32,
+    pub codec: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum ProbeResultStream {
     Video(Box<ProbeResultVideoStream>),
     Audio(ProbeResultAudioStream),
+    Subtitle(ProbeResultSubtitleStream),
 }
 
 impl std::fmt::Display for ProbeResultStream {
@@ -114,6 +121,9 @@ impl std::fmt::Display for ProbeResultStream {
                     "{}: video ({} - {}x{} - {:?})",
                     v.stream_index, v.codec, v.width, v.height, v.frame_rate
                 )
+            }
+            ProbeResultStream::Subtitle(s) => {
+                write!(f, "{}: subtitle ({})", s.stream_index, s.codec)
             }
         }
     }

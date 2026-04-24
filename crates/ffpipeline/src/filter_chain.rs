@@ -18,6 +18,7 @@ pub(crate) struct FilterChain {
     pub(crate) filters: Vec<PipelineFilter>,
     audio_label: String,
     video_label: String,
+    subtitle_label: Option<String>,
     complex_filter: String,
 }
 
@@ -27,6 +28,7 @@ impl FilterChain {
             filters,
             audio_label: String::new(),
             video_label: String::new(),
+            subtitle_label: None,
             complex_filter: String::new(),
         }
     }
@@ -274,9 +276,15 @@ impl FilterChain {
         }
     }
 
-    pub(crate) fn build(&mut self, audio_label: &str, video_label: &str) {
+    pub(crate) fn build(
+        &mut self,
+        audio_label: &str,
+        video_label: &str,
+        subtitle_label: Option<&String>,
+    ) {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
+        self.subtitle_label = subtitle_label.cloned();
 
         let mut filter_chains: Vec<String> = Vec::new();
 
@@ -348,6 +356,10 @@ impl FilterChain {
 
     pub(crate) fn video_label(&self) -> &str {
         &self.video_label
+    }
+
+    pub(crate) fn subtitle_label(&self) -> Option<&str> {
+        self.subtitle_label.as_deref()
     }
 
     pub(crate) fn as_arg(&self) -> ArgVec {
@@ -527,7 +539,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:v", "0:v");
+        chain.build("0:a", "0:v", None);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -810,7 +822,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:v", "0:v");
+        chain.build("0:a", "0:v", None);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);

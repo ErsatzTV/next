@@ -351,19 +351,40 @@ impl ChannelSession {
         let video_source = Self::resolve_source(current_item, |t| t.video.as_ref())
             .ok_or(ChannelError::PlayoutJsonVideoSourceRequired)?;
 
+        // prioritize source from subtitle tracks, then default source
+        let subtitle_source = Self::resolve_source(current_item, |t| t.subtitle.as_ref());
+
+        let audio_source_is_video_source = audio_source == video_source;
+        let subtitle_source_is_video_source =
+            subtitle_source.as_ref().is_some_and(|s| s == &video_source);
+
         let audio_input_source = Self::playout_source_to_input_source(audio_source.clone())?;
-        let video_input_source = if video_source == audio_source {
+        let video_input_source = if audio_source_is_video_source {
             audio_input_source.clone()
         } else {
             Self::playout_source_to_input_source(video_source.clone())?
         };
+        let subtitle_input_source = if subtitle_source_is_video_source {
+            Some(video_input_source.clone())
+        } else {
+            subtitle_source
+                .clone()
+                .and_then(|s| Self::playout_source_to_input_source(s.clone()).ok())
+        };
 
-        let audio_probe_result =
-            Self::probe_source(&self.ffprobe_path, &self.ffmpeg_path, &audio_input_source).await?;
-        let video_probe_result = if video_source == audio_source {
+        let audio_probe_result = self.probe_source(&audio_input_source).await?;
+        let video_probe_result = if audio_source_is_video_source {
             audio_probe_result.clone()
         } else {
-            Self::probe_source(&self.ffprobe_path, &self.ffmpeg_path, &video_input_source).await?
+            self.probe_source(&video_input_source).await?
+        };
+        let subtitle_probe_result = if subtitle_source_is_video_source {
+            Some(video_probe_result.clone())
+        } else {
+            match subtitle_input_source.as_ref() {
+                Some(s) => Some(self.probe_source(s).await?),
+                None => None,
+            }
         };
 
         let audio_norm = &self.channel_config.normalization.audio;
@@ -422,6 +443,9 @@ impl ChannelSession {
 
         let audio_timing = self.input_timing(current_item, &audio_source, start_at_zero, realtime);
         let video_timing = self.input_timing(current_item, &video_source, start_at_zero, realtime);
+        let subtitle_timing = subtitle_source
+            .as_ref()
+            .map(|s| self.input_timing(current_item, s, start_at_zero, realtime));
 
         let video_index = current_item
             .tracks
@@ -435,14 +459,34 @@ impl ChannelSession {
             .and_then(|t| t.audio.as_ref())
             .and_then(|a| a.stream_index);
 
+        let subtitle_index = current_item
+            .tracks
+            .as_ref()
+            .and_then(|t| t.subtitle.as_ref())
+            .and_then(|s| s.stream_index);
+
+        let subtitle_input = match (
+            subtitle_probe_result,
+            subtitle_input_source,
+            subtitle_timing,
+        ) {
+            (Some(s_probe), Some(s_in), Some(s_time)) => Some(ProbedInput {
+                input_source: s_in,
+                in_point: s_time.in_point,
+                out_point: s_time.out_point,
+                probe_result: s_probe,
+                stream_index: subtitle_index,
+            }),
+            _ => None,
+        };
+
         let input_settings = InputSettings {
             audio_input: ProbedInput {
                 input_source: audio_input_source,
                 in_point: audio_timing.in_point,
                 out_point: audio_timing.out_point,
                 probe_result: audio_probe_result,
-                audio_index,
-                video_index: None,
+                stream_index: audio_index,
             },
             video_input: ProbedInput {
                 input_source: video_input_source,
@@ -453,9 +497,9 @@ impl ChannelSession {
                 },
                 out_point: video_timing.out_point,
                 probe_result: video_probe_result,
-                audio_index: None,
-                video_index,
+                stream_index: video_index,
             },
+            subtitle_input,
         };
 
         let mut pipeline_result =
@@ -532,14 +576,10 @@ impl ChannelSession {
         result
     }
 
-    async fn probe_source(
-        ffprobe_path: &Path,
-        ffmpeg_path: &Path,
-        source: &InputSource,
-    ) -> Result<ProbeResult, ChannelError> {
+    async fn probe_source(&self, source: &InputSource) -> Result<ProbeResult, ChannelError> {
         let probe_deps = probe::ProbeDeps {
-            ffprobe_path,
-            ffmpeg_path,
+            ffprobe_path: &self.ffprobe_path,
+            ffmpeg_path: &self.ffmpeg_path,
         };
 
         Ok(source.probe(&probe_deps).await?)
@@ -680,6 +720,7 @@ impl ChannelSession {
                     }),
                     stream_index: None,
                 }),
+                subtitle: None,
             }),
         }
     }

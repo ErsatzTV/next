@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Formatter;
 use std::time::Duration;
 
@@ -17,7 +18,9 @@ use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
 use crate::output_option::OutputOption;
 use crate::output_settings::OutputSettings;
-use crate::probe::{ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
+use crate::probe::{
+    ProbeResultAudioStream, ProbeResultStream, ProbeResultSubtitleStream, ProbeResultVideoStream,
+};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -172,6 +175,22 @@ pub enum PipelineInput {
         realtime: bool,
         decoder: VideoDecoder,
     },
+    ImageSubtitle {
+        input_source: InputSource,
+        index: u32,
+        path: String,
+        seek: Duration,
+    },
+}
+
+impl PipelineInput {
+    fn sort_order(&self) -> u8 {
+        match self {
+            PipelineInput::Video { .. } => 0,
+            PipelineInput::Audio { .. } => 1,
+            PipelineInput::ImageSubtitle { .. } => 2,
+        }
+    }
 }
 
 pub struct PipelineOutput {
@@ -220,6 +239,7 @@ impl Pipeline {
 
         let video_stream = Self::select_video_stream(&input_settings)?;
         let audio_stream = Self::select_audio_stream(&input_settings)?;
+        let subtitle_stream = Self::select_subtitle_stream(&input_settings);
 
         final_output_settings.accel = final_output_settings
             .accel
@@ -336,6 +356,27 @@ impl Pipeline {
             ),
         ]);
 
+        let mut inputs = vec![
+            PipelineInput::Audio {
+                input_source: input_settings.audio_input.input_source.to_owned(),
+                index: audio_stream.stream_index,
+                path: input_settings.audio_input.probe_result.path.to_owned(),
+                seek: input_settings.audio_input.in_point,
+                channels: audio_stream.channels,
+                decoder: AudioDecoder::new(audio_stream, &final_output_settings),
+            },
+            PipelineInput::Video {
+                input_source: input_settings.video_input.input_source.to_owned(),
+                index: video_stream.stream_index,
+                path: input_settings.video_input.probe_result.path.to_owned(),
+                seek: input_settings.video_input.in_point,
+                realtime: final_output_settings.realtime,
+                decoder: video_decoder,
+            },
+        ];
+
+        // TODO: add image subtitle to input
+
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
             accel: final_output_settings.accel.clone(),
@@ -351,24 +392,7 @@ impl Pipeline {
                 GlobalOption::LogLevel(LogLevel::Error),
                 GlobalOption::StandardFormatFlags,
             ],
-            inputs: vec![
-                PipelineInput::Audio {
-                    input_source: input_settings.audio_input.input_source.to_owned(),
-                    index: audio_stream.stream_index,
-                    path: input_settings.audio_input.probe_result.path.to_owned(),
-                    seek: input_settings.audio_input.in_point,
-                    channels: audio_stream.channels,
-                    decoder: AudioDecoder::new(audio_stream, &final_output_settings),
-                },
-                PipelineInput::Video {
-                    input_source: input_settings.video_input.input_source.to_owned(),
-                    index: video_stream.stream_index,
-                    path: input_settings.video_input.probe_result.path.to_owned(),
-                    seek: input_settings.video_input.in_point,
-                    realtime: final_output_settings.realtime,
-                    decoder: video_decoder,
-                },
-            ],
+            inputs,
             filter_chain: FilterChain::new(filters),
             output_options: vec![
                 OutputOption::NoDemuxDecodeDelay,
@@ -454,41 +478,30 @@ impl Pipeline {
 
         let mut audio_label = String::from("0:a");
         let mut video_label = String::from("0:v");
+        let mut subtitle_label = None;
 
         let mut distinct_paths: Vec<&str> = Vec::new();
-        for input in &self.inputs {
+
+        let mut sorted_inputs: Vec<&PipelineInput> = self.inputs.iter().collect();
+        sorted_inputs.sort_by_key(|i| i.sort_order());
+
+        for input in sorted_inputs.iter() {
             let path = match input {
                 PipelineInput::Audio { path, .. } => path.as_str(),
                 PipelineInput::Video { path, .. } => path.as_str(),
+                PipelineInput::ImageSubtitle { path, .. } => path.as_str(),
             };
             if !distinct_paths.contains(&path) {
                 distinct_paths.push(path);
             }
         }
 
+        let mut included_paths = HashSet::new();
+
         result.extend(self.global_options.iter().flat_map(|o| o.as_arg()));
 
-        for input in &self.inputs {
+        for input in sorted_inputs.iter() {
             match input {
-                PipelineInput::Audio {
-                    input_source,
-                    index,
-                    path,
-                    decoder,
-                    ..
-                } => {
-                    result.extend(decoder.as_arg());
-
-                    let audio_input_index =
-                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
-                    audio_label = format!("{}:{}", audio_input_index, index);
-
-                    // if more than one path, audio is probably separate from video
-                    if distinct_paths.len() > 1 {
-                        result.extend(input_source.args_for_input());
-                        result.extend(args!["-i", path.to_owned()]);
-                    }
-                }
                 PipelineInput::Video {
                     input_source,
                     index,
@@ -513,19 +526,65 @@ impl Pipeline {
                     }
 
                     result.extend(input_source.args_for_input());
+                    // TODO: if audio has same input and args, should use here
 
                     result.extend(args!["-i", path.to_owned()]);
+
+                    included_paths.insert(path.as_str());
+                }
+                PipelineInput::Audio {
+                    input_source,
+                    index,
+                    path,
+                    decoder,
+                    ..
+                } => {
+                    result.extend(decoder.as_arg());
+
+                    let audio_input_index =
+                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
+                    audio_label = format!("{}:{}", audio_input_index, index);
+
+                    // TODO: seek?
+
+                    // if we haven't yet used this input, add it
+                    if !included_paths.contains(path.as_str()) {
+                        result.extend(input_source.args_for_input());
+                        result.extend(args!["-i", path.to_owned()]);
+                        included_paths.insert(path.as_str());
+                    }
+                }
+                PipelineInput::ImageSubtitle {
+                    input_source,
+                    index,
+                    path,
+                    ..
+                } => {
+                    // TODO: seek?
+
+                    let subtitle_input_index =
+                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
+                    subtitle_label = Some(format!("{}:{}", subtitle_input_index, index));
+
+                    if !included_paths.contains(path.as_str()) {
+                        result.extend(input_source.args_for_input());
+                        result.extend(args!["-i", path.to_owned()]);
+                        included_paths.insert(path.as_str());
+                    }
                 }
             }
         }
 
         let mut filter_chain = self.filter_chain.to_owned();
-        filter_chain.build(&audio_label, &video_label);
+        filter_chain.build(&audio_label, &video_label, subtitle_label.as_ref());
 
         result.extend(filter_chain.as_arg());
 
         result.extend(args!["-map", filter_chain.video_label().to_owned()]);
         result.extend(args!["-map", filter_chain.audio_label().to_owned()]);
+        if let Some(subtitle_label) = filter_chain.subtitle_label() {
+            result.extend(args!["-map", subtitle_label.to_owned()])
+        }
 
         result.extend(
             self.output_options
@@ -562,7 +621,7 @@ impl Pipeline {
             })
             .collect();
 
-        if let Some(video_index) = input_settings.video_input.video_index {
+        if let Some(video_index) = input_settings.video_input.stream_index {
             let matched_stream = all_video_streams
                 .iter()
                 .find(|v| v.stream_index == video_index);
@@ -607,7 +666,7 @@ impl Pipeline {
             })
             .collect();
 
-        if let Some(audio_index) = input_settings.audio_input.audio_index {
+        if let Some(audio_index) = input_settings.audio_input.stream_index {
             let matched_stream = all_audio_streams
                 .iter()
                 .find(|a| a.stream_index == audio_index);
@@ -636,6 +695,46 @@ impl Pipeline {
                 Ok(all_audio_streams[0])
             }
         }
+    }
+
+    fn select_subtitle_stream(
+        input_settings: &InputSettings,
+    ) -> Option<&ProbeResultSubtitleStream> {
+        let all_subtitle_streams: Vec<&ProbeResultSubtitleStream> =
+            match input_settings.subtitle_input.as_ref() {
+                Some(input) => input
+                    .probe_result
+                    .streams
+                    .iter()
+                    .filter_map(|s| match s {
+                        ProbeResultStream::Subtitle(ss) => Some(ss),
+                        _ => None,
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+
+        if let Some(subtitle_index) = input_settings
+            .subtitle_input
+            .as_ref()
+            .and_then(|i| i.stream_index)
+        {
+            let matched_stream = all_subtitle_streams
+                .iter()
+                .find(|a| a.stream_index == subtitle_index);
+
+            match matched_stream {
+                Some(subtitle_stream) => return Some(subtitle_stream),
+                None => {
+                    log::warn!(
+                        "unable to locate requested subtitle stream with index {}",
+                        subtitle_index
+                    );
+                }
+            }
+        }
+
+        None
     }
 
     fn needs_hw_device(&self) -> Option<HardwareAccel> {

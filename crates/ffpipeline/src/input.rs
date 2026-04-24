@@ -9,6 +9,7 @@ use crate::probe::ProbeResult;
 pub struct InputSettings {
     pub audio_input: ProbedInput,
     pub video_input: ProbedInput,
+    pub subtitle_input: Option<ProbedInput>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +124,5 @@ pub struct ProbedInput {
     pub probe_result: ProbeResult,
     pub in_point: Duration,
     pub out_point: Duration,
-    pub audio_index: Option<u32>,
-    pub video_index: Option<u32>,
+    pub stream_index: Option<u32>,
 }

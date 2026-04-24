@@ -133,17 +133,16 @@ pub fn build_input(path: &Path, probe: ProbeResult, duration: Duration) -> Input
             probe_result: probe.clone(),
             in_point: Duration::ZERO,
             out_point: duration,
-            audio_index: None,
-            video_index: None,
+            stream_index: None,
         },
         video_input: ProbedInput {
             input_source: InputSource::Local(LocalInputSource { path: path_str }),
             probe_result: probe,
             in_point: Duration::ZERO,
             out_point: duration,
-            audio_index: None,
-            video_index: None,
+            stream_index: None,
         },
+        subtitle_input: None,
     }
 }
 
