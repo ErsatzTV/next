@@ -96,6 +96,7 @@ impl FrameSurface {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
+    Bgra,
     Yuv420p,
     Yuv420p10le,
     Yuva420p,
@@ -110,6 +111,7 @@ gen_subset!(HwPixelFormat, PixelFormat, Nv12, P010le);
 impl PixelFormat {
     pub(crate) fn parse(pix_fmt: &str) -> PixelFormat {
         match pix_fmt.to_lowercase().as_str() {
+            "bgra" => PixelFormat::Bgra,
             "yuv420p" => PixelFormat::Yuv420p,
             "yuv420p10le" => PixelFormat::Yuv420p10le,
             "yuva420p" => PixelFormat::Yuva420p,
@@ -125,14 +127,25 @@ impl PixelFormat {
 
     pub(crate) fn bit_depth(&self) -> u8 {
         match self {
-            PixelFormat::Yuv420p | PixelFormat::Yuva420p | PixelFormat::Nv12 => 8,
+            PixelFormat::Bgra
+            | PixelFormat::Yuv420p
+            | PixelFormat::Yuva420p
+            | PixelFormat::Nv12 => 8,
             PixelFormat::Yuv420p10le | PixelFormat::Yuva420p10le | PixelFormat::P010le => 10,
             PixelFormat::P016 => 16,
         }
     }
 
+    pub(crate) fn has_alpha(&self) -> bool {
+        matches!(
+            self,
+            PixelFormat::Bgra | PixelFormat::Yuva420p | PixelFormat::Yuva420p10le
+        )
+    }
+
     pub(crate) fn as_arg(&self) -> &str {
         match self {
+            PixelFormat::Bgra => "bgra",
             PixelFormat::Yuv420p => "yuv420p",
             PixelFormat::Yuv420p10le => "yuv420p10le",
             PixelFormat::Yuva420p => "yuva420p",
@@ -401,7 +414,7 @@ impl Pipeline {
                     display_aspect_ratio: subtitle_stream.display_aspect_ratio.to_owned(),
                     surface: FrameSurface::System,
                     pixel_format: if subtitle_stream.pix_fmt.is_empty() {
-                        PixelFormat::Yuva420p
+                        PixelFormat::Bgra
                     } else {
                         PixelFormat::parse(&subtitle_stream.pix_fmt)
                     },

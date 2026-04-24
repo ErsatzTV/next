@@ -52,6 +52,8 @@ pub enum KnownVideoFilter {
     DeinterlaceQsv,
     #[strum(serialize = "libplacebo")]
     LibPlacebo,
+    #[strum(serialize = "overlay_cuda")]
+    OverlayCuda,
     #[strum(serialize = "pad_cuda")]
     PadCuda,
     #[strum(serialize = "pad_vaapi")]

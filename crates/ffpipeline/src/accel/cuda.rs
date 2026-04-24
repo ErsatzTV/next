@@ -4,6 +4,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
+use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
@@ -31,19 +32,23 @@ impl HwAccel for Cuda {
         &self,
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
-        _current_state: &FrameState,
+        current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
                 size,
                 input_is_anamorphic,
                 force_original_aspect_ratio,
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda) => ScaleCuda {
-                size: *size,
-                input_is_anamorphic: *input_is_anamorphic,
-                force_original_aspect_ratio: force_original_aspect_ratio.clone(),
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
+                && !current_state.pixel_format.has_alpha() =>
+            {
+                ScaleCuda {
+                    size: *size,
+                    input_is_anamorphic: *input_is_anamorphic,
+                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
+                }
+                .into()
             }
-            .into(),
             VideoFilter::Pad(PadFilter { size })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda) =>
             {
@@ -75,6 +80,27 @@ impl HwAccel for Cuda {
                 video_filter.clone()
             }
             _ => video_filter.clone(),
+        }
+    }
+
+    fn best_overlay(
+        &self,
+        overlay_filter: &OverlayFilter,
+        ffmpeg_info: &FfmpegInfo,
+        current_state: &FrameState,
+    ) -> OverlayFilter {
+        match overlay_filter.kind {
+            // overlay_cuda only supports 8-bit content
+            OverlayKind::Software(_)
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::OverlayCuda)
+                    && current_state.pixel_format.bit_depth() == 8 =>
+            {
+                OverlayFilter {
+                    kind: OverlayKind::Cuda(CudaOverlay),
+                    ..overlay_filter.clone()
+                }
+            }
+            _ => overlay_filter.clone(),
         }
     }
 
@@ -413,5 +439,35 @@ impl VideoFilterOp for DeinterlaceCuda {
             CudaDeinterlaceFilter::Bwdif => Some(String::from("bwdif_cuda=1")),
             CudaDeinterlaceFilter::Yadif => Some(String::from("yadif_cuda=1")),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct CudaOverlay;
+
+impl OverlayKindOp for CudaOverlay {
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = PixelFormat::Nv12;
+        state.surface = FrameSurface::Cuda;
+    }
+
+    fn main_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            pixel_format: PixelFormat::Yuv420p,
+            surface: FrameSurface::Cuda,
+            ..current_state.clone()
+        }
+    }
+
+    fn secondary_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            pixel_format: PixelFormat::Yuva420p,
+            surface: FrameSurface::Cuda,
+            ..current_state.clone()
+        }
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("overlay_cuda=x=(W-w)/2:y=(H-h)/2"))
     }
 }
