@@ -400,7 +400,11 @@ impl Pipeline {
                     sample_aspect_ratio: subtitle_stream.sample_aspect_ratio.to_owned(),
                     display_aspect_ratio: subtitle_stream.display_aspect_ratio.to_owned(),
                     surface: FrameSurface::System,
-                    pixel_format: PixelFormat::parse(&subtitle_stream.pix_fmt),
+                    pixel_format: if subtitle_stream.pix_fmt.is_empty() {
+                        PixelFormat::Yuva420p
+                    } else {
+                        PixelFormat::parse(&subtitle_stream.pix_fmt)
+                    },
                     is_hdr: false,
                 };
 

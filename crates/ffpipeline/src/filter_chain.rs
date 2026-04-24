@@ -165,9 +165,17 @@ impl FilterChain {
                             .collect(),
                     );
                     sec.evaluate(&best.secondary_initial_state, ffmpeg_info);
+
+                    // ignore hw accel if secondary needs to stay in software anyway
+                    let sec_accel = if sec_req.surface == FrameSurface::System {
+                        &None
+                    } else {
+                        accel
+                    };
+
                     sec.resolve(
                         ffmpeg_info,
-                        accel,
+                        sec_accel,
                         &best.secondary_initial_state,
                         &sec_req.surface,
                         &Some(sec_req.pixel_format),
