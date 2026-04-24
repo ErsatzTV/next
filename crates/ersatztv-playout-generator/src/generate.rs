@@ -78,7 +78,7 @@ pub async fn generate_playout(
         let has_image_subtitle = probe_result
             .streams
             .iter()
-            .any(|s| matches!(s, ProbeResultStream::Subtitle(subtitle_stream) if subtitle_stream.is_image()));
+            .any(|s| matches!(s, ProbeResultStream::Video(video_stream) if video_stream.is_subtitle_image()));
 
         // use 10-sec duration for images
         let image_duration = std::time::Duration::from_secs(10);
@@ -126,13 +126,15 @@ pub async fn generate_playout(
 
             if has_image_subtitle && playout_item.tracks.is_none() {
                 for stream in probe_result.streams.iter() {
-                    if let ProbeResultStream::Subtitle(subtitle_stream) = stream {
+                    if let ProbeResultStream::Video(video_stream) = stream
+                        && video_stream.is_subtitle_image()
+                    {
                         playout_item.tracks = Some(PlayoutItemTracks {
                             audio: None,
                             video: None,
                             subtitle: Some(TrackSelection {
                                 source: None,
-                                stream_index: Some(subtitle_stream.stream_index),
+                                stream_index: Some(video_stream.stream_index),
                             }),
                         })
                     }

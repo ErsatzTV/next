@@ -18,9 +18,7 @@ use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
 use crate::output_option::OutputOption;
 use crate::output_settings::OutputSettings;
 use crate::overlay_filter::{OverlayFilter, SoftwareOverlay};
-use crate::probe::{
-    ProbeResultAudioStream, ProbeResultStream, ProbeResultSubtitleStream, ProbeResultVideoStream,
-};
+use crate::probe::{CodecType, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -399,7 +397,7 @@ impl Pipeline {
         if let Some(subtitle_stream) = subtitle_stream
             && let Some(subtitle_input) = input_settings.subtitle_input.as_ref()
         {
-            if subtitle_stream.is_image() {
+            if subtitle_stream.is_subtitle_image() {
                 inputs.push(PipelineInput::ImageSubtitle {
                     input_source: subtitle_input.input_source.to_owned(),
                     index: subtitle_stream.stream_index,
@@ -410,9 +408,19 @@ impl Pipeline {
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
                     kind: SoftwareOverlay.into(),
                     secondary: Vec::new(),
-
-                    // TODO: use probed state
-                    secondary_initial_state: FrameState::default(),
+                    secondary_initial_state: FrameState {
+                        size: FrameSize {
+                            width: subtitle_stream.width,
+                            height: subtitle_stream.height,
+                        },
+                        is_anamorphic: subtitle_stream.is_anamorphic(),
+                        is_interlaced: false,
+                        sample_aspect_ratio: subtitle_stream.sample_aspect_ratio.to_owned(),
+                        display_aspect_ratio: subtitle_stream.display_aspect_ratio.to_owned(),
+                        surface: FrameSurface::System,
+                        pixel_format: PixelFormat::parse(&subtitle_stream.pix_fmt),
+                        is_hdr: false,
+                    },
                 }));
             } else {
                 log::warn!("text subtitles are currently unsupported");
@@ -728,17 +736,19 @@ impl Pipeline {
         }
     }
 
-    fn select_subtitle_stream(
-        input_settings: &InputSettings,
-    ) -> Option<&ProbeResultSubtitleStream> {
-        let all_subtitle_streams: Vec<&ProbeResultSubtitleStream> =
+    fn select_subtitle_stream(input_settings: &InputSettings) -> Option<&ProbeResultVideoStream> {
+        let all_subtitle_streams: Vec<&Box<ProbeResultVideoStream>> =
             match input_settings.subtitle_input.as_ref() {
                 Some(input) => input
                     .probe_result
                     .streams
                     .iter()
                     .filter_map(|s| match s {
-                        ProbeResultStream::Subtitle(ss) => Some(ss),
+                        ProbeResultStream::Video(video_stream)
+                            if video_stream.codec_type == CodecType::Subtitle =>
+                        {
+                            Some(video_stream)
+                        }
                         _ => None,
                     })
                     .collect(),

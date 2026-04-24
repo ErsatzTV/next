@@ -1,10 +1,12 @@
 use std::borrow::Cow;
 use std::fmt::Formatter;
 use std::path::Path;
+use std::str::FromStr;
 use std::time::Duration;
 
 use enum_dispatch::enum_dispatch;
 use serde::Deserialize;
+use strum::EnumString;
 use tokio::process::Command;
 
 use crate::ArgVec;
@@ -41,10 +43,19 @@ impl ProbeResultColorParams {
     }
 }
 
+#[derive(Debug, Clone, EnumString, PartialEq)]
+#[strum(serialize_all = "lowercase")]
+pub enum CodecType {
+    Audio,
+    Video,
+    Subtitle,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProbeResultVideoStream {
     pub stream_index: u32,
     pub codec: String,
+    pub codec_type: CodecType,
     pub profile: String,
     pub height: u32,
     pub width: u32,
@@ -92,6 +103,11 @@ impl ProbeResultVideoStream {
             None => false, // assumed SAR of 1:1
         }
     }
+
+    pub fn is_subtitle_image(&self) -> bool {
+        self.codec_type == CodecType::Subtitle
+            && SUBTITLE_IMAGE_CODECS.contains(&self.codec.as_str())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,22 +118,9 @@ pub struct ProbeResultAudioStream {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProbeResultSubtitleStream {
-    pub stream_index: u32,
-    pub codec: String,
-}
-
-impl ProbeResultSubtitleStream {
-    pub fn is_image(&self) -> bool {
-        SUBTITLE_IMAGE_CODECS.contains(&self.codec.as_str())
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum ProbeResultStream {
     Video(Box<ProbeResultVideoStream>),
     Audio(ProbeResultAudioStream),
-    Subtitle(ProbeResultSubtitleStream),
 }
 
 impl std::fmt::Display for ProbeResultStream {
@@ -136,9 +139,6 @@ impl std::fmt::Display for ProbeResultStream {
                     "{}: video ({} - {}x{} - {:?})",
                     v.stream_index, v.codec, v.width, v.height, v.frame_rate
                 )
-            }
-            ProbeResultStream::Subtitle(s) => {
-                write!(f, "{}: subtitle ({})", s.stream_index, s.codec)
             }
         }
     }
@@ -374,19 +374,21 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 .unwrap_or(String::from("unknown")),
             channels: output_stream.channels?,
         })),
-        "video" => Some(ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
+        "video" | "subtitle" => Some(ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
             stream_index: output_stream.index,
             codec: output_stream
                 .codec_name
                 .clone()
                 .map_or(String::from("unknown"), |c| c.to_lowercase()),
+            codec_type: CodecType::from_str(output_stream.codec_type.to_lowercase().as_str())
+                .unwrap_or(CodecType::Video),
             profile: output_stream
                 .profile
                 .clone()
                 .map_or(String::new(), |p| p.to_lowercase()),
             height: output_stream.height?,
             width: output_stream.width?,
-            pix_fmt: output_stream.pix_fmt.clone()?,
+            pix_fmt: output_stream.pix_fmt.clone().unwrap_or_default(),
             color_params: ProbeResultColorParams {
                 color_range: output_stream.color_range.clone(),
                 color_space: output_stream.color_space.clone(),
@@ -398,13 +400,6 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
             sample_aspect_ratio: output_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
         }))),
-        "subtitle" => Some(ProbeResultStream::Subtitle(ProbeResultSubtitleStream {
-            stream_index: output_stream.index,
-            codec: output_stream
-                .codec_name
-                .clone()
-                .unwrap_or(String::from("unknown")),
-        })),
         _ => None,
     }
 }
