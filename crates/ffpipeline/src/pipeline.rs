@@ -162,21 +162,6 @@ pub struct FrameState {
     pub(crate) is_hdr: bool,
 }
 
-impl Default for FrameState {
-    fn default() -> Self {
-        Self {
-            size: FrameSize::default(),
-            is_anamorphic: false,
-            is_interlaced: false,
-            sample_aspect_ratio: None,
-            display_aspect_ratio: None,
-            surface: FrameSurface::System,
-            pixel_format: PixelFormat::Yuv420p,
-            is_hdr: false,
-        }
-    }
-}
-
 pub enum PipelineInput {
     Audio {
         input_source: InputSource,

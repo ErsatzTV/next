@@ -53,7 +53,7 @@ impl OverlayKindOp for SoftwareOverlay {
                 10 => PixelFormat::Yuva420p10le,
                 _ => PixelFormat::Yuva420p,
             },
-            ..FrameState::default()
+            ..current_state.clone()
         }
     }
 

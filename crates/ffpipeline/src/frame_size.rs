@@ -11,15 +11,6 @@ pub struct FrameSize {
     pub height: u32,
 }
 
-impl Default for FrameSize {
-    fn default() -> Self {
-        Self {
-            width: 1920,
-            height: 1080,
-        }
-    }
-}
-
 impl FromStr for FrameSize {
     type Err = String;
 
