@@ -24,10 +24,13 @@ impl OverlayFilterOp for SoftwareOverlayFilter {
     }
 
     fn secondary_initial_state(&self) -> FrameState {
+        // TODO: need to get probed state from subtitle stream
         FrameState::default()
     }
 
-    fn apply_to(&self, _state: &mut FrameState) {}
+    fn apply_to(&self, _state: &mut FrameState) {
+        // no change to state when applying software overlay
+    }
 
     fn main_input_state(&self, current_state: &FrameState) -> FrameState {
         FrameState {
@@ -44,8 +47,8 @@ impl OverlayFilterOp for SoftwareOverlayFilter {
         FrameState {
             surface: FrameSurface::System,
             pixel_format: match current_state.pixel_format.bit_depth() {
-                10 => PixelFormat::Yuv420p10le,
-                _ => PixelFormat::Yuv420p,
+                10 => PixelFormat::Yuva420p10le,
+                _ => PixelFormat::Yuva420p,
             },
             ..FrameState::default()
         }

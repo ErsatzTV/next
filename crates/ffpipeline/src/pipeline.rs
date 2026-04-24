@@ -100,6 +100,8 @@ impl FrameSurface {
 pub enum PixelFormat {
     Yuv420p,
     Yuv420p10le,
+    Yuva420p,
+    Yuva420p10le,
     Nv12,
     P010le,
     P016,
@@ -112,6 +114,8 @@ impl PixelFormat {
         match pix_fmt.to_lowercase().as_str() {
             "yuv420p" => PixelFormat::Yuv420p,
             "yuv420p10le" => PixelFormat::Yuv420p10le,
+            "yuva420p" => PixelFormat::Yuva420p,
+            "yuva420p10le" => PixelFormat::Yuva420p10le,
             "nv12" => PixelFormat::Nv12,
             "p010le" => PixelFormat::P010le,
             _ => {
@@ -123,8 +127,8 @@ impl PixelFormat {
 
     pub(crate) fn bit_depth(&self) -> u8 {
         match self {
-            PixelFormat::Yuv420p | PixelFormat::Nv12 => 8,
-            PixelFormat::Yuv420p10le | PixelFormat::P010le => 10,
+            PixelFormat::Yuv420p | PixelFormat::Yuva420p | PixelFormat::Nv12 => 8,
+            PixelFormat::Yuv420p10le | PixelFormat::Yuva420p10le | PixelFormat::P010le => 10,
             PixelFormat::P016 => 16,
         }
     }
@@ -133,6 +137,8 @@ impl PixelFormat {
         match self {
             PixelFormat::Yuv420p => "yuv420p",
             PixelFormat::Yuv420p10le => "yuv420p10le",
+            PixelFormat::Yuva420p => "yuva420p",
+            PixelFormat::Yuva420p10le => "yuva420p10le",
             PixelFormat::Nv12 => "nv12",
             PixelFormat::P010le => "p010le",
             PixelFormat::P016 => "p016",

@@ -20,7 +20,6 @@ pub(crate) struct FilterChain {
     pub(crate) filters: Vec<PipelineFilter>,
     audio_label: String,
     video_label: String,
-    subtitle_label: Option<String>,
     complex_filter: String,
 }
 
@@ -30,7 +29,6 @@ impl FilterChain {
             filters,
             audio_label: String::new(),
             video_label: String::new(),
-            subtitle_label: None,
             complex_filter: String::new(),
         }
     }
@@ -148,6 +146,31 @@ impl FilterChain {
                     }
 
                     // TODO: ensure main input matches overlay required input pixel format
+                    if current_state.pixel_format != main_req.pixel_format {
+                        log::debug!(
+                            "current pixel format {:?} doesn't match overlay input {:?}",
+                            current_state.pixel_format,
+                            main_req.pixel_format
+                        );
+
+                        match (&current_state.surface, accel) {
+                            (FrameSurface::System, _) => {
+                                let format: VideoFilter = FormatFilter {
+                                    format: main_req.pixel_format.to_owned(),
+                                }
+                                .into();
+                                format.apply_to(&mut current_state);
+                                resolved.push(PipelineFilter::Video(format))
+                            }
+                            (_, Some(a)) => {
+                                if let Some(f) = a.format_filter(&main_req.pixel_format) {
+                                    f.apply_to(&mut current_state);
+                                    resolved.push(PipelineFilter::Video(f));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
 
                     // ensure secondary input matches overlay required input surface
                     let sec_req = best.secondary_input_state(&current_state);
@@ -342,9 +365,6 @@ impl FilterChain {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
 
-        // subtitle label should only be used (by future -map) when subtitle has separate output
-        self.subtitle_label = None;
-
         let mut filter_chains: Vec<String> = Vec::new();
 
         // build filter chain
@@ -380,75 +400,76 @@ impl FilterChain {
         let video_filter_count = self
             .filters
             .iter()
-            .filter(|f| matches!(f, PipelineFilter::Video(_)))
+            .filter(|f| matches!(f, PipelineFilter::Video(_) | PipelineFilter::Overlay(_)))
             .count();
 
         if video_filter_count > 0 {
-            let mut filter_chain = String::new();
+            let mut current_in = self.video_label.clone();
+            let mut pending: Vec<String> = Vec::new();
+            let mut overlay_num: usize = 0;
 
-            filter_chain.push_str(&format!("[{}]", self.video_label));
+            let flush =
+                |chains: &mut Vec<String>, pending: &mut Vec<String>, from: &str, to: &str| {
+                    chains.push(format!("[{}]{}[{}]", from, pending.join(","), to));
+                    pending.clear();
+                };
 
-            let mut video_chain: Vec<String> = Vec::new();
-
-            for filter in self.filters.iter() {
+            for filter in &self.filters {
                 match filter {
                     PipelineFilter::Video(video_filter) => {
                         if let Some(arg) = video_filter.as_arg() {
-                            video_chain.push(arg);
+                            pending.push(arg);
                         }
                     }
                     PipelineFilter::Overlay(overlay) => {
-                        // maybe label should come from overlay? we'll see when we add watermarks
-                        if let Some(s_label) = subtitle_label.as_ref()
-                            && let Some(arg) = overlay.as_arg()
-                        {
-                            let mut overlay_label = (*s_label).clone();
+                        let Some(sub_in) = subtitle_label else {
+                            continue;
+                        };
 
-                            // flush main video chain
-                            filter_chain.push_str(&video_chain.join(","));
-                            video_chain.clear();
-                            self.video_label = String::from("[v_m]");
-                            filter_chain.push_str(&self.video_label);
-
-                            // add secondary chain
-                            filter_chain.push(';');
-
-                            let mut secondary_chain = Vec::new();
-                            for sec in overlay.secondary() {
-                                if let Some(arg) = sec.as_arg() {
-                                    secondary_chain.push(arg);
-                                }
-                            }
-
-                            if !secondary_chain.is_empty() {
-                                filter_chain.push_str(&format!("[{}]", overlay_label));
-                                overlay_label = String::from("v_s");
-                                filter_chain.push_str(&secondary_chain.join(","));
-                                filter_chain.push_str(&format!("[{}]", overlay_label));
-                                filter_chain.push(';');
-                            }
-
-                            // add overlay
-                            filter_chain.push_str(&self.video_label);
-                            filter_chain.push_str(&format!("[{}]", overlay_label));
-                            filter_chain.push_str(&arg);
-                            self.video_label = String::from("[v_o]");
-                            filter_chain.push_str(&self.video_label);
-                            filter_chain.push(';');
-                            filter_chain.push_str(&self.video_label);
+                        let main_label = format!("v_m{}", overlay_num);
+                        if !pending.is_empty() {
+                            flush(&mut filter_chains, &mut pending, &current_in, &main_label);
+                            current_in = main_label;
                         }
+
+                        let sec_args: Vec<String> = overlay
+                            .secondary()
+                            .iter()
+                            .filter_map(|f| f.as_arg())
+                            .collect();
+                        let sec_ref = if sec_args.is_empty() {
+                            sub_in.to_owned()
+                        } else {
+                            let sec_label = format!("v_s{}", overlay_num);
+                            filter_chains.push(format!(
+                                "[{}]{}[{}]",
+                                sub_in,
+                                sec_args.join(","),
+                                sec_label
+                            ));
+                            sec_label
+                        };
+
+                        let out_label = format!("v_o{}", overlay_num);
+                        if let Some(arg) = overlay.as_arg() {
+                            filter_chains.push(format!(
+                                "[{}][{}]{}[{}]",
+                                current_in, sec_ref, arg, out_label
+                            ));
+                        }
+                        current_in = out_label;
+                        overlay_num += 1;
                     }
                     _ => {}
                 }
             }
 
-            if !video_chain.is_empty() {
-                filter_chain.push_str(&video_chain.join(","));
+            if !pending.is_empty() {
+                flush(&mut filter_chains, &mut pending, &current_in, "v");
                 self.video_label = String::from("[v]");
-                filter_chain.push_str(&self.video_label);
+            } else {
+                self.video_label = format!("[{}]", current_in);
             }
-
-            filter_chains.push(filter_chain)
         }
 
         self.complex_filter = filter_chains.join(";");
@@ -463,7 +484,8 @@ impl FilterChain {
     }
 
     pub(crate) fn subtitle_label(&self) -> Option<&str> {
-        self.subtitle_label.as_deref()
+        //self.subtitle_label.as_deref()
+        None
     }
 
     pub(crate) fn as_arg(&self) -> ArgVec {
