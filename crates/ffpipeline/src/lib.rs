@@ -20,6 +20,7 @@ pub mod input;
 pub mod output_format;
 pub mod output_option;
 pub mod output_settings;
+pub mod overlay_filter;
 pub mod pipeline;
 pub mod probe;
 pub mod video_codec;

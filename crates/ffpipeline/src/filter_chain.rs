@@ -2,6 +2,7 @@ use crate::ArgVec;
 use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
+use crate::overlay_filter::{OverlayFilter, OverlayFilterOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
@@ -11,6 +12,7 @@ use crate::video_filter::{
 pub enum PipelineFilter {
     Audio(AudioFilter),
     Video(VideoFilter),
+    Overlay(OverlayFilter),
 }
 
 #[derive(Clone)]
@@ -64,6 +66,11 @@ impl FilterChain {
                         new_filter.apply_to(&mut state);
                         active_filters.push(PipelineFilter::Video(new_filter));
                     }
+                }
+                PipelineFilter::Overlay(of) => {
+                    let new_filter = of.clone();
+                    new_filter.apply_to(&mut state);
+                    active_filters.push(PipelineFilter::Overlay(new_filter));
                 }
             }
         }
@@ -121,6 +128,56 @@ impl FilterChain {
                     // since they are separate in the real filter graph
                     //audio_filter.apply_to(&mut current_state);
                     resolved.push(filter.clone());
+                }
+                PipelineFilter::Overlay(overlay) => {
+                    let mut best = match accel {
+                        Some(a) => a.best_overlay(overlay, ffmpeg_info, &current_state),
+                        _ => overlay.clone(),
+                    };
+
+                    // ensure main input matches overlay required input surface
+                    let main_req = best.main_input_state(&current_state);
+                    if current_state.surface != main_req.surface {
+                        self.transfer_surface(
+                            accel,
+                            &mut resolved,
+                            &mut current_state,
+                            main_req.surface,
+                            encoder_pixel_format,
+                        );
+                    }
+
+                    // TODO: ensure main input matches overlay required input pixel format
+
+                    // ensure secondary input matches overlay required input surface
+                    let sec_req = best.secondary_input_state(&current_state);
+                    let mut sec = FilterChain::new(
+                        best.secondary()
+                            .iter()
+                            .cloned()
+                            .map(PipelineFilter::Video)
+                            .collect(),
+                    );
+                    // TODO: evaluate? need to remove scaling if not needed
+                    sec.resolve(
+                        ffmpeg_info,
+                        accel,
+                        &best.secondary_initial_state(),
+                        &sec_req.surface,
+                        &Some(sec_req.pixel_format),
+                    );
+                    best.replace_secondary(
+                        sec.filters
+                            .into_iter()
+                            .filter_map(|f| match f {
+                                PipelineFilter::Video(v) => Some(v),
+                                _ => None,
+                            })
+                            .collect(),
+                    );
+
+                    best.apply_to(&mut current_state);
+                    resolved.push(PipelineFilter::Overlay(best));
                 }
             }
         }
@@ -284,7 +341,9 @@ impl FilterChain {
     ) {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
-        self.subtitle_label = subtitle_label.cloned();
+
+        // subtitle label should only be used (by future -map) when subtitle has separate output
+        self.subtitle_label = None;
 
         let mut filter_chains: Vec<String> = Vec::new();
 
@@ -332,17 +391,62 @@ impl FilterChain {
             let mut video_chain: Vec<String> = Vec::new();
 
             for filter in self.filters.iter() {
-                if let PipelineFilter::Video(video_filter) = filter
-                    && let Some(arg) = video_filter.as_arg()
-                {
-                    video_chain.push(arg);
+                match filter {
+                    PipelineFilter::Video(video_filter) => {
+                        if let Some(arg) = video_filter.as_arg() {
+                            video_chain.push(arg);
+                        }
+                    }
+                    PipelineFilter::Overlay(overlay) => {
+                        // maybe label should come from overlay? we'll see when we add watermarks
+                        if let Some(s_label) = subtitle_label.as_ref()
+                            && let Some(arg) = overlay.as_arg()
+                        {
+                            let mut overlay_label = (*s_label).clone();
+
+                            // flush main video chain
+                            filter_chain.push_str(&video_chain.join(","));
+                            video_chain.clear();
+                            self.video_label = String::from("[v_m]");
+                            filter_chain.push_str(&self.video_label);
+
+                            // add secondary chain
+                            filter_chain.push(';');
+
+                            let mut secondary_chain = Vec::new();
+                            for sec in overlay.secondary() {
+                                if let Some(arg) = sec.as_arg() {
+                                    secondary_chain.push(arg);
+                                }
+                            }
+
+                            if !secondary_chain.is_empty() {
+                                filter_chain.push_str(&format!("[{}]", overlay_label));
+                                overlay_label = String::from("v_s");
+                                filter_chain.push_str(&secondary_chain.join(","));
+                                filter_chain.push_str(&format!("[{}]", overlay_label));
+                                filter_chain.push(';');
+                            }
+
+                            // add overlay
+                            filter_chain.push_str(&self.video_label);
+                            filter_chain.push_str(&format!("[{}]", overlay_label));
+                            filter_chain.push_str(&arg);
+                            self.video_label = String::from("[v_o]");
+                            filter_chain.push_str(&self.video_label);
+                            filter_chain.push(';');
+                            filter_chain.push_str(&self.video_label);
+                        }
+                    }
+                    _ => {}
                 }
             }
 
-            filter_chain.push_str(&video_chain.join(","));
-
-            self.video_label = String::from("[v]");
-            filter_chain.push_str(&self.video_label);
+            if !video_chain.is_empty() {
+                filter_chain.push_str(&video_chain.join(","));
+                self.video_label = String::from("[v]");
+                filter_chain.push_str(&self.video_label);
+            }
 
             filter_chains.push(filter_chain)
         }

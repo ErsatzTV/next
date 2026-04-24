@@ -3,6 +3,7 @@ use enum_dispatch::enum_dispatch;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
+use crate::overlay_filter::OverlayFilter;
 use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
@@ -17,6 +18,14 @@ pub trait HwAccel {
         _current_state: &FrameState,
     ) -> VideoFilter {
         video_filter.clone()
+    }
+    fn best_overlay(
+        &self,
+        overlay_filter: &OverlayFilter,
+        _ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> OverlayFilter {
+        overlay_filter.clone()
     }
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         match pixel_format.bit_depth() {
