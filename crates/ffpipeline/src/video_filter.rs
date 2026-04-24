@@ -93,7 +93,7 @@ impl VideoFilterOp for HwUploadFilter {
         state.pixel_format = match &state.pixel_format {
             PixelFormat::Yuv420p10le => PixelFormat::P010le,
             PixelFormat::Yuv420p => PixelFormat::Nv12,
-            PixelFormat::Bgra => PixelFormat::Yuva420p,
+            PixelFormat::Bgra if state.surface == FrameSurface::Cuda => PixelFormat::Yuva420p,
             other => *other,
         }
     }
@@ -104,11 +104,12 @@ impl VideoFilterOp for HwUploadFilter {
 
     fn as_arg(&self) -> Option<String> {
         let target_format = match (
+            &self.target_surface,
             self.source_format.bit_depth(),
             self.source_format.has_alpha(),
         ) {
-            (10, _) => PixelFormat::P010le,
-            (8, true) => PixelFormat::Yuva420p,
+            (_, 10, _) => PixelFormat::P010le,
+            (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
             _ => PixelFormat::Nv12,
         };
 
