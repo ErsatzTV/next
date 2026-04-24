@@ -16,6 +16,15 @@ use crate::input::LavfiInputSource;
 use crate::input::LocalInputSource;
 use crate::input::{FfmpegInputArgs, HttpInputSource};
 
+static SUBTITLE_IMAGE_CODECS: &[&str] = &[
+    "hdmv_pgs_subtitle",
+    "dvd_subtitle",
+    "dvdsub",
+    "vobsub",
+    "pgssub",
+    "pgs",
+];
+
 #[derive(Debug, Clone)]
 pub struct ProbeResultColorParams {
     pub color_range: Option<String>,
@@ -96,6 +105,12 @@ pub struct ProbeResultAudioStream {
 pub struct ProbeResultSubtitleStream {
     pub stream_index: u32,
     pub codec: String,
+}
+
+impl ProbeResultSubtitleStream {
+    pub fn is_image(&self) -> bool {
+        SUBTITLE_IMAGE_CODECS.contains(&self.codec.as_str())
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fmt::Formatter;
 use std::time::Duration;
 
@@ -375,7 +374,20 @@ impl Pipeline {
             },
         ];
 
-        // TODO: add image subtitle to input
+        if let Some(subtitle_stream) = subtitle_stream
+            && let Some(subtitle_input) = input_settings.subtitle_input.as_ref()
+        {
+            if subtitle_stream.is_image() {
+                inputs.push(PipelineInput::ImageSubtitle {
+                    input_source: subtitle_input.input_source.to_owned(),
+                    index: subtitle_stream.stream_index,
+                    path: subtitle_input.probe_result.path.to_owned(),
+                    seek: subtitle_input.in_point,
+                });
+            } else {
+                log::warn!("text subtitles are currently unsupported");
+            }
+        }
 
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
