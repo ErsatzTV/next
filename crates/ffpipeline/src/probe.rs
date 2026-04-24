@@ -398,6 +398,13 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
             sample_aspect_ratio: output_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
         }))),
+        "subtitle" => Some(ProbeResultStream::Subtitle(ProbeResultSubtitleStream {
+            stream_index: output_stream.index,
+            codec: output_stream
+                .codec_name
+                .clone()
+                .unwrap_or(String::from("unknown")),
+        })),
         _ => None,
     }
 }
