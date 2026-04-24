@@ -405,22 +405,31 @@ impl Pipeline {
                     seek: subtitle_input.in_point,
                 });
 
-                filters.push(PipelineFilter::Overlay(OverlayFilter {
-                    kind: SoftwareOverlay.into(),
-                    secondary: Vec::new(),
-                    secondary_initial_state: FrameState {
-                        size: FrameSize {
-                            width: subtitle_stream.width,
-                            height: subtitle_stream.height,
-                        },
-                        is_anamorphic: subtitle_stream.is_anamorphic(),
-                        is_interlaced: false,
-                        sample_aspect_ratio: subtitle_stream.sample_aspect_ratio.to_owned(),
-                        display_aspect_ratio: subtitle_stream.display_aspect_ratio.to_owned(),
-                        surface: FrameSurface::System,
-                        pixel_format: PixelFormat::parse(&subtitle_stream.pix_fmt),
-                        is_hdr: false,
+                let secondary_initial_state = FrameState {
+                    size: FrameSize {
+                        width: subtitle_stream.width,
+                        height: subtitle_stream.height,
                     },
+                    is_anamorphic: subtitle_stream.is_anamorphic(),
+                    is_interlaced: false,
+                    sample_aspect_ratio: subtitle_stream.sample_aspect_ratio.to_owned(),
+                    display_aspect_ratio: subtitle_stream.display_aspect_ratio.to_owned(),
+                    surface: FrameSurface::System,
+                    pixel_format: PixelFormat::parse(&subtitle_stream.pix_fmt),
+                    is_hdr: false,
+                };
+
+                filters.push(PipelineFilter::Overlay(OverlayFilter {
+                    kind: SoftwareOverlay::default().into(),
+                    secondary: vec![
+                        ScaleFilter {
+                            size: final_output_settings.video_size,
+                            input_is_anamorphic: subtitle_stream.is_anamorphic(),
+                            force_original_aspect_ratio: None,
+                        }
+                        .into(),
+                    ],
+                    secondary_initial_state,
                 }));
             } else {
                 log::warn!("text subtitles are currently unsupported");

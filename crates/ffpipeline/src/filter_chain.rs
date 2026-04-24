@@ -164,7 +164,7 @@ impl FilterChain {
                             .map(PipelineFilter::Video)
                             .collect(),
                     );
-                    // TODO: evaluate? need to remove scaling if not needed
+                    sec.evaluate(&best.secondary_initial_state, ffmpeg_info);
                     sec.resolve(
                         ffmpeg_info,
                         accel,
