@@ -299,7 +299,7 @@ impl VideoFilterOp for ScaleVaapi {
 
             if self.input_is_anamorphic {
                 Some(format!(
-                    "scale_vaapi=iw*sar:ih,setsar=1,scale_vaapi={}:{}{}:force_divisible_by=2",
+                    "scale_vaapi=iw*sar:ih,scale_vaapi={}:{}{}:force_divisible_by=2,setsar=1",
                     size.width, size.height, aspect_ratio
                 ))
             } else {
