@@ -215,7 +215,7 @@ impl VideoFilterOp for ScaleFilter {
 
             if self.input_is_anamorphic {
                 Some(format!(
-                    "scale=iw*sar:ih,setsar=1,scale={}:{}:flags=fast_bilinear{}",
+                    "scale=iw*sar:ih,scale={}:{}:flags=fast_bilinear{},setsar=1",
                     size.width, size.height, aspect_ratio
                 ))
             } else {

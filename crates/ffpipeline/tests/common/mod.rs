@@ -267,6 +267,11 @@ pub fn assert_video(probe: &ProbeResult, codec: &str, width: u32, height: u32) {
     assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
     assert_eq!(video.width, width, "unexpected video width");
     assert_eq!(video.height, height, "unexpected video height");
+    assert_eq!(
+        video.sample_aspect_ratio,
+        Some(String::from("1:1")),
+        "unexpected SAR"
+    );
 }
 
 pub fn assert_audio(probe: &ProbeResult, codec: &str) {

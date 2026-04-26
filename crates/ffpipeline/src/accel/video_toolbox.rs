@@ -133,7 +133,7 @@ impl VideoFilterOp for ScaleVt {
         if let Some(size) = &self.size {
             if self.input_is_anamorphic {
                 Some(format!(
-                    "scale_vt=iw*sar:ih,setsar=1,scale_vt={}:{}",
+                    "scale_vt=iw*sar:ih,scale_vt={}:{},setsar=1",
                     size.width, size.height
                 ))
             } else {

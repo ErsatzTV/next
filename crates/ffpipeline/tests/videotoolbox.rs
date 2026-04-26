@@ -35,7 +35,8 @@ async fn pipeline(
         "480p_h264.ts",
         "1080p_hevc_10.ts",
         "720p_hevc_10.ts",
-        "480p_hevc_10.ts"
+        "480p_hevc_10.ts",
+        "480p_h264_anamorphic.ts"
     )]
     src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
@@ -49,12 +50,12 @@ async fn pipeline(
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
-                video_size: Some(res.clone()),
+                video_size: Some(res),
                 bit_depth: Some(bpp),
                 ..TestOutputParams::default()
             },
             expected_video_codec: vf.to_string(),
-            expected_video_size: res, // TODO: derive Copy on FrameSize
+            expected_video_size: res,
             expected_audio_codec: af.to_string(),
         })
         .await;
