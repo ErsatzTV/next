@@ -39,25 +39,22 @@ impl FromStr for FrameSize {
 impl FrameSize {
     pub(crate) fn square_pixel_size(&self, frame_state: &FrameState) -> FrameSize {
         let mut source_width = frame_state.size.width as f64;
-        let mut source_height = frame_state.size.height as f64;
+        let source_height = frame_state.size.height as f64;
 
         if frame_state.is_anamorphic
             && let Some(sar) = Self::sar_as_float(frame_state)
         {
             source_width = (source_width * sar).floor();
-            source_height = (source_height * sar).floor();
         }
 
-        let target_width = self.width as f64;
-        let target_height = self.height as f64;
-
-        let width_percent = target_width / source_width;
-        let height_percent = target_height / source_height;
-        let min_percent = f64::min(width_percent, height_percent);
+        let min_percent = f64::min(
+            self.width as f64 / source_width,
+            self.height as f64 / source_height,
+        );
 
         FrameSize {
-            width: (source_width * min_percent).floor() as u32,
-            height: (source_height * min_percent).floor() as u32,
+            width: ((source_width * min_percent).round() as u32).min(self.width),
+            height: ((source_height * min_percent).round() as u32).min(self.height),
         }
     }
 
@@ -102,5 +99,35 @@ impl FrameSize {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::{FrameSurface, PixelFormat};
+
+    #[test]
+    fn anamorphic_square_pixels() {
+        let state = FrameState {
+            size: FrameSize {
+                width: 720,
+                height: 480,
+            },
+            is_anamorphic: true,
+            is_interlaced: false,
+            sample_aspect_ratio: Some(String::from("32:27")),
+            display_aspect_ratio: Some(String::from("16:9")),
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            is_hdr: false,
+        };
+
+        let target = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+
+        assert_eq!(target.square_pixel_size(&state), target);
     }
 }
