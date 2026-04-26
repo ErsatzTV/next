@@ -263,7 +263,7 @@ impl VideoFilterOp for ScaleCuda {
 
             if self.input_is_anamorphic {
                 Some(format!(
-                    "scale_cuda=iw*sar:ih,setsar=1,scale_cuda={}:{}{}",
+                    "scale_cuda=iw*sar:ih,scale_cuda={}:{}{},setsar=1",
                     size.width, size.height, aspect_ratio
                 ))
             } else {
