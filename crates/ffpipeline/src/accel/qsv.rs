@@ -20,11 +20,15 @@ impl HwAccel for Qsv {
         _current_state: &FrameState,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter { size, .. })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
-            {
-                ScaleQsv { size: *size }.into()
+            VideoFilter::Scale(ScaleFilter {
+                size,
+                input_is_anamorphic,
+                ..
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) => ScaleQsv {
+                size: *size,
+                input_is_anamorphic: *input_is_anamorphic,
             }
+            .into(),
             VideoFilter::Deinterlace(DeinterlaceFilter { .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceQsv) =>
             {
@@ -114,6 +118,7 @@ impl HwAccel for Qsv {
 #[derive(Clone)]
 pub struct ScaleQsv {
     pub(crate) size: Option<FrameSize>,
+    pub(crate) input_is_anamorphic: bool,
 }
 
 impl VideoFilterOp for ScaleQsv {
@@ -125,7 +130,9 @@ impl VideoFilterOp for ScaleQsv {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Qsv;
-            // TODO: anamorphic handling
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
         }
     }
 
@@ -134,9 +141,21 @@ impl VideoFilterOp for ScaleQsv {
     }
 
     fn as_arg(&self) -> Option<String> {
-        self.size.as_ref().map(|s|
-            // TODO: anamorphic handling
-            format!("vpp_qsv=w={}:h={}", s.width, s.height))
+        if let Some(size) = &self.size {
+            if self.input_is_anamorphic {
+                Some(format!(
+                    "vpp_qsv=w=iw*sar:h=ih,vpp_qsv=w={}:h={},setsar=1",
+                    size.width, size.height
+                ))
+            } else {
+                Some(format!(
+                    "vpp_qsv=w={}:h={},setsar=1",
+                    size.width, size.height
+                ))
+            }
+        } else {
+            None
+        }
     }
 }
 
