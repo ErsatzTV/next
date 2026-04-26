@@ -96,7 +96,7 @@ impl HwAccel for VideoToolbox {
     }
 
     fn init_hw_device(&self) -> ArgVec {
-        Vec::new()
+        args!["-init_hw_device", "videotoolbox"]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {

@@ -126,6 +126,7 @@ impl VideoFilterOp for HwUploadFilter {
             FrameSurface::Qsv => Some(format!("{format_filter}hwupload=extra_hw_frames=64")),
             FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
             FrameSurface::Vulkan => Some(format!("{format_filter}hwupload")),
+            FrameSurface::VideoToolbox => Some(format!("{format_filter}hwupload")),
             _ => None,
         }
     }
