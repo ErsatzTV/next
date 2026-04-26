@@ -62,6 +62,8 @@ pub enum KnownVideoFilter {
     ScaleCuda,
     #[strum(serialize = "scale_vaapi")]
     ScaleVaapi,
+    #[strum(serialize = "scale_vt")]
+    ScaleVt,
     #[strum(serialize = "scale_vulkan")]
     ScaleVulkan,
     #[strum(serialize = "tonemap_opencl")]

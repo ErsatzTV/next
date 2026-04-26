@@ -73,6 +73,8 @@ pub enum VideoFilter {
     ScaleVulkan(accel::vulkan::ScaleVulkan),
     FormatVulkan(accel::vulkan::FormatVulkan),
     LibplaceboVulkan(accel::vulkan::LibplaceboVulkan),
+    // VideoToolbox hardware filters
+    ScaleVt(accel::video_toolbox::ScaleVt),
 }
 
 // --- Software filter structs ---

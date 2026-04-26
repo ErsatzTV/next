@@ -1,10 +1,11 @@
 use crate::ArgVec;
 use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
-use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
+use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
-use crate::pipeline::{FrameSurface, PixelFormat, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
 use crate::video_codec::VideoCodec;
+use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone)]
 pub struct VideoToolbox {
@@ -18,6 +19,26 @@ impl VideoToolbox {
 }
 
 impl HwAccel for VideoToolbox {
+    fn best_filter(
+        &self,
+        video_filter: &VideoFilter,
+        ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> VideoFilter {
+        match video_filter {
+            VideoFilter::Scale(ScaleFilter {
+                size,
+                input_is_anamorphic,
+                ..
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVt) => ScaleVt {
+                size: *size,
+                input_is_anamorphic: *input_is_anamorphic,
+            }
+            .into(),
+            _ => video_filter.clone(),
+        }
+    }
+
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         let format = match codec {
             "av1" => Some(VideoFormat::Av1),
@@ -80,5 +101,46 @@ impl HwAccel for VideoToolbox {
 
     fn known_accel(&self) -> &KnownHardwareAccel {
         &KnownHardwareAccel::VideoToolbox
+    }
+}
+
+#[derive(Clone)]
+pub struct ScaleVt {
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) input_is_anamorphic: bool,
+}
+
+impl VideoFilterOp for ScaleVt {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::VideoToolbox;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::VideoToolbox)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        if let Some(size) = &self.size {
+            if self.input_is_anamorphic {
+                Some(format!(
+                    "scale_vt=iw*sar:ih,setsar=1,scale_vt={}:{}",
+                    size.width, size.height
+                ))
+            } else {
+                Some(format!("scale_vt={}:{},setsar=1", size.width, size.height))
+            }
+        } else {
+            None
+        }
     }
 }
