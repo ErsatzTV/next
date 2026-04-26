@@ -19,6 +19,7 @@ const ENCODER_LIST_IS_HW_ACCELERATED: &str = "IsHardwareAccelerated";
 
 #[link(name = "VideoToolbox", kind = "framework")]
 unsafe extern "C" {
+    fn VTRegisterSupplementalVideoDecoderIfAvailable(codec_type: u32);
     fn VTIsHardwareDecodeSupported(codec_type: u32) -> u8;
     fn VTCopyVideoEncoderList(
         options: *const core_foundation::base::CFTypeRef,
@@ -28,7 +29,10 @@ unsafe extern "C" {
 
 /// Returns true if the given codec type has hardware decode support.
 pub fn is_hardware_decode_supported(codec_type: u32) -> bool {
-    unsafe { VTIsHardwareDecodeSupported(codec_type) != 0 }
+    unsafe {
+        VTRegisterSupplementalVideoDecoderIfAvailable(codec_type);
+        VTIsHardwareDecodeSupported(codec_type) != 0
+    }
 }
 
 /// Returns the FourCC string for a codec type (e.g. 0x61766331 -> "avc1").
