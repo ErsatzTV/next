@@ -30,7 +30,9 @@ unsafe extern "C" {
 /// Returns true if the given codec type has hardware decode support.
 pub fn is_hardware_decode_supported(codec_type: u32) -> bool {
     unsafe {
-        VTRegisterSupplementalVideoDecoderIfAvailable(codec_type);
+        if codec_type == kCMVideoCodecType_VP9 || codec_type == kCMVideoCodecType_AV1 {
+            VTRegisterSupplementalVideoDecoderIfAvailable(codec_type);
+        }
         VTIsHardwareDecodeSupported(codec_type) != 0
     }
 }
