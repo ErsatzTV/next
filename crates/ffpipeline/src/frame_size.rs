@@ -44,7 +44,7 @@ impl FrameSize {
         if frame_state.is_anamorphic
             && let Some(sar) = Self::sar_as_float(frame_state)
         {
-            source_width = (source_width * sar).floor();
+            source_width *= sar;
         }
 
         let min_percent = f64::min(
@@ -53,8 +53,8 @@ impl FrameSize {
         );
 
         FrameSize {
-            width: ((source_width * min_percent).round() as u32).min(self.width),
-            height: ((source_height * min_percent).round() as u32).min(self.height),
+            width: ((source_width * min_percent).round_ties_even() as u32).min(self.width),
+            height: ((source_height * min_percent).round_ties_even() as u32).min(self.height),
         }
     }
 
@@ -108,7 +108,7 @@ mod tests {
     use crate::pipeline::{FrameSurface, PixelFormat};
 
     #[test]
-    fn anamorphic_square_pixels() {
+    fn anamorphic_square_pixels_1280x720() {
         let state = FrameState {
             size: FrameSize {
                 width: 720,
@@ -126,6 +126,30 @@ mod tests {
         let target = FrameSize {
             width: 1280,
             height: 720,
+        };
+
+        assert_eq!(target.square_pixel_size(&state), target);
+    }
+
+    #[test]
+    fn anamorphic_square_pixels_1920x1080() {
+        let state = FrameState {
+            size: FrameSize {
+                width: 720,
+                height: 480,
+            },
+            is_anamorphic: true,
+            is_interlaced: false,
+            sample_aspect_ratio: Some(String::from("32:27")),
+            display_aspect_ratio: Some(String::from("16:9")),
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            is_hdr: false,
+        };
+
+        let target = FrameSize {
+            width: 1920,
+            height: 1080,
         };
 
         assert_eq!(target.square_pixel_size(&state), target);
