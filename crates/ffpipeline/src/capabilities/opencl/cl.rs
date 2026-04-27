@@ -29,7 +29,8 @@ fn get_platform_and_gpu_device_count(cl: ClLib) -> (u32, u32) {
     };
 
     if result == CL_SUCCESS && platform_count > 0 {
-        let mut platforms: Vec<cl_platform_id> = vec![0 as cl_platform_id; platform_count as usize];
+        let mut platforms: Vec<cl_platform_id> =
+            vec![std::ptr::null_mut(); platform_count as usize];
         // get platforms
         unsafe {
             result =

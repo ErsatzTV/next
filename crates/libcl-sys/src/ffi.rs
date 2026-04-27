@@ -86,7 +86,7 @@ mod tests {
 
                 if platform_count > 0 {
                     let mut platforms: Vec<cl_platform_id> =
-                        vec![0 as cl_platform_id; platform_count as usize];
+                        vec![std::ptr::null_mut(); platform_count as usize];
                     unsafe {
                         let result = (cl.clGetPlatformIDs)(
                             platform_count,
