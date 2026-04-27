@@ -503,6 +503,7 @@ mod tests {
     use super::*;
     use crate::accel::opencl::TonemapOpencl;
     use crate::accel::vaapi::{TonemapVaapi, Vaapi, VaapiDriver};
+    use crate::capabilities::opencl::OpenCLCapabilities;
     use crate::capabilities::vaapi::VaapiCapabilities;
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
@@ -521,6 +522,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
             },
+            opencl_capabilities: OpenCLCapabilities::default(),
             needs_opencl_device: true,
         })
     }
@@ -544,6 +546,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap,
                 can_hdr_to_hdr_tonemap,
             },
+            opencl_capabilities: OpenCLCapabilities::default(),
             needs_opencl_device: false,
         }
     }

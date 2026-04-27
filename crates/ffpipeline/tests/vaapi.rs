@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 use common::*;
 use ffpipeline::accel::vaapi::{Vaapi, VaapiDriver};
+use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::vaapi::VaapiCapabilities;
 use ffpipeline::ffmpeg_info::KnownHardwareAccel;
 use ffpipeline::frame_size::FrameSize;
@@ -36,20 +37,22 @@ fn find_vaapi_driver() -> Option<VaapiDriver> {
     None
 }
 
-fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities)> {
+fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities, OpenCLCapabilities)> {
     let device = find_vaapi_device()?;
     let device_str = device.to_str()?;
 
     if let Some(driver) = find_vaapi_driver() {
         let caps = VaapiCapabilities::probe(device_str, &driver.to_string()).ok()?;
-        return Some((device_str.to_owned(), driver, caps));
+        let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
+        return Some((device_str.to_owned(), driver, caps, opencl_caps));
     }
 
     for driver in [VaapiDriver::Ihd, VaapiDriver::I965, VaapiDriver::RadeonSI] {
         if let Ok(caps) = VaapiCapabilities::probe(device_str, &driver.to_string())
             && caps.count() > 0
         {
-            return Some((device_str.to_owned(), driver, caps));
+            let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
+            return Some((device_str.to_owned(), driver, caps, opencl_caps));
         }
     }
 
@@ -59,11 +62,12 @@ fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities)> {
 async fn make_vaapi_accel() -> Option<&'static HardwareAccel> {
     VAAPI_ACCEL
         .get_or_init(|| async {
-            let (device, driver, capabilities) = probe_vaapi()?;
+            let (device, driver, capabilities, opencl_capabilities) = probe_vaapi()?;
             Some(HardwareAccel::Vaapi(Vaapi {
                 device,
                 driver,
                 capabilities,
+                opencl_capabilities,
                 needs_opencl_device: false,
             }))
         })

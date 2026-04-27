@@ -1,5 +1,6 @@
 use crate::ArgVec;
 use crate::accel::opencl::TonemapOpencl;
+use crate::capabilities::opencl::OpenCLCapabilities;
 use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
@@ -26,6 +27,7 @@ pub struct Vaapi {
     pub device: String,
     pub driver: VaapiDriver,
     pub capabilities: VaapiCapabilities,
+    pub opencl_capabilities: OpenCLCapabilities,
     pub needs_opencl_device: bool,
 }
 
@@ -69,10 +71,7 @@ impl HwAccel for Vaapi {
                 };
 
                 let mut tonemap_options = vec![KnownVideoFilter::TonemapVaapi];
-                // Pipeline only supports OpenCL for the iHD driver currently.
-                // In the future, we may want to support OpenCL for Radeon as well, but
-                // we will need to implement proper OpenCL capability detection.
-                if self.driver == VaapiDriver::Ihd {
+                if self.opencl_capabilities.can_tonemap() {
                     // Prepend because OpenCL is preferred.
                     tonemap_options.insert(0, KnownVideoFilter::TonemapOpencl);
                 }
@@ -229,10 +228,11 @@ impl HwAccel for Vaapi {
             device: self.device.clone(),
             driver: self.driver.clone(),
             capabilities: self.capabilities.clone(),
+            opencl_capabilities: self.opencl_capabilities.clone(),
             // Logic is a bit disjoint. It would be better if "best" filter could
             // append state around the pipeline.
             needs_opencl_device: is_hdr
-                && self.driver == VaapiDriver::Ihd
+                && self.opencl_capabilities.can_tonemap()
                 && ffmpeg_info
                     .find_best_fit(&[
                         KnownVideoFilter::TonemapOpencl,

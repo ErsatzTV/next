@@ -213,11 +213,16 @@ impl HardwareAccel {
                                     capabilities.vendor()
                                 );
 
+                                let opencl_capabilities =
+                                    ffpipeline::capabilities::opencl::OpenCLCapabilities::probe()
+                                        .unwrap_or_default();
+
                                 Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
                                     ffpipeline::accel::vaapi::Vaapi {
                                         device: vaapi_device.to_str()?.to_owned(),
                                         driver: vaapi_driver.clone().into(),
                                         capabilities,
+                                        opencl_capabilities,
                                         needs_opencl_device: false,
                                     },
                                 ))

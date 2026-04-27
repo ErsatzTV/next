@@ -12,12 +12,14 @@ pub enum FFPipelineError {
     AudioInputIsRequired,
     #[error("video input is required")]
     VideoInputIsRequired,
-    #[error("error detecting vaapi capabilities: {0}")]
-    VaapiCapabilitiesError(String),
-    #[error("error detecting qsv capabilities: {0}")]
-    QsvCapabilitiesError(String),
     #[error("error detecting nvidia capabilities: {0}")]
     NvidiaCapabilitiesError(String),
+    #[error("error detecting opencl capabilities: {0}")]
+    OpenCLCapabilitiesError(String),
+    #[error("error detecting qsv capabilities: {0}")]
+    QsvCapabilitiesError(String),
+    #[error("error detecting vaapi capabilities: {0}")]
+    VaapiCapabilitiesError(String),
     #[error("error detecting videotoolbox capabilities: {0}")]
     VideoToolboxCapabilitiesError(String),
 }
