@@ -3,7 +3,7 @@ use crate::capabilities::nvidia::NvidiaCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
-use crate::hw_accel::HwAccel;
+use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
@@ -15,15 +15,11 @@ use crate::video_filter::{
 #[derive(Debug, Clone)]
 pub struct Cuda {
     pub capabilities: NvidiaCapabilities,
-    is_vulkan_hdr: bool,
 }
 
 impl Cuda {
     pub fn new(capabilities: NvidiaCapabilities) -> Cuda {
-        Cuda {
-            capabilities,
-            is_vulkan_hdr: false,
-        }
+        Cuda { capabilities }
     }
 }
 
@@ -57,14 +53,16 @@ impl HwAccel for Cuda {
             VideoFilter::ToneMap(ToneMapFilter {
                 algorithm,
                 output_format: format,
-            }) if self.is_vulkan_hdr => LibplaceboCuda {
-                algorithm: algorithm.clone(),
-                format: match format {
-                    PixelFormat::Yuv420p10le => PixelFormat::P010le,
-                    _ => PixelFormat::Nv12,
-                },
+            }) if current_state.is_hdr && current_state.surface == FrameSurface::Vulkan => {
+                LibplaceboCuda {
+                    algorithm: algorithm.clone(),
+                    format: match format {
+                        PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                        _ => PixelFormat::Nv12,
+                    },
+                }
+                .into()
             }
-            .into(),
             VideoFilter::Deinterlace(DeinterlaceFilter { .. }) => {
                 let best_cuda_filter = ffmpeg_info
                     .find_best_fit(&[KnownVideoFilter::YadifCuda, KnownVideoFilter::BwdifCuda])
@@ -154,43 +152,6 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn decoder_arg(&self) -> ArgVec {
-        log::debug!("decoder arg, is_hdr: {}", self.is_vulkan_hdr);
-
-        if self.is_vulkan_hdr {
-            args![
-                "-hwaccel",
-                KnownHardwareAccel::Vulkan,
-                "-hwaccel_output_format",
-                KnownHardwareAccel::Vulkan,
-            ]
-        } else {
-            args![
-                "-hwaccel",
-                KnownHardwareAccel::Cuda,
-                "-hwaccel_output_format",
-                KnownHardwareAccel::Cuda,
-            ]
-        }
-    }
-
-    fn decoder_filters(&self) -> Vec<PipelineFilter> {
-        // can't work around fallback to software decode with HDR
-        if self.is_vulkan_hdr {
-            Vec::new()
-        } else {
-            vec![PipelineFilter::Video(HwUploadCudaWorkaround.into())]
-        }
-    }
-
-    fn decoder_frame_surface(&self) -> FrameSurface {
-        if self.is_vulkan_hdr {
-            FrameSurface::Vulkan
-        } else {
-            FrameSurface::Cuda
-        }
-    }
-
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         Some(
             FormatCuda {
@@ -198,15 +159,6 @@ impl HwAccel for Cuda {
             }
             .into(),
         )
-    }
-
-    fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self {
-        Cuda {
-            capabilities: self.capabilities.clone(),
-            is_vulkan_hdr: is_hdr
-                && ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vulkan)
-                && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo),
-        }
     }
 
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
@@ -224,6 +176,37 @@ impl HwAccel for Cuda {
 
     fn known_accel(&self) -> &KnownHardwareAccel {
         &KnownHardwareAccel::Cuda
+    }
+
+    fn make_decoder(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> HwDecoder {
+        let is_vulkan_hdr = is_hdr
+            && ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vulkan)
+            && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo);
+
+        if is_vulkan_hdr {
+            HwDecoder {
+                args: args![
+                    "-hwaccel",
+                    KnownHardwareAccel::Vulkan,
+                    "-hwaccel_output_format",
+                    KnownHardwareAccel::Vulkan,
+                ],
+                surface: FrameSurface::Vulkan,
+                // can't work around fallback to software decode with HDR
+                filters: Vec::new(),
+            }
+        } else {
+            HwDecoder {
+                args: args![
+                    "-hwaccel",
+                    KnownHardwareAccel::Cuda,
+                    "-hwaccel_output_format",
+                    KnownHardwareAccel::Cuda,
+                ],
+                surface: FrameSurface::Cuda,
+                filters: vec![PipelineFilter::Video(HwUploadCudaWorkaround.into())],
+            }
+        }
     }
 }
 

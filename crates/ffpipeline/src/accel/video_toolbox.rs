@@ -2,7 +2,7 @@ use crate::ArgVec;
 use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
-use crate::hw_accel::HwAccel;
+use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
@@ -78,29 +78,25 @@ impl HwAccel for VideoToolbox {
         }
     }
 
-    fn decoder_arg(&self) -> ArgVec {
-        args![
-            "-hwaccel",
-            "videotoolbox",
-            "-hwaccel_output_format",
-            "videotoolbox_vld",
-        ]
-    }
-
-    fn decoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::VideoToolbox
-    }
-
-    fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
-        self.clone()
-    }
-
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
         args!["-init_hw_device", "videotoolbox"]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {
         &KnownHardwareAccel::VideoToolbox
+    }
+
+    fn make_decoder(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> HwDecoder {
+        HwDecoder {
+            args: args![
+                "-hwaccel",
+                "videotoolbox",
+                "-hwaccel_output_format",
+                "videotoolbox_vld",
+            ],
+            surface: FrameSurface::VideoToolbox,
+            filters: Vec::new(),
+        }
     }
 }
 

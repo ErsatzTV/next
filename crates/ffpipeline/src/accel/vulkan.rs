@@ -1,7 +1,7 @@
 use crate::ArgVec;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
-use crate::hw_accel::HwAccel;
+use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
@@ -69,14 +69,6 @@ impl HwAccel for Vulkan {
         }
     }
 
-    fn decoder_arg(&self) -> ArgVec {
-        args!["-hwaccel", "vulkan", "-hwaccel_output_format", "vulkan",]
-    }
-
-    fn decoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::Vulkan
-    }
-
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         Some(
             FormatVulkan {
@@ -86,16 +78,20 @@ impl HwAccel for Vulkan {
         )
     }
 
-    fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
-        self.clone()
-    }
-
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
         args!["-init_hw_device", "vulkan"]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {
         &KnownHardwareAccel::Vulkan
+    }
+
+    fn make_decoder(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> HwDecoder {
+        HwDecoder {
+            args: args!["-hwaccel", "vulkan", "-hwaccel_output_format", "vulkan"],
+            surface: FrameSurface::Vulkan,
+            filters: Vec::new(),
+        }
     }
 }
 

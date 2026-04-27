@@ -48,11 +48,6 @@ pub trait HwAccel {
         format: &VideoFormat,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec>;
-    fn decoder_arg(&self) -> ArgVec;
-    fn decoder_filters(&self) -> Vec<PipelineFilter> {
-        Vec::new()
-    }
-    fn decoder_frame_surface(&self) -> FrameSurface;
     fn envs(&self) -> Vec<(String, String)> {
         Vec::new()
     }
@@ -62,9 +57,9 @@ pub trait HwAccel {
     fn hw_map_filter(&self, _from: &FrameSurface, _to: &FrameSurface) -> Option<VideoFilter> {
         None
     }
-    fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self;
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec;
     fn known_accel(&self) -> &KnownHardwareAccel;
+    fn make_decoder(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> HwDecoder;
     fn output_format(&self, source_pixel_format: &PixelFormat) -> HwPixelFormat {
         match source_pixel_format.bit_depth() {
             10 => HwPixelFormat::P010le,
@@ -85,4 +80,10 @@ pub enum HardwareAccel {
     Vaapi(accel::vaapi::Vaapi),
     VideoToolbox(accel::video_toolbox::VideoToolbox),
     Vulkan(accel::vulkan::Vulkan),
+}
+
+pub struct HwDecoder {
+    pub args: ArgVec,
+    pub filters: Vec<PipelineFilter>,
+    pub surface: FrameSurface,
 }

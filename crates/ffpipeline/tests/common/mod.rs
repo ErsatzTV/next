@@ -38,8 +38,19 @@ pub async fn test_env() -> Option<&'static TestEnv> {
                 .try_init()
                 .ok();
 
+            let disabled_filters: Vec<String> = std::env::var("ETV_TEST_DISABLED_FILTERS")
+                .ok()
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+
             let (ffmpeg, ffprobe) = find_binaries().expect("ffmpeg/ffprobe not found");
-            let ffmpeg_info = load_ffmpeg_info(&ffmpeg).await;
+            let ffmpeg_info = load_ffmpeg_info(&ffmpeg, &disabled_filters).await;
             Some(TestEnv {
                 ffmpeg,
                 ffprobe,
@@ -95,8 +106,8 @@ pub fn find_binaries() -> Option<(PathBuf, PathBuf)> {
     Some((find_ffmpeg()?, find_ffprobe()?))
 }
 
-pub async fn load_ffmpeg_info(ffmpeg: &Path) -> FfmpegInfo {
-    FfmpegInfo::load(ffmpeg, &[], &[])
+pub async fn load_ffmpeg_info(ffmpeg: &Path, disabled_filters: &[String]) -> FfmpegInfo {
+    FfmpegInfo::load(ffmpeg, disabled_filters, &[])
         .await
         .expect("failed to load ffmpeg info")
 }

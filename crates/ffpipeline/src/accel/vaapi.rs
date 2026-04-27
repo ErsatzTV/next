@@ -4,7 +4,7 @@ use crate::capabilities::opencl::OpenCLCapabilities;
 use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
-use crate::hw_accel::HwAccel;
+use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
@@ -165,21 +165,17 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn decoder_arg(&self) -> ArgVec {
-        args![
-            "-hwaccel",
-            KnownHardwareAccel::Vaapi,
-            "-hwaccel_output_format",
-            KnownHardwareAccel::Vaapi,
-        ]
-    }
-
-    fn decoder_frame_surface(&self) -> FrameSurface {
-        FrameSurface::Vaapi
-    }
-
     fn envs(&self) -> Vec<(String, String)> {
         vec![(String::from("LIBVA_DRIVER_NAME"), self.driver.to_string())]
+    }
+
+    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+        Some(
+            FormatVaapi {
+                format: *pixel_format,
+            }
+            .into(),
+        )
     }
 
     fn hw_map_filter(&self, from: &FrameSurface, to: &FrameSurface) -> Option<VideoFilter> {
@@ -204,19 +200,6 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(
-            FormatVaapi {
-                format: *pixel_format,
-            }
-            .into(),
-        )
-    }
-
-    fn initialize(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> Self {
-        self.clone()
-    }
-
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
         if surfaces.contains(&FrameSurface::OpenCL) {
             args![
@@ -234,6 +217,19 @@ impl HwAccel for Vaapi {
 
     fn known_accel(&self) -> &KnownHardwareAccel {
         &KnownHardwareAccel::Vaapi
+    }
+
+    fn make_decoder(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> HwDecoder {
+        HwDecoder {
+            args: args![
+                "-hwaccel",
+                KnownHardwareAccel::Vaapi,
+                "-hwaccel_output_format",
+                KnownHardwareAccel::Vaapi,
+            ],
+            surface: FrameSurface::Vaapi,
+            filters: Vec::new(),
+        }
     }
 
     fn supports_pixel_format(&self, pixel_format: &PixelFormat) -> bool {

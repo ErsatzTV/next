@@ -1,6 +1,7 @@
 use crate::ArgVec;
+use crate::ffmpeg_info::FfmpegInfo;
 use crate::filter_chain::PipelineFilter;
-use crate::hw_accel::{HardwareAccel, HwAccel};
+use crate::hw_accel::{HardwareAccel, HwAccel, HwDecoder};
 use crate::output_settings::OutputSettings;
 use crate::pipeline::{FrameSurface, PixelFormat};
 use crate::probe::ProbeResultVideoStream;
@@ -8,11 +9,15 @@ use crate::probe::ProbeResultVideoStream;
 pub enum VideoDecoder {
     None,
     Software,
-    HardwareAccel { accel: Box<HardwareAccel> },
+    HardwareAccel {
+        accel: Box<HardwareAccel>,
+        decoder: HwDecoder,
+    },
 }
 
 impl VideoDecoder {
     pub(crate) fn new(
+        ffmpeg_info: &FfmpegInfo,
         video_stream: &ProbeResultVideoStream,
         is_still_image: bool,
         output_settings: &OutputSettings,
@@ -32,6 +37,8 @@ impl VideoDecoder {
                 ) {
                     VideoDecoder::HardwareAccel {
                         accel: Box::new(accel.clone()),
+                        decoder: accel
+                            .make_decoder(ffmpeg_info, video_stream.color_params.is_hdr()),
                     }
                 } else {
                     VideoDecoder::Software
@@ -43,7 +50,7 @@ impl VideoDecoder {
 
     pub(crate) fn filters(&self) -> Vec<PipelineFilter> {
         match self {
-            VideoDecoder::HardwareAccel { accel } => accel.decoder_filters(),
+            VideoDecoder::HardwareAccel { decoder, .. } => decoder.filters.clone(),
             _ => Vec::new(),
         }
     }
@@ -52,7 +59,7 @@ impl VideoDecoder {
         match self {
             VideoDecoder::None => FrameSurface::System,
             VideoDecoder::Software => FrameSurface::System,
-            VideoDecoder::HardwareAccel { accel } => accel.decoder_frame_surface(),
+            VideoDecoder::HardwareAccel { decoder, .. } => decoder.surface,
         }
     }
 
@@ -60,7 +67,7 @@ impl VideoDecoder {
         match self {
             VideoDecoder::None => *source_pixel_format,
             VideoDecoder::Software => *source_pixel_format,
-            VideoDecoder::HardwareAccel { accel } => {
+            VideoDecoder::HardwareAccel { accel, .. } => {
                 accel.output_format(source_pixel_format).into()
             }
         }
@@ -70,7 +77,7 @@ impl VideoDecoder {
         match self {
             VideoDecoder::None => Vec::new(),
             VideoDecoder::Software => Vec::new(),
-            VideoDecoder::HardwareAccel { accel } => accel.decoder_arg(),
+            VideoDecoder::HardwareAccel { decoder, .. } => decoder.args.clone(),
         }
     }
 

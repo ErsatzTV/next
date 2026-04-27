@@ -259,10 +259,6 @@ impl Pipeline {
         let audio_stream = Self::select_audio_stream(&input_settings)?;
         let subtitle_stream = Self::select_subtitle_stream(&input_settings);
 
-        final_output_settings.accel = final_output_settings
-            .accel
-            .map(|a| a.initialize(ffmpeg_info, video_stream.color_params.is_hdr()));
-
         // TODO: add target profile to config
         let video_codec = match (
             final_output_settings.accel.as_ref(),
@@ -284,7 +280,12 @@ impl Pipeline {
         let output_path = final_output_settings.format.path();
 
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
-        let video_decoder = VideoDecoder::new(video_stream, is_still_image, &final_output_settings);
+        let video_decoder = VideoDecoder::new(
+            ffmpeg_info,
+            video_stream,
+            is_still_image,
+            &final_output_settings,
+        );
 
         let initial_state = FrameState {
             size: FrameSize {
