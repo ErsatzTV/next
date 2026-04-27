@@ -22,8 +22,7 @@ use crate::probe::{CodecType, ProbeResultAudioStream, ProbeResultStream, ProbeRe
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    DeinterlaceFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
-    ToneMapFilter, VideoFilterOp,
+    DeinterlaceFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, ToneMapFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -69,7 +68,7 @@ pub(crate) struct OutputContext {
     pub(crate) preferred_pixel_format: Option<PixelFormat>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display)]
 pub enum FrameSurface {
     System,
     Cuda,
@@ -93,6 +92,8 @@ impl FrameSurface {
         }
     }
 }
+
+pub type SurfaceSet = std::collections::HashSet<FrameSurface>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -527,10 +528,14 @@ impl Pipeline {
         );
         self.filter_chain.optimize();
 
-        if let Some(accel) = self.needs_hw_device() {
-            self.global_options.push(GlobalOption::InitHwDevice {
-                accel: Box::new(accel),
-            });
+        if let Some(accel) = &self.accel {
+            let mut surfaces = self.filter_chain.surfaces().clone();
+            surfaces.insert(self.initial_state.surface);
+            surfaces.insert(self.output_context.preferred_surface);
+            if surfaces.iter().any(|s| *s != FrameSurface::System) {
+                let args = accel.init_hw_device(&surfaces);
+                self.global_options.push(GlobalOption::InitHwDevice(args));
+            }
         }
     }
 
@@ -782,32 +787,6 @@ impl Pipeline {
                         "unable to locate requested subtitle stream with index {}",
                         subtitle_index
                     );
-                }
-            }
-        }
-
-        None
-    }
-
-    fn needs_hw_device(&self) -> Option<HardwareAccel> {
-        // if we decoded to hw, we need to init hw device
-        if self.initial_state.surface != FrameSurface::System {
-            return self.accel.clone();
-        }
-
-        // if we encode in hw, we need to init hw device
-        if self.output_context.video_codec.preferred_surface != FrameSurface::System {
-            return self.accel.clone();
-        }
-
-        // if any filters are hw filters, we need to init hw device
-        for filter in &self.filter_chain.filters {
-            if let PipelineFilter::Video(video_filter) = filter {
-                match video_filter.required_surface() {
-                    Some(surface) if surface != FrameSurface::System => {
-                        return self.accel.clone();
-                    }
-                    _ => {}
                 }
             }
         }

@@ -4,7 +4,9 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::overlay_filter::OverlayFilter;
-use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat, PixelFormat, VideoFormat};
+use crate::pipeline::{
+    FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
 use crate::{ArgVec, accel};
@@ -61,7 +63,7 @@ pub trait HwAccel {
         None
     }
     fn initialize(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> Self;
-    fn init_hw_device(&self) -> ArgVec;
+    fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec;
     fn known_accel(&self) -> &KnownHardwareAccel;
     fn output_format(&self, source_pixel_format: &PixelFormat) -> HwPixelFormat {
         match source_pixel_format.bit_depth() {

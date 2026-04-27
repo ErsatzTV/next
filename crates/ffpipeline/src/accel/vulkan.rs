@@ -2,7 +2,7 @@ use crate::ArgVec;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
 
@@ -90,7 +90,7 @@ impl HwAccel for Vulkan {
         self.clone()
     }
 
-    fn init_hw_device(&self) -> ArgVec {
+    fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
         args!["-init_hw_device", "vulkan"]
     }
 

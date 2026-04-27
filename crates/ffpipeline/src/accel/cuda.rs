@@ -5,7 +5,7 @@ use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HwAccel;
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
     DeinterlaceFilter, ForceOriginalAspectRatio, PadFilter, ScaleFilter, ToneMapFilter,
@@ -209,9 +209,8 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn init_hw_device(&self) -> ArgVec {
-        log::debug!("init hw device, is_hdr: {}", self.is_vulkan_hdr);
-        if self.is_vulkan_hdr {
+    fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
+        if surfaces.contains(&FrameSurface::Vulkan) {
             args![
                 "-init_hw_device",
                 "cuda=nv",

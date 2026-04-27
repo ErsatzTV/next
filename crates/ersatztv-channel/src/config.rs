@@ -223,7 +223,6 @@ impl HardwareAccel {
                                         driver: vaapi_driver.clone().into(),
                                         capabilities,
                                         opencl_capabilities,
-                                        needs_opencl_device: false,
                                     },
                                 ))
                             }

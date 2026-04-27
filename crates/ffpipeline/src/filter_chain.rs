@@ -3,7 +3,7 @@ use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::overlay_filter::{OverlayFilter, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
+use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
 };
@@ -18,6 +18,7 @@ pub enum PipelineFilter {
 #[derive(Clone)]
 pub(crate) struct FilterChain {
     pub(crate) filters: Vec<PipelineFilter>,
+    surfaces: SurfaceSet,
     audio_label: String,
     video_label: String,
     complex_filter: String,
@@ -27,6 +28,7 @@ impl FilterChain {
     pub(crate) fn new(filters: Vec<PipelineFilter>) -> FilterChain {
         FilterChain {
             filters,
+            surfaces: SurfaceSet::new(),
             audio_label: String::new(),
             video_label: String::new(),
             complex_filter: String::new(),
@@ -96,6 +98,7 @@ impl FilterChain {
     ) {
         let mut resolved = Vec::new();
         let mut current_state = initial_state.clone();
+        let mut surfaces = SurfaceSet::new();
 
         for filter in &self.filters {
             match filter {
@@ -107,18 +110,20 @@ impl FilterChain {
 
                     if let Some(required) = best.required_surface()
                         && current_state.surface != required
-                        && !self.transfer_surface(
+                        && !Self::transfer_surface(
                             accel,
                             &mut resolved,
                             &mut current_state,
                             required,
                             encoder_pixel_format,
+                            &mut surfaces,
                         )
                     {
                         best = video_filter.clone();
                     }
 
                     best.apply_to(&mut current_state);
+                    surfaces.insert(current_state.surface);
                     resolved.push(PipelineFilter::Video(best));
                 }
                 PipelineFilter::Audio(_) => {
@@ -136,12 +141,13 @@ impl FilterChain {
                     // ensure main input matches overlay required surface
                     let main_req = best.kind.main_input_state(&current_state);
                     if current_state.surface != main_req.surface {
-                        self.transfer_surface(
+                        Self::transfer_surface(
                             accel,
                             &mut resolved,
                             &mut current_state,
                             main_req.surface,
                             encoder_pixel_format,
+                            &mut surfaces,
                         );
                     }
 
@@ -189,7 +195,11 @@ impl FilterChain {
                         })
                         .collect();
 
+                    // track all secondary surfaces
+                    surfaces.extend(sec.surfaces.iter().copied());
+
                     best.kind.apply_to(&mut current_state);
+                    surfaces.insert(current_state.surface);
                     resolved.push(PipelineFilter::Overlay(best));
                 }
             }
@@ -202,12 +212,13 @@ impl FilterChain {
                 *encoder_surface
             );
 
-            if !self.transfer_surface(
+            if !Self::transfer_surface(
                 accel,
                 &mut resolved,
                 &mut current_state,
                 *encoder_surface,
                 encoder_pixel_format,
+                &mut surfaces,
             ) {
                 log::error!("failed to transfer surface to encoder");
             }
@@ -220,15 +231,20 @@ impl FilterChain {
         }
 
         self.filters = resolved;
+        self.surfaces = surfaces;
+    }
+
+    pub(crate) fn surfaces(&self) -> &SurfaceSet {
+        &self.surfaces
     }
 
     fn transfer_surface(
-        &self,
         accel: &Option<HardwareAccel>,
         resolved: &mut Vec<PipelineFilter>,
         current_state: &mut FrameState,
         required: FrameSurface,
         encoder_pixel_format: &Option<PixelFormat>,
+        surfaces: &mut SurfaceSet,
     ) -> bool {
         log::trace!(
             "Determining surface transfer. State: {}, accel: {:?}, required surface: {}",
@@ -248,6 +264,7 @@ impl FilterChain {
             }
             .into();
             download.apply_to(current_state);
+            surfaces.insert(current_state.surface);
             resolved.push(PipelineFilter::Video(download));
             return true;
         }
@@ -268,6 +285,7 @@ impl FilterChain {
                 }
                 .into();
                 upload.apply_to(current_state);
+                surfaces.insert(current_state.surface);
                 resolved.push(PipelineFilter::Video(upload));
                 return true;
             } else if current_state.pixel_format.bit_depth() == 10
@@ -288,6 +306,7 @@ impl FilterChain {
                 }
                 .into();
                 upload.apply_to(current_state);
+                surfaces.insert(current_state.surface);
                 resolved.push(PipelineFilter::Video(upload));
                 return true;
             } else {
@@ -302,6 +321,7 @@ impl FilterChain {
             .and_then(|a| a.hw_map_filter(&current_state.surface, &required))
         {
             map.apply_to(current_state);
+            surfaces.insert(current_state.surface);
             resolved.push(PipelineFilter::Video(map));
             return true;
         }
@@ -523,7 +543,6 @@ mod tests {
                 can_hdr_to_hdr_tonemap: HashSet::new(),
             },
             opencl_capabilities: OpenCLCapabilities::default(),
-            needs_opencl_device: true,
         })
     }
 
@@ -555,7 +574,6 @@ mod tests {
                 platform_count: if opencl { 1 } else { 0 },
                 gpu_device_count: if opencl { 1 } else { 0 },
             },
-            needs_opencl_device: false,
         }
     }
 

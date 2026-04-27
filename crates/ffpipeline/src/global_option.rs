@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::hw_accel::{HardwareAccel, HwAccel};
+use crate::ArgVec;
 
 pub enum LogLevel {
     Error,
@@ -20,7 +20,7 @@ pub enum GlobalOption {
     HideBanner,
     LogLevel(LogLevel),
     StandardFormatFlags,
-    InitHwDevice { accel: Box<HardwareAccel> },
+    InitHwDevice(ArgVec),
 }
 
 impl GlobalOption {
@@ -31,7 +31,7 @@ impl GlobalOption {
             GlobalOption::HideBanner => args!["-hide_banner"],
             GlobalOption::LogLevel(level) => level.as_arg(),
             GlobalOption::StandardFormatFlags => args!["-fflags", "+genpts+discardcorrupt+igndts",],
-            GlobalOption::InitHwDevice { accel } => accel.init_hw_device(),
+            GlobalOption::InitHwDevice(args) => args.clone(),
         }
     }
 }
