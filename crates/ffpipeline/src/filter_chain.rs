@@ -527,7 +527,12 @@ mod tests {
         })
     }
 
-    fn vaapi_accel_with_tonemap(driver: VaapiDriver, hdr_to_sdr: bool, hdr_to_hdr: bool) -> Vaapi {
+    fn vaapi_accel_with_tonemap(
+        driver: VaapiDriver,
+        hdr_to_sdr: bool,
+        hdr_to_hdr: bool,
+        opencl: bool,
+    ) -> Vaapi {
         let mut can_hdr_to_sdr_tonemap = HashSet::new();
         let mut can_hdr_to_hdr_tonemap = HashSet::new();
         if hdr_to_sdr {
@@ -546,7 +551,10 @@ mod tests {
                 can_hdr_to_sdr_tonemap,
                 can_hdr_to_hdr_tonemap,
             },
-            opencl_capabilities: OpenCLCapabilities::default(),
+            opencl_capabilities: OpenCLCapabilities {
+                platform_count: if opencl { 1 } else { 0 },
+                gpu_device_count: if opencl { 1 } else { 0 },
+            },
             needs_opencl_device: false,
         }
     }
@@ -730,7 +738,7 @@ mod tests {
 
     #[test]
     fn best_filter_selects_tonemap_vaapi_for_hdr_to_sdr_when_capable() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
 
@@ -755,7 +763,7 @@ mod tests {
 
     #[test]
     fn best_filter_selects_tonemap_vaapi_for_hdr_to_hdr_when_capable() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, true);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, true, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
 
@@ -780,7 +788,7 @@ mod tests {
 
     #[test]
     fn best_filter_falls_back_to_software_tonemap_without_vaapi_capability() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, false);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, false, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
 
@@ -799,8 +807,8 @@ mod tests {
     }
 
     #[test]
-    fn best_filter_prefers_opencl_over_vaapi_on_ihd() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false);
+    fn best_filter_prefers_opencl_over_vaapi_when_available() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false, true);
         let ffmpeg_info = ffmpeg_info_with_filters(&[
             KnownVideoFilter::TonemapOpencl,
             KnownVideoFilter::TonemapVaapi,
@@ -822,8 +830,8 @@ mod tests {
     }
 
     #[test]
-    fn best_filter_uses_vaapi_tonemap_on_ihd_when_opencl_unavailable() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false);
+    fn best_filter_uses_vaapi_tonemap_when_opencl_unavailable() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
 
@@ -843,7 +851,7 @@ mod tests {
 
     #[test]
     fn best_filter_falls_back_to_software_when_no_hw_tonemap_filter() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[]);
         let state = hdr_vaapi_state();
 
@@ -863,7 +871,7 @@ mod tests {
 
     #[test]
     fn best_filter_falls_back_for_non_p010le_input() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
 
         let mut state = hdr_vaapi_state();
@@ -885,7 +893,7 @@ mod tests {
 
     #[test]
     fn resolve_tonemap_vaapi_does_not_insert_hwmap() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false, false);
         let accel = HardwareAccel::Vaapi(vaapi);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let initial_state = hdr_vaapi_state();
@@ -931,7 +939,7 @@ mod tests {
 
     #[test]
     fn resolve_and_build_produces_correct_filter_complex_for_vaapi_tonemap() {
-        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false);
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false, false);
         let accel = HardwareAccel::Vaapi(vaapi);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let initial_state = hdr_vaapi_state();
