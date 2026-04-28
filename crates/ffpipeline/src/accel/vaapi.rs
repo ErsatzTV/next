@@ -244,6 +244,8 @@ impl HwAccel for Vaapi {
                 "-init_hw_device",
                 "opencl=ocl@va",
                 "-hwaccel_device",
+                "va",
+                "-filter_hw_device",
                 "va"
             ]
         } else {
