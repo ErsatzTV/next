@@ -141,6 +141,16 @@ impl FfmpegInfo {
             .min_by_key(|f| self.preference_position(f))
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn escape_path(path: &str) -> String {
+        path.replace("\\", "/\\").to_owned()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn escape_path(path: &str) -> String {
+        path.to_owned()
+    }
+
     /// Returns the preference index for the video filter. If the filter is not known, or does not
     /// exist in the preference list, returns `usize::MAX`.
     fn preference_position(&self, filter: &KnownVideoFilter) -> usize {

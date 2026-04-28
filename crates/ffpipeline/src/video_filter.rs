@@ -457,14 +457,16 @@ impl VideoFilterOp for SubtitlesFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
+        let escaped_path = FfmpegInfo::escape_path(&self.path);
+
         if self.seek > Duration::ZERO {
             Some(format!(
                 "setpts=PTS+{}/TB,subtitles={},setpts=PTS-STARTPTS",
                 self.seek.as_secs_f64(),
-                self.path,
+                escaped_path,
             ))
         } else {
-            Some(format!("subtitles={}", self.path))
+            Some(format!("subtitles={}", escaped_path))
         }
     }
 }
