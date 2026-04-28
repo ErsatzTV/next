@@ -163,7 +163,7 @@ async fn deinterlace_anamorphic(
             expected_video_size: res,
             expected_audio_codec: af.to_string(),
         })
-            .await;
+        .await;
     }
 }
 
