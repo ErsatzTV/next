@@ -143,7 +143,7 @@ impl FfmpegInfo {
 
     #[cfg(target_os = "windows")]
     pub fn escape_path(path: &str) -> String {
-        path.replace("\\", "/\\").to_owned()
+        path.replace(r"\", r"/\").replace(r":/", r"\\:/").to_owned()
     }
 
     #[cfg(not(target_os = "windows"))]
