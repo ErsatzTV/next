@@ -112,6 +112,7 @@ impl VaapiCapabilities {
         let mut vpp_pixel_formats = HashSet::new();
         let mut can_hdr_to_hdr_tonemap: HashSet<u32> = HashSet::new();
         let mut can_hdr_to_sdr_tonemap: HashSet<u32> = HashSet::new();
+        let mut can_overlay: Option<bool> = None;
 
         if supported.contains(&(VA_PROFILE_NONE, VA_ENTRYPOINT_VIDEO_PROC)) {
             let mut config_id: VAConfigID = 0;
@@ -214,6 +215,27 @@ impl VaapiCapabilities {
                     };
 
                     if status == VA_STATUS_SUCCESS {
+                        if can_overlay.is_none() {
+                            log::trace!("querying VAAPI proc pipeline capabilities");
+
+                            let mut proc_caps = unsafe { std::mem::zeroed::<VAProcPipelineCaps>() };
+
+                            let status = unsafe {
+                                (va.vaQueryVideoProcPipelineCaps)(
+                                    display,
+                                    ctx_id,
+                                    std::ptr::null_mut(),
+                                    0,
+                                    &mut proc_caps,
+                                )
+                            };
+
+                            if status == VA_STATUS_SUCCESS {
+                                can_overlay = Some(proc_caps.blend_flags > 0);
+                                log::trace!("can_overlay: {can_overlay:?}");
+                            }
+                        }
+
                         let mut num_filter_caps: c_uint = 2;
                         let mut filter_caps: Vec<VAProcFilterCapHighDynamicRange> = unsafe {
                             vec![
@@ -293,6 +315,7 @@ impl VaapiCapabilities {
             vpp_pixel_formats,
             can_hdr_to_hdr_tonemap,
             can_hdr_to_sdr_tonemap,
+            can_overlay: can_overlay.unwrap_or_default(),
         })
     }
 

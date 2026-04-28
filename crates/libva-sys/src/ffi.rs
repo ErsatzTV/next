@@ -6,7 +6,7 @@ use libloading::Library;
 
 use crate::{
     VAConfigID, VAContextID, VADisplay, VAEntrypoint, VAProcFilterCapHighDynamicRange,
-    VAProcFilterType, VAProfile, VAStatus, VASurfaceAttrib, VASurfaceID,
+    VAProcFilterType, VAProcPipelineCaps, VAProfile, VAStatus, VASurfaceAttrib, VASurfaceID,
 };
 
 pub struct VaLib {
@@ -51,6 +51,13 @@ pub struct VaLib {
         filter_caps: *mut VAProcFilterCapHighDynamicRange,
         num_filter_caps: *mut c_uint,
     ) -> VAStatus,
+    pub vaQueryVideoProcPipelineCaps: unsafe extern "C" fn(
+        dpy: VADisplay,
+        ctx_id: VAContextID,
+        filters: *mut c_uint,
+        num_filters: c_uint,
+        pipeline_caps: *mut VAProcPipelineCaps,
+    ) -> VAStatus,
     pub vaCreateSurfaces: unsafe extern "C" fn(
         dpy: VADisplay,
         format: c_uint,
@@ -87,6 +94,7 @@ impl VaLib {
             let vaCreateContext = *lib.get(b"vaCreateContext\0")?;
             let vaDestroyContext = *lib.get(b"vaDestroyContext\0")?;
             let vaQueryVideoProcFilterCaps = *lib.get(b"vaQueryVideoProcFilterCaps\0")?;
+            let vaQueryVideoProcPipelineCaps = *lib.get(b"vaQueryVideoProcPipelineCaps\0")?;
             let vaCreateSurfaces = *lib.get(b"vaCreateSurfaces\0")?;
             let vaDestroySurfaces = *lib.get(b"vaDestroySurfaces\0")?;
             let vaErrorStr = *lib.get(b"vaErrorStr\0")?;
@@ -108,6 +116,7 @@ impl VaLib {
                 vaCreateContext,
                 vaDestroyContext,
                 vaQueryVideoProcFilterCaps,
+                vaQueryVideoProcPipelineCaps,
                 vaCreateSurfaces,
                 vaDestroySurfaces,
                 vaErrorStr,

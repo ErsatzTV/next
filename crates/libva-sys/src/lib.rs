@@ -12,6 +12,7 @@ pub type VASurfaceID = c_uint;
 pub type VAContextID = c_uint;
 // https://intel.github.io/libva/group__api__vpp.html#ga3614dbee76b8ac89dd5a3dc8b1a12bb7
 pub type VAProcFilterType = c_int;
+pub type VAProcColorStandardType = c_int;
 
 pub const VA_PROFILE_NONE: VAProfile = -1;
 pub const VA_PROFILE_MPEG2_SIMPLE: VAProfile = 0;
@@ -119,6 +120,36 @@ pub struct VAProcFilterCapHighDynamicRange {
     pub metadata_type: VAProcHighDynamicRangeMetadataType,
     pub caps_flag: c_ushort,
     va_reserved: [c_ushort; 16],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VAProcPipelineCaps {
+    pub pipeline_flags: c_uint,
+    pub filter_flags: c_uint,
+    pub num_forward_references: c_uint,
+    pub num_backward_references: c_uint,
+    pub input_color_standards: *mut VAProcColorStandardType,
+    pub num_input_color_standards: c_uint,
+    pub output_color_standards: *mut VAProcColorStandardType,
+    pub num_output_color_standards: c_uint,
+    pub rotation_flags: c_uint,
+    pub blend_flags: c_uint,
+    pub mirror_flags: c_uint,
+    pub num_additional_outputs: c_uint,
+    pub num_input_pixel_formats: c_uint,
+    pub input_pixel_format: *mut c_uint,
+    pub num_output_pixel_formats: c_uint,
+    pub output_pixel_format: *mut c_uint,
+    pub max_input_width: c_uint,
+    pub max_input_height: c_uint,
+    pub min_input_width: c_uint,
+    pub min_input_height: c_uint,
+    pub max_output_width: c_uint,
+    pub max_output_height: c_uint,
+    pub min_output_width: c_uint,
+    pub min_output_height: c_uint,
+    pub va_reserved: [c_uint; 16 - 2],
 }
 
 #[cfg(target_os = "linux")]

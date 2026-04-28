@@ -112,6 +112,7 @@ impl HwAccel for Vaapi {
         match overlay_filter.kind {
             OverlayKind::Software(_)
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::OverlayVaapi)
+                    && self.capabilities.can_overlay
                     && self.capabilities.vpp_supports_format(&PixelFormat::Bgra) =>
             {
                 OverlayFilter {
