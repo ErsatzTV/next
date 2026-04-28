@@ -441,7 +441,6 @@ impl Pipeline {
                     secondary_initial_state,
                 }));
             } else if !subtitle_stream.is_subtitle_image() {
-                //log::warn!("text subtitles are currently unsupported");
                 filters.push(PipelineFilter::Video(
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),

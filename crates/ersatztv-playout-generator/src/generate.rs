@@ -145,9 +145,9 @@ pub async fn generate_playout(
                 && playout_item.tracks.is_none()
                 && let (Some(parent), Some(stem)) =
                     (path.parent(), path.file_stem().and_then(|s| s.to_str()))
-                && let Ok(entries) = std::fs::read_dir(parent)
+                && let Ok(mut entries) = tokio::fs::read_dir(parent).await
             {
-                for entry in entries.flatten() {
+                while let Ok(Some(entry)) = entries.next_entry().await {
                     let entry_path = entry.path();
 
                     if entry_path.is_file()
@@ -169,7 +169,8 @@ pub async fn generate_playout(
                                 }),
                                 stream_index: None,
                             }),
-                        })
+                        });
+                        break;
                     }
                 }
             }
