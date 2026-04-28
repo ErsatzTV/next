@@ -1,6 +1,7 @@
 use enum_dispatch::enum_dispatch;
 
 use crate::accel::cuda::CudaOverlay;
+use crate::accel::qsv::QsvOverlay;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 use crate::video_filter::VideoFilter;
 
@@ -16,6 +17,7 @@ pub struct OverlayFilter {
 pub enum OverlayKind {
     Software(SoftwareOverlay),
     Cuda(CudaOverlay),
+    Qsv(QsvOverlay),
 }
 
 #[derive(Clone)]

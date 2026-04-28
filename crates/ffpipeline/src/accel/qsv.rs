@@ -3,6 +3,7 @@ use crate::capabilities::qsv::QsvCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
+use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{DeinterlaceFilter, ScaleFilter, VideoFilter, VideoFilterOp};
@@ -35,6 +36,26 @@ impl HwAccel for Qsv {
                 DeinterlaceQsv.into()
             }
             _ => video_filter.clone(),
+        }
+    }
+
+    fn best_overlay(
+        &self,
+        overlay_filter: &OverlayFilter,
+        ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> OverlayFilter {
+        match overlay_filter.kind {
+            // overlay_cuda only supports 8-bit content
+            OverlayKind::Software(_)
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::OverlayQsv) =>
+            {
+                OverlayFilter {
+                    kind: OverlayKind::Qsv(QsvOverlay),
+                    ..overlay_filter.clone()
+                }
+            }
+            _ => overlay_filter.clone(),
         }
     }
 
@@ -198,5 +219,35 @@ impl VideoFilterOp for DeinterlaceQsv {
 
     fn as_arg(&self) -> Option<String> {
         Some(String::from("deinterlace_qsv"))
+    }
+}
+
+#[derive(Clone)]
+pub struct QsvOverlay;
+
+impl OverlayKindOp for QsvOverlay {
+    fn apply_to(&self, state: &mut FrameState) {
+        //state.pixel_format = PixelFormat::Nv12;
+        state.surface = FrameSurface::Qsv;
+    }
+
+    fn main_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            //pixel_format: PixelFormat::Yuv420p,
+            surface: FrameSurface::Qsv,
+            ..current_state.clone()
+        }
+    }
+
+    fn secondary_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            //pixel_format: PixelFormat::Yuva420p,
+            surface: FrameSurface::Qsv,
+            ..current_state.clone()
+        }
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("overlay_qsv=x=(W-w)/2:y=(H-h)/2"))
     }
 }
