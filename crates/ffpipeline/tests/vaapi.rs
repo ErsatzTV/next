@@ -139,6 +139,34 @@ async fn tonemap(
     }
 }
 
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn deinterlace_anamorphic(
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+    #[values("aac", "ac3")] af: AudioFormat,
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: "480p_h264_anamorphic.ts",
+            params: TestOutputParams {
+                audio_format: Some(af),
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                deinterlace: true,
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: af.to_string(),
+        })
+            .await;
+    }
+}
+
 /// Tests pad with a 4:3 source -> 16:9 target, which forces pad_vaapi or pad_opencl.
 #[rstest]
 #[tokio::test]

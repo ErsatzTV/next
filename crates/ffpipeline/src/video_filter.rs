@@ -59,6 +59,7 @@ pub enum VideoFilter {
     LibplaceboCuda(accel::cuda::LibplaceboCuda),
     DeinterlaceCuda(accel::cuda::DeinterlaceCuda),
     // VAAPI hardware filters
+    DeinterlaceVaapi(accel::vaapi::DeinterlaceVaapi),
     ScaleVaapi(accel::vaapi::ScaleVaapi),
     PadVaapi(accel::vaapi::PadVaapi),
     FormatVaapi(accel::vaapi::FormatVaapi),

@@ -11,8 +11,8 @@ use crate::pipeline::{
 };
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter,
-    VideoFilterOp,
+    DeinterlaceFilter, ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter,
+    ToneMapFilter, VideoFilter, VideoFilterOp,
 };
 
 #[derive(Debug, Clone, PartialEq, strum::Display)]
@@ -69,6 +69,19 @@ impl HwAccel for Vaapi {
                 } else {
                     video_filter.clone()
                 }
+            }
+
+            VideoFilter::Deinterlace(DeinterlaceFilter {
+                input_is_interlaced,
+                ..
+            }) if *input_is_interlaced
+                && ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceVaapi) =>
+            {
+                // TODO: Offer customization here?
+                DeinterlaceVaapi {
+                    mode: DeinterlaceVaapiMode::Default,
+                }
+                .into()
             }
 
             VideoFilter::ToneMap(ToneMapFilter {
@@ -430,5 +443,205 @@ impl OverlayKindOp for VaapiOverlay {
 
     fn as_arg(&self) -> Option<String> {
         Some(String::from("overlay_vaapi=x=(W-w)/2:y=(H-h)/2"))
+    }
+}
+
+#[derive(Clone, Copy, strum::EnumString, strum::Display)]
+pub enum DeinterlaceVaapiMode {
+    Default = 0,
+    Bob = 1,
+    Weave = 2,
+    MotionAdaptive = 3,
+    MotionCompensated = 4,
+}
+
+#[derive(Clone, Copy)]
+pub struct DeinterlaceVaapi {
+    pub mode: DeinterlaceVaapiMode,
+}
+
+impl VideoFilterOp for DeinterlaceVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.is_interlaced = false;
+        state.surface = FrameSurface::Vaapi;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        let mode_str = match self.mode {
+            DeinterlaceVaapiMode::Default => String::from(""),
+            mode => format!("=mode={}", mode),
+        };
+        Some(format!("deinterlace_vaapi{}", mode_str))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+    use crate::ffmpeg_info::FfmpegInfo;
+    use crate::frame_size::FrameSize;
+    use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
+    use crate::video_filter::{DeinterlaceFilter, SoftwareDeinterlaceFilter};
+
+    fn make_ffmpeg_info(filters: &[KnownVideoFilter]) -> FfmpegInfo {
+        let mut video_filters = HashSet::new();
+        for f in filters {
+            video_filters.insert(f.to_string());
+        }
+        FfmpegInfo {
+            hwaccels: HashSet::new(),
+            video_filters,
+            preferred_filters: HashMap::new(),
+        }
+    }
+
+    fn make_vaapi() -> Vaapi {
+        Vaapi {
+            device: String::from("/dev/dri/renderD128"),
+            driver: VaapiDriver::Ihd,
+            capabilities: VaapiCapabilities {
+                vendor: String::from("test"),
+                supported: HashSet::new(),
+                vpp_pixel_formats: HashSet::new(),
+                can_hdr_to_sdr_tonemap: HashSet::new(),
+                can_hdr_to_hdr_tonemap: HashSet::new(),
+                can_overlay: false,
+            },
+            opencl_capabilities: OpenCLCapabilities {
+                platform_count: 0,
+                gpu_device_count: 0,
+            },
+        }
+    }
+
+    fn make_frame_state() -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::Vaapi,
+            pixel_format: PixelFormat::Nv12,
+            is_hdr: false,
+        }
+    }
+
+    #[test]
+    fn best_filter_deinterlace_vaapi_for_interlaced_anamorphic_content() {
+        let vaapi = make_vaapi();
+        let ffmpeg_info = make_ffmpeg_info(&[KnownVideoFilter::DeinterlaceVaapi]);
+        let state = FrameState {
+            is_anamorphic: true,
+            is_interlaced: true,
+            sample_aspect_ratio: Some(String::from("32:27")),
+            display_aspect_ratio: Some(String::from("16:9")),
+            size: FrameSize {
+                width: 1440,
+                height: 1080,
+            },
+            ..make_frame_state()
+        };
+
+        let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
+            filter: SoftwareDeinterlaceFilter::Yadif,
+            input_is_interlaced: true,
+        });
+
+        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state);
+
+        assert!(
+            matches!(
+                &result,
+                VideoFilter::DeinterlaceVaapi(DeinterlaceVaapi {
+                    mode: DeinterlaceVaapiMode::Default
+                })
+            ),
+            "expected DeinterlaceVaapi with Default mode, got {:?}",
+            result.as_arg()
+        );
+        assert_eq!(result.as_arg(), Some(String::from("deinterlace_vaapi")));
+    }
+
+    #[test]
+    fn deinterlace_vaapi_apply_to_clears_interlaced_keeps_anamorphic() {
+        let mut state = FrameState {
+            is_anamorphic: true,
+            is_interlaced: true,
+            sample_aspect_ratio: Some(String::from("32:27")),
+            display_aspect_ratio: Some(String::from("16:9")),
+            size: FrameSize {
+                width: 1440,
+                height: 1080,
+            },
+            ..make_frame_state()
+        };
+
+        let filter = DeinterlaceVaapi {
+            mode: DeinterlaceVaapiMode::Default,
+        };
+        filter.apply_to(&mut state);
+
+        assert!(!state.is_interlaced);
+        assert!(state.is_anamorphic);
+        assert_eq!(state.surface, FrameSurface::Vaapi);
+        assert_eq!(state.sample_aspect_ratio, Some(String::from("32:27")));
+    }
+
+    #[test]
+    fn best_filter_falls_back_when_deinterlace_vaapi_unavailable() {
+        let vaapi = make_vaapi();
+        let ffmpeg_info = make_ffmpeg_info(&[]);
+        let state = FrameState {
+            is_anamorphic: true,
+            is_interlaced: true,
+            ..make_frame_state()
+        };
+
+        let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
+            filter: SoftwareDeinterlaceFilter::Yadif,
+            input_is_interlaced: true,
+        });
+
+        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state);
+
+        assert!(
+            matches!(&result, VideoFilter::Deinterlace(_)),
+            "expected software Deinterlace fallback, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_skips_deinterlace_vaapi_when_not_interlaced() {
+        let vaapi = make_vaapi();
+        let ffmpeg_info = make_ffmpeg_info(&[KnownVideoFilter::DeinterlaceVaapi]);
+        let state = make_frame_state();
+
+        let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
+            filter: SoftwareDeinterlaceFilter::Yadif,
+            input_is_interlaced: false,
+        });
+
+        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state);
+
+        assert!(
+            matches!(&result, VideoFilter::Deinterlace(_)),
+            "expected software Deinterlace (not promoted), got {:?}",
+            result.as_arg()
+        );
     }
 }
