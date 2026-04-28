@@ -5,6 +5,7 @@ use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
+use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
@@ -44,12 +45,16 @@ impl HwAccel for Vaapi {
                 size,
                 input_is_anamorphic,
                 force_original_aspect_ratio,
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi) => ScaleVaapi {
-                size: *size,
-                input_is_anamorphic: *input_is_anamorphic,
-                force_original_aspect_ratio: force_original_aspect_ratio.clone(),
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi)
+                && !current_state.pixel_format.has_alpha() =>
+            {
+                ScaleVaapi {
+                    size: *size,
+                    input_is_anamorphic: *input_is_anamorphic,
+                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
+                }
+                .into()
             }
-            .into(),
             VideoFilter::Pad(PadFilter { size })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadVaapi) =>
             {
@@ -95,6 +100,26 @@ impl HwAccel for Vaapi {
             }
 
             _ => video_filter.clone(),
+        }
+    }
+
+    fn best_overlay(
+        &self,
+        overlay_filter: &OverlayFilter,
+        ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+    ) -> OverlayFilter {
+        match overlay_filter.kind {
+            OverlayKind::Software(_)
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::OverlayVaapi)
+                    && self.capabilities.vpp_supports_format(&PixelFormat::Bgra) =>
+            {
+                OverlayFilter {
+                    kind: OverlayKind::Vaapi(VaapiOverlay),
+                    ..overlay_filter.clone()
+                }
+            }
+            _ => overlay_filter.clone(),
         }
     }
 
@@ -364,5 +389,33 @@ impl VideoFilterOp for TonemapVaapi {
             self.output_format.as_arg()
         )
         .into()
+    }
+}
+
+#[derive(Clone)]
+pub struct VaapiOverlay;
+
+impl OverlayKindOp for VaapiOverlay {
+    fn apply_to(&self, state: &mut FrameState) {
+        state.surface = FrameSurface::Vaapi;
+    }
+
+    fn main_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            surface: FrameSurface::Vaapi,
+            ..current_state.clone()
+        }
+    }
+
+    fn secondary_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            pixel_format: PixelFormat::Bgra,
+            surface: FrameSurface::Vaapi,
+            ..current_state.clone()
+        }
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("overlay_vaapi=x=(W-w)/2:y=(H-h)/2"))
     }
 }

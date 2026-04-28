@@ -112,6 +112,7 @@ impl VideoFilterOp for HwUploadFilter {
         ) {
             (_, 10, _) => PixelFormat::P010le,
             (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
+            (FrameSurface::Vaapi, 8, true) => PixelFormat::Bgra,
             _ => PixelFormat::Nv12,
         };
 

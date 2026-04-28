@@ -54,6 +54,8 @@ pub enum KnownVideoFilter {
     LibPlacebo,
     #[strum(serialize = "overlay_cuda")]
     OverlayCuda,
+    #[strum(serialize = "overlay_vaapi")]
+    OverlayVaapi,
     #[strum(serialize = "pad_cuda")]
     PadCuda,
     #[strum(serialize = "pad_vaapi")]

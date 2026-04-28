@@ -45,6 +45,7 @@ pub const VA_SURFACE_ATTRIB_GETTABLE: c_int = 0x00000001;
 
 pub const VA_FOURCC_NV12: u32 = 0x3231564E; // 'N', 'V', '1', '2'
 pub const VA_FOURCC_P010: u32 = 0x30313050; // 'P', '0', '1', '0'
+pub const VA_FOURCC_BGRA: u32 = 0x41524742;
 
 pub const VA_RT_FORMAT_YUV420: c_uint = 0x00000001;
 pub const VA_RT_FORMAT_YUV420_10: c_uint = 0x00000100;
