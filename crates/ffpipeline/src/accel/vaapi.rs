@@ -1,5 +1,5 @@
 use crate::ArgVec;
-use crate::accel::opencl::TonemapOpencl;
+use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
 use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
@@ -55,10 +55,20 @@ impl HwAccel for Vaapi {
                 }
                 .into()
             }
-            VideoFilter::Pad(PadFilter { size })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadVaapi) =>
-            {
-                PadVaapi { size: *size }.into()
+            VideoFilter::Pad(PadFilter { size }) => {
+                let mut pad_options = vec![KnownVideoFilter::PadVaapi];
+                if self.opencl_capabilities.can_pad() {
+                    pad_options.push(KnownVideoFilter::PadOpencl);
+                }
+                if let Some(hw_filter) = ffmpeg_info.find_best_fit(pad_options.as_slice()) {
+                    match hw_filter {
+                        KnownVideoFilter::PadVaapi => PadVaapi { size: *size }.into(),
+                        KnownVideoFilter::PadOpencl => PadOpencl { size: *size }.into(),
+                        _ => video_filter.clone(),
+                    }
+                } else {
+                    video_filter.clone()
+                }
             }
 
             VideoFilter::ToneMap(ToneMapFilter {

@@ -64,6 +64,7 @@ pub enum VideoFilter {
     FormatVaapi(accel::vaapi::FormatVaapi),
     TonemapVaapi(accel::vaapi::TonemapVaapi),
     // OpenCL hardware filters
+    PadOpencl(accel::opencl::PadOpencl),
     TonemapOpencl(accel::opencl::TonemapOpencl),
     // QSV hardware filters
     ScaleQsv(accel::qsv::ScaleQsv),

@@ -521,15 +521,15 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::*;
-    use crate::accel::opencl::TonemapOpencl;
-    use crate::accel::vaapi::{TonemapVaapi, Vaapi, VaapiDriver};
+    use crate::accel::opencl::{PadOpencl, TonemapOpencl};
+    use crate::accel::vaapi::{PadVaapi, TonemapVaapi, Vaapi, VaapiDriver};
     use crate::capabilities::opencl::OpenCLCapabilities;
     use crate::capabilities::vaapi::VaapiCapabilities;
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
     use crate::pipeline::HwPixelFormat;
-    use crate::video_filter::{HwMapFilter, ToneMapFilter};
+    use crate::video_filter::{HwMapFilter, PadFilter, ToneMapFilter};
 
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
@@ -992,6 +992,300 @@ mod tests {
         assert!(
             !filter_complex.contains("hwmap"),
             "filter_complex should not contain hwmap for vaapi tonemap: {filter_complex}"
+        );
+    }
+
+    // -- pad best_filter tests --
+
+    fn vaapi_accel_with_opencl(opencl: bool) -> Vaapi {
+        Vaapi {
+            device: String::from("/dev/dri/renderD128"),
+            driver: VaapiDriver::Ihd,
+            capabilities: VaapiCapabilities {
+                vendor: String::from("test"),
+                supported: HashSet::new(),
+                vpp_pixel_formats: HashSet::new(),
+                can_hdr_to_sdr_tonemap: HashSet::new(),
+                can_hdr_to_hdr_tonemap: HashSet::new(),
+                can_overlay: false,
+            },
+            opencl_capabilities: OpenCLCapabilities {
+                platform_count: if opencl { 1 } else { 0 },
+                gpu_device_count: if opencl { 1 } else { 0 },
+            },
+        }
+    }
+
+    fn sdr_vaapi_state() -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1280,
+                height: 720,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::Vaapi,
+            pixel_format: PixelFormat::Nv12,
+            is_hdr: false,
+        }
+    }
+
+    #[test]
+    fn best_filter_selects_pad_vaapi_when_available() {
+        let vaapi = vaapi_accel_with_opencl(true);
+        let ffmpeg_info =
+            ffmpeg_info_with_filters(&[KnownVideoFilter::PadVaapi, KnownVideoFilter::PadOpencl]);
+        let state = sdr_vaapi_state();
+
+        let input: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::PadVaapi(PadVaapi { .. })),
+            "expected PadVaapi when both pad_vaapi and pad_opencl available, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_selects_pad_opencl_when_pad_vaapi_unavailable() {
+        let vaapi = vaapi_accel_with_opencl(true);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
+        let state = sdr_vaapi_state();
+
+        let input: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::PadOpencl(PadOpencl { .. })),
+            "expected PadOpencl when pad_vaapi unavailable, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_falls_back_to_software_pad_without_hw_filters() {
+        let vaapi = vaapi_accel_with_opencl(false);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[]);
+        let state = sdr_vaapi_state();
+
+        let input: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::Pad(_)),
+            "expected software Pad fallback, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_ignores_pad_opencl_without_opencl_capabilities() {
+        let vaapi = vaapi_accel_with_opencl(false);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
+        let state = sdr_vaapi_state();
+
+        let input: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        assert!(
+            matches!(result, VideoFilter::Pad(_)),
+            "expected software Pad when no OpenCL capabilities, got {:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn resolve_inserts_hwmap_for_opencl_pad_on_vaapi() {
+        let vaapi = vaapi_accel_with_opencl(true);
+        let accel = HardwareAccel::Vaapi(vaapi);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
+        let initial_state = sdr_vaapi_state();
+
+        let pad: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(pad)]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            video_filters.len() >= 3,
+            "expected at least 3 video filters (hwmap + pad + hwmap), got {}",
+            video_filters.len()
+        );
+
+        assert!(
+            matches!(
+                video_filters[0],
+                VideoFilter::HwMap(HwMapFilter {
+                    from_surface: FrameSurface::Vaapi,
+                    to_surface: FrameSurface::OpenCL,
+                    reverse: false
+                })
+            ),
+            "first filter should be HwMap from Vaapi to OpenCL"
+        );
+
+        assert!(
+            matches!(video_filters[1], VideoFilter::PadOpencl(_)),
+            "second filter should be PadOpencl"
+        );
+
+        assert!(
+            matches!(
+                video_filters[2],
+                VideoFilter::HwMap(HwMapFilter {
+                    from_surface: FrameSurface::OpenCL,
+                    to_surface: FrameSurface::Vaapi,
+                    reverse: true,
+                })
+            ),
+            "third filter should be HwMap from OpenCL back to Vaapi"
+        );
+    }
+
+    #[test]
+    fn resolve_pad_vaapi_does_not_insert_hwmap() {
+        let vaapi = vaapi_accel_with_opencl(true);
+        let accel = HardwareAccel::Vaapi(vaapi);
+        let ffmpeg_info =
+            ffmpeg_info_with_filters(&[KnownVideoFilter::PadVaapi, KnownVideoFilter::PadOpencl]);
+        let initial_state = sdr_vaapi_state();
+
+        let pad: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(pad)]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        let has_hwmap = video_filters
+            .iter()
+            .any(|f| matches!(f, VideoFilter::HwMap(_)));
+        assert!(
+            !has_hwmap,
+            "pad_vaapi stays on VAAPI surface, no HwMap needed"
+        );
+
+        assert!(
+            matches!(video_filters[0], VideoFilter::PadVaapi(_)),
+            "first video filter should be PadVaapi, got {:?}",
+            video_filters[0].as_arg()
+        );
+    }
+
+    #[test]
+    fn resolve_and_build_produces_correct_filter_complex_for_opencl_pad() {
+        let vaapi = vaapi_accel_with_opencl(true);
+        let accel = HardwareAccel::Vaapi(vaapi);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
+        let initial_state = sdr_vaapi_state();
+
+        let pad: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+        }
+        .into();
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(pad)]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+        chain.build("0:a", "0:v", None);
+
+        let args = chain.as_arg();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], "-filter_complex");
+
+        let filter_complex = &args[1];
+        assert!(
+            filter_complex.contains("hwmap=derive_device=opencl"),
+            "filter_complex should contain hwmap to opencl: {filter_complex}"
+        );
+        assert!(
+            filter_complex.contains("pad_opencl=1920:1080:-1:-1:color=black"),
+            "filter_complex should contain pad_opencl: {filter_complex}"
+        );
+        assert!(
+            filter_complex.contains("hwmap=derive_device=vaapi"),
+            "filter_complex should contain hwmap back to vaapi: {filter_complex}"
+        );
+
+        let expected_order = "hwmap=derive_device=opencl,pad_opencl=";
+        assert!(
+            filter_complex.contains(expected_order),
+            "hwmap to opencl should appear immediately before pad_opencl: {filter_complex}"
         );
     }
 }

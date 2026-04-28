@@ -20,4 +20,8 @@ impl OpenCLCapabilities {
     pub fn can_tonemap(&self) -> bool {
         self.platform_count > 0 && self.gpu_device_count > 0
     }
+
+    pub fn can_pad(&self) -> bool {
+        self.platform_count > 0 && self.gpu_device_count > 0
+    }
 }

@@ -1,4 +1,5 @@
 use crate::ffmpeg_info::FfmpegInfo;
+use crate::frame_size::FrameSize;
 use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat};
 use crate::video_filter::{VideoFilter, VideoFilterOp};
 
@@ -35,5 +36,33 @@ impl VideoFilterOp for TonemapOpencl {
             self.output_format.as_arg()
         )
         .into()
+    }
+}
+
+#[derive(Clone)]
+pub struct PadOpencl {
+    pub(crate) size: Option<FrameSize>,
+}
+
+impl VideoFilterOp for PadOpencl {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::OpenCL;
+        }
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::OpenCL)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        self.size
+            .as_ref()
+            .map(|s| format!("pad_opencl={}:{}:-1:-1:color=black", s.width, s.height))
     }
 }

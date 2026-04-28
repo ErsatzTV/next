@@ -58,6 +58,8 @@ pub enum KnownVideoFilter {
     OverlayVaapi,
     #[strum(serialize = "pad_cuda")]
     PadCuda,
+    #[strum(serialize = "pad_opencl")]
+    PadOpencl,
     #[strum(serialize = "pad_vaapi")]
     PadVaapi,
     #[strum(serialize = "scale_cuda")]

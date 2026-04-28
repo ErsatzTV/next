@@ -139,6 +139,63 @@ async fn tonemap(
     }
 }
 
+/// Tests pad with a 4:3 source -> 16:9 target, which forces pad_vaapi or pad_opencl.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn pad(
+    #[values("480p_h264.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+    #[values("aac")] af: AudioFormat,
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                audio_format: Some(af),
+                video_format: Some(vf),
+                video_size: Some(FrameSize::from_str("1920x1080").unwrap()),
+                bit_depth: Some(bpp),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: FrameSize::from_str("1920x1080").unwrap(),
+            expected_audio_codec: af.to_string(),
+        })
+        .await;
+    }
+}
+
+/// Tests pad_opencl by disabling pad_vaapi via ETV_TEST_DISABLED_FILTERS=pad_vaapi.
+/// Run with: ETV_TEST_DISABLED_FILTERS=pad_vaapi cargo test --package ffpipeline --test vaapi pad_opencl -- --ignored
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn pad_opencl(
+    #[values("480p_h264.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+    #[values("aac")] af: AudioFormat,
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                audio_format: Some(af),
+                video_format: Some(vf),
+                video_size: Some(FrameSize::from_str("1920x1080").unwrap()),
+                bit_depth: Some(bpp),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: FrameSize::from_str("1920x1080").unwrap(),
+            expected_audio_codec: af.to_string(),
+        })
+        .await;
+    }
+}
+
 async fn run_vaapi_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
