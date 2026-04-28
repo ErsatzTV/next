@@ -769,7 +769,7 @@ impl Pipeline {
     }
 
     fn select_subtitle_stream(input_settings: &InputSettings) -> Option<&ProbeResultVideoStream> {
-        let mut all_subtitle_streams: Vec<&Box<ProbeResultVideoStream>> =
+        let all_subtitle_streams: Vec<&Box<ProbeResultVideoStream>> =
             match input_settings.subtitle_input.as_ref() {
                 Some(input) => input
                     .probe_result
@@ -807,16 +807,17 @@ impl Pipeline {
             }
         }
 
-        match all_subtitle_streams.len() {
-            0 => None,
-            1 => Some(all_subtitle_streams[0]),
-            _ => {
-                log::warn!(
-                    "content contains more than one subtitle stream; selecting stream with lowest index"
-                );
-                all_subtitle_streams.sort_by_key(|v| v.stream_index);
-                Some(all_subtitle_streams[0])
-            }
+        // at this point, select a subtitle if the input is *only* a subtitle
+        if all_subtitle_streams.len() == 1
+            && input_settings
+                .subtitle_input
+                .as_ref()
+                .map(|i| i.probe_result.streams.len() == 1)
+                .unwrap_or(false)
+        {
+            Some(all_subtitle_streams[0])
+        } else {
+            None
         }
     }
 }
