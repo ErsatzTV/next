@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use enum_dispatch::enum_dispatch;
 
 use crate::accel;
@@ -51,6 +53,7 @@ pub enum VideoFilter {
     ToneMap(ToneMapFilter),
     Deinterlace(DeinterlaceFilter),
     HwMap(HwMapFilter),
+    Subtitles(SubtitlesFilter),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -427,6 +430,42 @@ impl VideoFilterOp for HwMapFilter {
         self.to_surface
             .device_name()
             .map(|name| format!("hwmap=derive_device={name}{reverse_part}"))
+    }
+}
+
+#[derive(Clone)]
+pub struct SubtitlesFilter {
+    pub path: String,
+    pub seek: Duration,
+}
+
+impl VideoFilterOp for SubtitlesFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if !self.path.is_empty() {
+            Some(self.clone().into())
+        } else {
+            None
+        }
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {
+        // no change to state
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        if self.seek > Duration::ZERO {
+            Some(format!(
+                "setpts=PTS+{}/TB,subtitles={},setpts=PTS-STARTPTS",
+                self.seek.as_secs_f64(),
+                self.path,
+            ))
+        } else {
+            Some(format!("subtitles={}", self.path))
+        }
     }
 }
 

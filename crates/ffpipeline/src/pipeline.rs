@@ -22,7 +22,8 @@ use crate::probe::{CodecType, ProbeResultAudioStream, ProbeResultStream, ProbeRe
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    DeinterlaceFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, ToneMapFilter,
+    DeinterlaceFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
+    SubtitlesFilter, ToneMapFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -289,8 +290,12 @@ impl Pipeline {
 
         let initial_state = FrameState {
             size: FrameSize {
-                width: video_stream.width,
-                height: video_stream.height,
+                width: video_stream
+                    .width
+                    .ok_or(FFPipelineError::VideoInputIsRequired)?,
+                height: video_stream
+                    .height
+                    .ok_or(FFPipelineError::VideoInputIsRequired)?,
             },
             is_anamorphic: video_stream.is_anamorphic(),
             // if user does not want to deinterlace, pretend content is not interlaced
@@ -397,7 +402,10 @@ impl Pipeline {
         if let Some(subtitle_stream) = subtitle_stream
             && let Some(subtitle_input) = input_settings.subtitle_input.as_ref()
         {
-            if subtitle_stream.is_subtitle_image() {
+            if subtitle_stream.is_subtitle_image()
+                && let Some(height) = subtitle_stream.height
+                && let Some(width) = subtitle_stream.width
+            {
                 inputs.push(PipelineInput::ImageSubtitle {
                     input_source: subtitle_input.input_source.to_owned(),
                     index: subtitle_stream.stream_index,
@@ -406,10 +414,7 @@ impl Pipeline {
                 });
 
                 let secondary_initial_state = FrameState {
-                    size: FrameSize {
-                        width: subtitle_stream.width,
-                        height: subtitle_stream.height,
-                    },
+                    size: FrameSize { width, height },
                     is_anamorphic: subtitle_stream.is_anamorphic(),
                     is_interlaced: false,
                     sample_aspect_ratio: subtitle_stream.sample_aspect_ratio.to_owned(),
@@ -435,8 +440,15 @@ impl Pipeline {
                     ],
                     secondary_initial_state,
                 }));
-            } else {
-                log::warn!("text subtitles are currently unsupported");
+            } else if !subtitle_stream.is_subtitle_image() {
+                //log::warn!("text subtitles are currently unsupported");
+                filters.push(PipelineFilter::Video(
+                    SubtitlesFilter {
+                        path: subtitle_input.probe_result.path.to_owned(),
+                        seek: subtitle_input.in_point,
+                    }
+                    .into(),
+                ))
             }
         }
 
@@ -672,7 +684,11 @@ impl Pipeline {
             .streams
             .iter()
             .filter_map(|s| match s {
-                ProbeResultStream::Video(video_stream) => Some(video_stream),
+                ProbeResultStream::Video(video_stream)
+                    if video_stream.codec_type == CodecType::Video =>
+                {
+                    Some(video_stream)
+                }
                 _ => None,
             })
             .collect();
@@ -754,7 +770,7 @@ impl Pipeline {
     }
 
     fn select_subtitle_stream(input_settings: &InputSettings) -> Option<&ProbeResultVideoStream> {
-        let all_subtitle_streams: Vec<&Box<ProbeResultVideoStream>> =
+        let mut all_subtitle_streams: Vec<&Box<ProbeResultVideoStream>> =
             match input_settings.subtitle_input.as_ref() {
                 Some(input) => input
                     .probe_result
@@ -792,7 +808,17 @@ impl Pipeline {
             }
         }
 
-        None
+        match all_subtitle_streams.len() {
+            0 => None,
+            1 => Some(all_subtitle_streams[0]),
+            _ => {
+                log::warn!(
+                    "content contains more than one subtitle stream; selecting stream with lowest index"
+                );
+                all_subtitle_streams.sort_by_key(|v| v.stream_index);
+                Some(all_subtitle_streams[0])
+            }
+        }
     }
 }
 

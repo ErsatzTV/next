@@ -57,8 +57,8 @@ pub struct ProbeResultVideoStream {
     pub codec: String,
     pub codec_type: CodecType,
     pub profile: String,
-    pub height: u32,
-    pub width: u32,
+    pub height: Option<u32>,
+    pub width: Option<u32>,
     pub frame_rate: FrameRate,
     pub sample_aspect_ratio: Option<String>,
     pub display_aspect_ratio: Option<String>,
@@ -95,9 +95,14 @@ impl ProbeResultVideoStream {
                 // SAR 0:1 && DAR 0:1 (both unspecified) means square pixels
                 else if display_aspect_ratio == "0:1" {
                     false
-                } else {
+                } else if let Some(height) = self.height
+                    && let Some(width) = self.width
+                {
                     // DAR == W:H is square
-                    display_aspect_ratio != format!("{}:{}", self.width, self.height)
+                    display_aspect_ratio != format!("{}:{}", width, height)
+                } else {
+                    // shouldn't ever happen; height and width should only be missing for subtitles
+                    false
                 }
             }
             None => false, // assumed SAR of 1:1
@@ -137,7 +142,11 @@ impl std::fmt::Display for ProbeResultStream {
                 write!(
                     f,
                     "{}: video ({} - {}x{} - {:?})",
-                    v.stream_index, v.codec, v.width, v.height, v.frame_rate
+                    v.stream_index,
+                    v.codec,
+                    v.width.unwrap_or(0),
+                    v.height.unwrap_or(0),
+                    v.frame_rate
                 )
             }
         }
@@ -386,8 +395,8 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 .profile
                 .clone()
                 .map_or(String::new(), |p| p.to_lowercase()),
-            height: output_stream.height?,
-            width: output_stream.width?,
+            height: output_stream.height,
+            width: output_stream.width,
             pix_fmt: output_stream.pix_fmt.clone().unwrap_or_default(),
             color_params: ProbeResultColorParams {
                 color_range: output_stream.color_range.clone(),

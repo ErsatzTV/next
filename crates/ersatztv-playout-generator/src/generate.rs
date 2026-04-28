@@ -141,6 +141,39 @@ pub async fn generate_playout(
                 }
             }
 
+            if !has_image_subtitle
+                && playout_item.tracks.is_none()
+                && let (Some(parent), Some(stem)) =
+                    (path.parent(), path.file_stem().and_then(|s| s.to_str()))
+                && let Ok(entries) = std::fs::read_dir(parent)
+            {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+
+                    if entry_path.is_file()
+                        && let (Some(name), Some(ext)) = (
+                            entry_path.file_name().and_then(|n| n.to_str()),
+                            entry_path.extension().and_then(|e| e.to_str()),
+                        )
+                        && name.starts_with(stem)
+                        && ext == "srt"
+                    {
+                        playout_item.tracks = Some(PlayoutItemTracks {
+                            audio: None,
+                            video: None,
+                            subtitle: Some(TrackSelection {
+                                source: Some(PlayoutItemSource::Local {
+                                    path: entry_path.to_string_lossy().to_string(),
+                                    in_point_ms: None,
+                                    out_point_ms: None,
+                                }),
+                                stream_index: None,
+                            }),
+                        })
+                    }
+                }
+            }
+
             playout_items.push(playout_item);
             current_time += scheduled_duration;
         }
