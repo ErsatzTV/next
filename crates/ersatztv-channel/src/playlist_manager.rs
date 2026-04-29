@@ -35,8 +35,8 @@ pub struct PlaylistManager {
     target_duration: u32,
     target_duration_f64: f64,
     pending_discontinuity: bool,
-    channel_start_time: OffsetDateTime,
     last_segment_end: OffsetDateTime,
+    current_session_start: OffsetDateTime,
 
     pts_offset: Option<PtsOffset>,
     subtitle_source: Option<SubtitleSource>,
@@ -83,8 +83,8 @@ impl PlaylistManager {
             target_duration,
             target_duration_f64: target_duration as f64,
             pending_discontinuity: false,
-            channel_start_time,
             last_segment_end: channel_start_time,
+            current_session_start: channel_start_time,
 
             pts_offset: None,
             subtitle_source: None,
@@ -106,6 +106,7 @@ impl PlaylistManager {
         self.pts_offset = new_pts_offset;
         self.subtitle_source = new_subtitle_source;
         self.pending_discontinuity = true;
+        self.current_session_start = self.last_segment_end;
 
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
@@ -172,7 +173,7 @@ impl PlaylistManager {
             let vtt_path = format!("{}.vtt", file.strip_suffix(".ts").unwrap_or(&file));
             let vtt_full = self.output_folder.join(&vtt_path);
             let mpegts_90khz = (((self.pts_offset.unwrap_or_default().duration.as_secs_f64()
-                + (program_date_time - self.channel_start_time).as_seconds_f64())
+                + (program_date_time - self.current_session_start).as_seconds_f64())
                 * 90_000.0) as u64)
                 % 8589934592;
             if let Some(src) = &mut self.subtitle_source {
