@@ -4,6 +4,7 @@ use std::time::Duration;
 use ersatztv_channel::error::ChannelError;
 use ffpipeline::input::{InputSource, ProbedInput};
 use ffpipeline::probe::ProbeResultVideoStream;
+use tempfile::NamedTempFile;
 use tokio::process::Command;
 
 #[derive(Clone)]
@@ -17,10 +18,10 @@ pub(crate) async fn convert_to_vtt(
     ffmpeg_path: &PathBuf,
     input: &ProbedInput,
     subtitle_stream: &ProbeResultVideoStream,
-) -> Result<String, ChannelError> {
+) -> Result<NamedTempFile, ChannelError> {
     match &input.input_source {
         InputSource::Local(local) => {
-            let temp_file = tempfile::NamedTempFile::with_suffix(".vtt")?;
+            let temp_file = NamedTempFile::with_suffix(".vtt")?;
             let file_name = temp_file.path().to_string_lossy();
             let mut ffmpeg = Command::new(ffmpeg_path)
                 .args([
@@ -44,10 +45,7 @@ pub(crate) async fn convert_to_vtt(
 
             let result = ffmpeg.wait().await?;
             if result.success() {
-                let (_, path) = temp_file
-                    .keep()
-                    .map_err(|_| ChannelError::FailedToConvertSubtitle)?;
-                Ok(path.to_string_lossy().to_string())
+                Ok(temp_file)
             } else {
                 Err(ChannelError::FailedToConvertSubtitle)
             }
@@ -56,8 +54,7 @@ pub(crate) async fn convert_to_vtt(
     }
 }
 
-pub(crate) async fn parse_file(path: String) -> Result<Vec<Cue>, ChannelError> {
-    let path = Path::new(&path);
+pub(crate) async fn parse_file(path: &Path) -> Result<Vec<Cue>, ChannelError> {
     if path.exists() {
         let contents = tokio::fs::read_to_string(&path).await?;
         return parse_internal(&contents);

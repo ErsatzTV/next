@@ -517,9 +517,9 @@ impl ChannelSession {
             && let Some(subtitle_stream) = input_settings.select_subtitle_stream()
             && !subtitle_stream.is_subtitle_image()
             && let Some(input) = input_settings.subtitle_input.as_ref()
-            && let Ok(file_name) =
+            && let Ok(temp_file) =
                 crate::web_vtt::convert_to_vtt(&self.ffmpeg_path, input, subtitle_stream).await
-            && let Ok(cues) = crate::web_vtt::parse_file(file_name).await
+            && let Ok(cues) = crate::web_vtt::parse_file(temp_file.path()).await
         {
             subtitle_source = Some(SubtitleSource {
                 cues,
