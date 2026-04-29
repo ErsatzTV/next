@@ -177,7 +177,7 @@ pub struct ScaleFilter {
 impl VideoFilterOp for ScaleFilter {
     fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         let target = self.size?;
-        if state.size == target {
+        if state.size == target && !state.is_anamorphic {
             return None;
         }
 
