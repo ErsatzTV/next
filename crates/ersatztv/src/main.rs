@@ -5,6 +5,7 @@ mod error;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
@@ -98,6 +99,8 @@ async fn run() -> Result<(), LineupError> {
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
+    let active = Arc::clone(&state.active);
+
     let app = Router::new()
         .route("/channel/{filename}", get(stream))
         .route("/channels.m3u", get(channel_playlist))
@@ -116,9 +119,34 @@ async fn run() -> Result<(), LineupError> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (deadline_tx, deadline_rx) = tokio::sync::oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        log::info!("shutdown signal received");
+        let _ = shutdown_tx.send(());
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let _ = deadline_tx.send(());
+    });
+
+    let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+        let _ = shutdown_rx.await;
+    });
+
+    tokio::select! {
+        res = serve => res?,
+        _ = deadline_rx => log::warn!("graceful shutdown deadline exceeded; forcing exit"),
+    }
+
+    let mut sessions = active.lock().await;
+    for (number, session) in sessions.iter_mut() {
+        log::debug!("requesting shutdown of channel {number}");
+        session.request_shutdown();
+    }
+    drop(sessions);
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     Ok(())
 }

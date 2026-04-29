@@ -5,6 +5,9 @@ use time::OffsetDateTime;
 
 #[derive(Error, Debug)]
 pub enum ChannelError {
+    #[error("channel canceled")]
+    Canceled,
+
     #[error("unable to load channel config: {0}")]
     ChannelConfigFailure(String),
 

@@ -9,7 +9,8 @@ use crate::channel_model::ChannelModel;
 use crate::error::LineupError;
 
 pub struct ChannelSession {
-    ready_receiver: watch::Receiver<bool>,
+    ready_rx: watch::Receiver<bool>,
+    kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl ChannelSession {
@@ -24,24 +25,31 @@ impl ChannelSession {
             .arg("--number")
             .arg(channel.number())
             .arg(channel.config_path())
+            .kill_on_drop(true)
             .spawn()
             .map_err(LineupError::Io)?;
 
-        let (ready_sender, ready_receiver) = watch::channel(false);
+        let (ready_tx, ready_rx) = watch::channel(false);
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
 
         let ready_file = channel.output_folder().join(READY_FILE_NAME);
         tokio::spawn(async move {
             if wait_for_file(&ready_file, READY_FILE_TIMEOUT).await {
-                let _ = ready_sender.send(true);
+                let _ = ready_tx.send(true);
             }
         });
 
         let channel_number = channel.number().to_owned();
-
         let ready_file = channel.output_folder().join(READY_FILE_NAME);
         let heartbeat_file = channel.output_folder().join(HEARTBEAT_FILE_NAME);
         tokio::spawn(async move {
-            let _ = child.wait().await;
+            tokio::select! {
+                _ = child.wait() => {}
+                _ = kill_rx => {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                }
+            }
             log::debug!("channel {} exited", &channel_number);
             active.lock().await.remove(&channel_number);
 
@@ -54,11 +62,20 @@ impl ChannelSession {
             }
         });
 
-        Ok(ChannelSession { ready_receiver })
+        Ok(ChannelSession {
+            ready_rx,
+            kill_tx: Some(kill_tx),
+        })
+    }
+
+    pub fn request_shutdown(&mut self) {
+        if let Some(tx) = self.kill_tx.take() {
+            let _ = tx.send(());
+        }
     }
 
     pub fn subscribe_ready(&self) -> watch::Receiver<bool> {
-        self.ready_receiver.clone()
+        self.ready_rx.clone()
     }
 }
 

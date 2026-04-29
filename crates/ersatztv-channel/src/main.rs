@@ -40,7 +40,10 @@ pub async fn main() {
 
     if let Err(err) = run().await {
         match err {
-            ChannelError::IdleTimeout(_) => log::info!("{err}"),
+            ChannelError::IdleTimeout(_) | ChannelError::Canceled => {
+                log::info!("{err}");
+                return;
+            }
             _ => log::error!("{err}"),
         };
 

@@ -76,6 +76,7 @@ pub struct ChannelSession {
     state: ChannelSessionState,
 
     timeout_notify: Arc<tokio::sync::Notify>,
+    cancel_notify: Arc<tokio::sync::Notify>,
 }
 
 impl ChannelSession {
@@ -145,6 +146,16 @@ impl ChannelSession {
             .clone()
             .unwrap_or(default_ffmpeg_path);
 
+        let cancel_notify = Arc::new(tokio::sync::Notify::new());
+
+        let n = cancel_notify.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                log::info!("ctrl+c received, shutting down channel");
+                n.notify_waiters();
+            }
+        });
+
         Ok(ChannelSession {
             channel_config,
             playout_loader,
@@ -161,6 +172,7 @@ impl ChannelSession {
             start_time_offset,
             state: ChannelSessionState::SeekAndWorkAhead,
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
+            cancel_notify,
         })
     }
 
@@ -232,6 +244,9 @@ impl ChannelSession {
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {}
                     _ = tn.notified() => {
                         return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
+                    }
+                    _ = self.cancel_notify.notified() => {
+                        return Err(ChannelError::Canceled);
                     }
                 }
             }
@@ -552,6 +567,7 @@ impl ChannelSession {
             .args(args.iter().map(Cow::as_ref))
             .envs(envs)
             .stdout(std::process::Stdio::null())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|_| ChannelError::StreamFailure(String::from("failed to spawn ffmpeg")))?;
 
@@ -569,6 +585,13 @@ impl ChannelSession {
             _ = self.timeout_notify.notified() => {
                 ffmpeg_child.kill().await.ok();
                 return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
+            }
+            _ = self.cancel_notify.notified() => {
+                match tokio::time::timeout(Duration::from_secs(3), ffmpeg_child.wait()).await {
+                    Ok(_) => {},
+                    Err(_) => { let _ = ffmpeg_child.kill().await; }
+                }
+                return Err(ChannelError::Canceled);
             }
         }
 
