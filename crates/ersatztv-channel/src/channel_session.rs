@@ -25,7 +25,7 @@ use ffpipeline::{pipeline, probe};
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
-use crate::playlist_manager::PlaylistManager;
+use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
 use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};
 
@@ -95,6 +95,12 @@ impl ChannelSession {
             .into_string()
             .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
 
+        let generated_subtitle_output_file = output_folder
+            .join("live_sub.m3u8")
+            .into_os_string()
+            .into_string()
+            .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+
         let ffmpeg_output_file = output_folder
             .join("ffmpeg.m3u8")
             .into_os_string()
@@ -116,8 +122,11 @@ impl ChannelSession {
             SEGMENT_SECONDS,
             output_folder.to_owned(),
             ready_file.to_owned(),
-            generated_output_file,
-            ffmpeg_output_file.to_owned(),
+            PlaylistManagerOutputFiles {
+                generated_playlist_file: generated_output_file,
+                generated_subtitle_playlist_file: generated_subtitle_output_file,
+                ffmpeg_playlist_file: ffmpeg_output_file.to_owned(),
+            },
         );
 
         let playlist_manager = Arc::new(Mutex::new(playlist_manager));
@@ -434,6 +443,7 @@ impl ChannelSession {
             } else {
                 None
             },
+            subtitle_mode: self.channel_config.normalization.subtitle.mode.into(),
         };
 
         let start_at_zero = matches!(
@@ -502,6 +512,22 @@ impl ChannelSession {
             subtitle_input,
         };
 
+        let mut subtitle_source: Option<SubtitleSource> = None;
+        if output_settings.subtitle_mode == ffpipeline::output_settings::SubtitleMode::Convert
+            && let Some(subtitle_stream) = input_settings.select_subtitle_stream()
+            && !subtitle_stream.is_subtitle_image()
+            && let Some(input) = input_settings.subtitle_input.as_ref()
+            && let Ok(file_name) =
+                crate::web_vtt::convert_to_vtt(&self.ffmpeg_path, input, subtitle_stream).await
+            && let Ok(cues) = crate::web_vtt::parse_file(file_name).await
+        {
+            subtitle_source = Some(SubtitleSource {
+                cues,
+                next_segment_source_offset: input.in_point,
+            });
+        }
+
+        let pts_offset = output_settings.pts_offset;
         let mut pipeline_result =
             pipeline::generate_pipeline(&self.ffmpeg_info, input_settings, output_settings)?;
         pipeline_result.optimize();
@@ -512,7 +538,7 @@ impl ChannelSession {
         self.playlist_manager
             .lock()
             .await
-            .before_new_pipeline()
+            .before_new_pipeline(pts_offset, subtitle_source)
             .await?;
 
         // stream current item

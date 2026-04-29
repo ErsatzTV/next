@@ -162,6 +162,9 @@
         "audio": {
           "$ref": "#/$defs/AudioNormalizationConfig"
         },
+        "subtitle": {
+          "$ref": "#/$defs/SubtitleNormalizationConfig"
+        },
         "video": {
           "$ref": "#/$defs/VideoNormalizationConfig"
         }
@@ -189,6 +192,21 @@
       "required": [
         "folder"
       ]
+    },
+    "SubtitleMode": {
+      "type": "string",
+      "enum": [
+        "burn",
+        "convert"
+      ]
+    },
+    "SubtitleNormalizationConfig": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/SubtitleMode"
+        }
+      }
     },
     "VaapiDriver": {
       "type": "string",

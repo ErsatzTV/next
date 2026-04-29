@@ -502,11 +502,6 @@ impl FilterChain {
         &self.video_label
     }
 
-    pub(crate) fn subtitle_label(&self) -> Option<&str> {
-        //self.subtitle_label.as_deref()
-        None
-    }
-
     pub(crate) fn as_arg(&self) -> ArgVec {
         if self.complex_filter.is_empty() {
             Vec::new()

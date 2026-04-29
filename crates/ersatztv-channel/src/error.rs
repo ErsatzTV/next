@@ -56,4 +56,10 @@ pub enum ChannelError {
 
     #[error("channel {0} terminated after idle timeout")]
     IdleTimeout(String),
+
+    #[error("failed to convert subtitle")]
+    FailedToConvertSubtitle,
+
+    #[error("failed to parse subtitle")]
+    FailedToParseSubtitle,
 }

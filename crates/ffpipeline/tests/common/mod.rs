@@ -8,7 +8,9 @@ use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{InputSettings, InputSource, LocalInputSource, ProbedInput};
 use ffpipeline::output_format::OutputFormat;
-use ffpipeline::output_settings::{AudioLoudnessSettings, AudioOutputSettings, OutputSettings};
+use ffpipeline::output_settings::{
+    AudioLoudnessSettings, AudioOutputSettings, OutputSettings, SubtitleMode,
+};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
 use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
 use tokio::sync::OnceCell;
@@ -219,6 +221,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         pts_offset: None,
         realtime: false,
         frame_rate: params.frame_rate,
+        subtitle_mode: SubtitleMode::Burn,
     }
 }
 

@@ -32,6 +32,9 @@
       "tonemap_algorithm": "linear",
       "vaapi_device": "/dev/dri/renderD128",
       "vaapi_driver": "iHD"
+    },
+    "subtitle": {
+      "mode": "burn"
     }
   }
 }

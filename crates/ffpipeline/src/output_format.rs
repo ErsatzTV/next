@@ -4,7 +4,7 @@ use crate::ArgVec;
 use crate::pipeline::{KEYFRAME_INTERVAL_SECONDS, OutputContext, SEGMENT_SECONDS};
 use crate::video_codec::VideoCodec;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum OutputFormat {
     Hls {
         playlist: String,
@@ -29,7 +29,8 @@ impl OutputFormat {
 
         match self {
             OutputFormat::Hls {
-                segment_template, ..
+                playlist,
+                segment_template,
             } => {
                 if output_context.video_codec != VideoCodec::COPY {
                     args.extend(args![
@@ -66,15 +67,11 @@ impl OutputFormat {
                         "mpegts_flags=+initial_discontinuity",
                     ]),
                 }
+
+                args.extend(args![playlist.to_owned()]);
             }
         }
 
         args
-    }
-
-    pub(crate) fn path(&self) -> String {
-        match self {
-            OutputFormat::Hls { playlist, .. } => playlist.clone(),
-        }
     }
 }

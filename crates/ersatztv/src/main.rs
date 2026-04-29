@@ -189,8 +189,13 @@ async fn fix_content_types(
 fn get_multi_variant(channel: &ChannelModel, request: axum::extract::Request) -> String {
     let mut result = String::new();
     result.push_str("#EXTM3U\n");
-    result.push_str("#EXT-X-VERSION:3\n");
-    result.push_str("#EXT-X-STREAM-INF:BANDWIDTH=5000000\n");
+    result.push_str("#EXT-X-VERSION:6\n");
+    result.push_str(&format!(
+        "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,LANGUAGE=\"en\",URI=\"{}/session/{}/live_sub.m3u8\"\n",
+        get_scheme_host(&request),
+        channel.number()
+    ));
+    result.push_str("#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES=\"subs\"\n");
     result.push_str(&format!(
         "{}/session/{}/live.m3u8",
         get_scheme_host(&request),

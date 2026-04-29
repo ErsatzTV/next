@@ -49,6 +49,8 @@ pub struct FfmpegConfig {
 pub struct NormalizationConfig {
     pub audio: AudioNormalizationConfig,
     pub video: VideoNormalizationConfig,
+    #[serde(default)]
+    pub subtitle: SubtitleNormalizationConfig,
 }
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
@@ -270,6 +272,29 @@ impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
         match value {
             VideoFormat::H264 => ffpipeline::pipeline::VideoFormat::H264,
             VideoFormat::Hevc => ffpipeline::pipeline::VideoFormat::Hevc,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema, Default)]
+pub struct SubtitleNormalizationConfig {
+    #[serde(default)]
+    pub mode: SubtitleMode,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema, Default, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum SubtitleMode {
+    #[default]
+    Burn,
+    Convert,
+}
+
+impl From<SubtitleMode> for ffpipeline::output_settings::SubtitleMode {
+    fn from(value: SubtitleMode) -> Self {
+        match value {
+            SubtitleMode::Burn => ffpipeline::output_settings::SubtitleMode::Burn,
+            SubtitleMode::Convert => ffpipeline::output_settings::SubtitleMode::Convert,
         }
     }
 }

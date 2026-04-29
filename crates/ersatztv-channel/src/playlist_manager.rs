@@ -4,10 +4,19 @@ use std::time::Duration;
 
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
+use ffpipeline::pipeline::PtsOffset;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
+use crate::web_vtt::{Cue, format_vtt_ts};
+
 const MIN_SEGMENTS: usize = 4;
+
+#[derive(Clone)]
+pub struct SubtitleSource {
+    pub cues: Vec<Cue>,
+    pub next_segment_source_offset: Duration,
+}
 
 #[derive(Clone)]
 pub struct PlaylistManager {
@@ -15,6 +24,7 @@ pub struct PlaylistManager {
     ready_file: PathBuf,
     heartbeat_file: PathBuf,
     generated_playlist_file: String,
+    generated_subtitle_playlist_file: String,
     ffmpeg_playlist_file: String,
     ready: bool,
 
@@ -25,7 +35,11 @@ pub struct PlaylistManager {
     target_duration: u32,
     target_duration_f64: f64,
     pending_discontinuity: bool,
+    channel_start_time: OffsetDateTime,
     last_segment_end: OffsetDateTime,
+
+    pts_offset: Option<PtsOffset>,
+    subtitle_source: Option<SubtitleSource>,
 
     timeout: bool,
 }
@@ -37,14 +51,19 @@ struct Segment {
     program_date_time: OffsetDateTime,
 }
 
+pub struct PlaylistManagerOutputFiles {
+    pub generated_playlist_file: String,
+    pub ffmpeg_playlist_file: String,
+    pub generated_subtitle_playlist_file: String,
+}
+
 impl PlaylistManager {
     pub fn new(
         channel_start_time: OffsetDateTime,
         target_duration: u32,
         output_folder: PathBuf,
         ready_file: PathBuf,
-        generated_playlist_file: String,
-        ffmpeg_playlist_file: String,
+        output_files: PlaylistManagerOutputFiles,
     ) -> PlaylistManager {
         let heartbeat_file = output_folder.join(HEARTBEAT_FILE_NAME);
 
@@ -52,8 +71,9 @@ impl PlaylistManager {
             output_folder,
             ready_file,
             heartbeat_file,
-            generated_playlist_file,
-            ffmpeg_playlist_file,
+            generated_playlist_file: output_files.generated_playlist_file,
+            ffmpeg_playlist_file: output_files.ffmpeg_playlist_file,
+            generated_subtitle_playlist_file: output_files.generated_subtitle_playlist_file,
             ready: false,
 
             segments: VecDeque::new(),
@@ -63,7 +83,11 @@ impl PlaylistManager {
             target_duration,
             target_duration_f64: target_duration as f64,
             pending_discontinuity: false,
+            channel_start_time,
             last_segment_end: channel_start_time,
+
+            pts_offset: None,
+            subtitle_source: None,
 
             timeout: false,
         }
@@ -73,14 +97,19 @@ impl PlaylistManager {
         &self.timeout
     }
 
-    pub async fn before_new_pipeline(&mut self) -> Result<(), ChannelError> {
+    pub async fn before_new_pipeline(
+        &mut self,
+        new_pts_offset: Option<PtsOffset>,
+        new_subtitle_source: Option<SubtitleSource>,
+    ) -> Result<(), ChannelError> {
         self.update().await?;
-
+        self.pts_offset = new_pts_offset;
+        self.subtitle_source = new_subtitle_source;
         self.pending_discontinuity = true;
 
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
-            let generated_playlist = self.generate_playlist(None)?;
+            let generated_playlist = self.generate_playlist(|s| s.to_owned(), None)?;
             let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
             tokio::fs::write(temp.path(), generated_playlist).await?;
             tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file).await?;
@@ -133,12 +162,39 @@ impl PlaylistManager {
             let program_date_time = self.last_segment_end;
 
             self.segments.push_back(Segment {
-                path: file,
+                path: file.clone(),
                 program_date_time,
                 duration,
             });
 
             self.last_segment_end += Duration::from_secs_f64(duration);
+
+            let vtt_path = file.replace(".ts", ".vtt");
+            let vtt_full = self.output_folder.join(&vtt_path);
+            let mpegts_90khz = (((self.pts_offset.unwrap_or_default().duration.as_secs_f64()
+                + (program_date_time - self.channel_start_time).as_seconds_f64())
+                * 90_000.0) as u64)
+                % 8589934592;
+            if let Some(src) = &mut self.subtitle_source {
+                let body = render_subtitle_segment(
+                    src,
+                    src.next_segment_source_offset,
+                    duration,
+                    mpegts_90khz,
+                );
+                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
+                tokio::fs::write(temp.path(), body).await?;
+                tokio::fs::rename(temp.path(), &vtt_full).await?;
+                src.next_segment_source_offset += Duration::from_secs_f64(duration);
+            } else {
+                let body = format!(
+                    "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
+                    mpegts_90khz
+                );
+                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
+                tokio::fs::write(temp.path(), body).await?;
+                tokio::fs::rename(temp.path(), &vtt_full).await?;
+            }
         }
 
         // trim old segments
@@ -153,14 +209,26 @@ impl PlaylistManager {
 
                 let path = self.output_folder.join(&removed.path);
                 tokio::fs::remove_file(&path).await?;
+
+                let vtt_path = self.output_folder.join(removed.path.replace(".ts", ".vtt"));
+                if vtt_path.exists() {
+                    tokio::fs::remove_file(&vtt_path).await?;
+                }
             }
         }
 
         // generate and atomically save playlist
-        let generated_playlist = self.generate_playlist(Some(10))?;
+        let generated_playlist = self.generate_playlist(|s| s.to_owned(), Some(10))?;
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
         tokio::fs::write(temp.path(), generated_playlist).await?;
         tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
+
+        // generate and atomically save subtitle playlist
+        let generated_subtitle_playlist =
+            self.generate_playlist(|s| s.replace(".ts", ".vtt"), Some(10))?;
+        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
+        tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
+        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
 
         if !self.ready && self.segments.len() >= MIN_SEGMENTS {
             tokio::fs::write(&self.ready_file, b"").await?;
@@ -176,7 +244,11 @@ impl PlaylistManager {
         Ok(())
     }
 
-    fn generate_playlist(&self, max_segments: Option<usize>) -> Result<String, ChannelError> {
+    fn generate_playlist(
+        &self,
+        path_map: fn(&str) -> String,
+        max_segments: Option<usize>,
+    ) -> Result<String, ChannelError> {
         let mut playlist = String::new();
         playlist.push_str("#EXTM3U\n");
         playlist.push_str("#EXT-X-VERSION:7\n");
@@ -229,7 +301,7 @@ impl PlaylistManager {
                 "#EXT-X-PROGRAM-DATE-TIME:{}\n",
                 segment.program_date_time.format(format)?
             ));
-            playlist.push_str(&format!("{}\n", segment.path));
+            playlist.push_str(&format!("{}\n", path_map(&segment.path)));
         }
 
         Ok(playlist)
@@ -262,4 +334,36 @@ impl PlaylistManager {
 
         Ok(result)
     }
+}
+
+fn render_subtitle_segment(
+    src: &SubtitleSource,
+    seg_start_src: Duration,
+    duration: f64,
+    mpegts_90khz: u64,
+) -> String {
+    let seg_end_src = seg_start_src + Duration::from_secs_f64(duration);
+
+    let mut out = format!(
+        "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
+        mpegts_90khz
+    );
+    for cue in src
+        .cues
+        .iter()
+        .filter(|c| c.end > seg_start_src && c.start < seg_end_src)
+    {
+        let local_start = cue.start.saturating_sub(seg_start_src);
+        let local_end = cue
+            .end
+            .saturating_sub(seg_start_src)
+            .min(Duration::from_secs_f64(duration));
+        out.push_str(&format!(
+            "{} --> {}\n{}\n\n",
+            format_vtt_ts(local_start),
+            format_vtt_ts(local_end),
+            cue.text
+        ));
+    }
+    out
 }

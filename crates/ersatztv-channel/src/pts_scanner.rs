@@ -29,7 +29,9 @@ impl PtsScanner {
         let mut entries = Vec::new();
         let mut dir = tokio::fs::read_dir(&self.output_folder).await?;
         while let Ok(Some(entry)) = dir.next_entry().await {
-            entries.push(entry);
+            if entry.path().ends_with(".ts") {
+                entries.push(entry);
+            }
         }
         entries.sort_by_key(|a| std::cmp::Reverse(a.file_name()));
         if let Some(last_segment) = entries.first() {

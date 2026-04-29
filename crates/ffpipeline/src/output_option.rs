@@ -12,6 +12,7 @@ pub enum OutputOption {
     VideoCodec(VideoCodec),
     VideoBitrate(Option<Kbps>),
     VideoBuffer(Option<Kbps>),
+    VideoTrackTimeScale(u64),
     AudioCodec(AudioCodec),
     AudioBitrate(Option<Kbps>),
     AudioBuffer(Option<Kbps>),
@@ -44,6 +45,9 @@ impl OutputOption {
                 args!["-bufsize:v", format!("{}k", buffer_kbps.0)]
             }
             OutputOption::VideoBuffer(None) => Vec::new(),
+            OutputOption::VideoTrackTimeScale(time_scale) => {
+                args!["-video_track_timescale", format!("{}", time_scale)]
+            }
             OutputOption::AudioCodec(codec) => codec.as_arg(),
             OutputOption::AudioBitrate(Some(bitrate_kbps)) => {
                 args![

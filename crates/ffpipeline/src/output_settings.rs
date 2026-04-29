@@ -19,6 +19,7 @@ pub struct OutputSettings {
     pub pts_offset: Option<PtsOffset>,
     pub realtime: bool,
     pub frame_rate: Option<FrameRate>,
+    pub subtitle_mode: SubtitleMode,
 }
 
 #[derive(Debug)]
@@ -46,4 +47,10 @@ impl Default for AudioLoudnessSettings {
             range_target: 11f64,
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SubtitleMode {
+    Burn,
+    Convert,
 }

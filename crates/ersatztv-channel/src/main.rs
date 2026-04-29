@@ -2,6 +2,7 @@ mod channel_session;
 mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
+mod web_vtt;
 
 use std::path::{Path, PathBuf};
 

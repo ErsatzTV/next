@@ -16,9 +16,8 @@ use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
 use crate::output_option::OutputOption;
-use crate::output_settings::OutputSettings;
+use crate::output_settings::{OutputSettings, SubtitleMode};
 use crate::overlay_filter::{OverlayFilter, SoftwareOverlay};
-use crate::probe::{CodecType, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -57,6 +56,14 @@ pub enum VideoFormat {
 #[derive(Debug, Copy, Clone)]
 pub struct PtsOffset {
     pub duration: Duration,
+}
+
+impl Default for PtsOffset {
+    fn default() -> Self {
+        PtsOffset {
+            duration: Duration::ZERO,
+        }
+    }
 }
 
 pub(crate) struct OutputContext {
@@ -194,7 +201,7 @@ pub enum PipelineInput {
         realtime: bool,
         decoder: VideoDecoder,
     },
-    ImageSubtitle {
+    Subtitle {
         input_source: InputSource,
         index: u32,
         path: String,
@@ -207,13 +214,9 @@ impl PipelineInput {
         match self {
             PipelineInput::Video { .. } => 0,
             PipelineInput::Audio { .. } => 1,
-            PipelineInput::ImageSubtitle { .. } => 2,
+            PipelineInput::Subtitle { .. } => 2,
         }
     }
-}
-
-pub struct PipelineOutput {
-    path: String,
 }
 
 pub struct Pipeline {
@@ -225,7 +228,6 @@ pub struct Pipeline {
     inputs: Vec<PipelineInput>,
     filter_chain: FilterChain,
     output_options: Vec<OutputOption>,
-    output: PipelineOutput,
 
     output_context: OutputContext,
 }
@@ -256,9 +258,9 @@ impl Pipeline {
             _ => AudioCodec::Copy,
         };
 
-        let video_stream = Self::select_video_stream(&input_settings)?;
-        let audio_stream = Self::select_audio_stream(&input_settings)?;
-        let subtitle_stream = Self::select_subtitle_stream(&input_settings);
+        let video_stream = input_settings.select_video_stream()?;
+        let audio_stream = input_settings.select_audio_stream()?;
+        let subtitle_stream = input_settings.select_subtitle_stream();
 
         // TODO: add target profile to config
         let video_codec = match (
@@ -277,8 +279,6 @@ impl Pipeline {
             (_, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
             _ => VideoCodec::COPY,
         };
-
-        let output_path = final_output_settings.format.path();
 
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
         let video_decoder = VideoDecoder::new(
@@ -406,7 +406,7 @@ impl Pipeline {
                 && let Some(height) = subtitle_stream.height
                 && let Some(width) = subtitle_stream.width
             {
-                inputs.push(PipelineInput::ImageSubtitle {
+                inputs.push(PipelineInput::Subtitle {
                     input_source: subtitle_input.input_source.to_owned(),
                     index: subtitle_stream.stream_index,
                     path: subtitle_input.probe_result.path.to_owned(),
@@ -440,7 +440,9 @@ impl Pipeline {
                     ],
                     secondary_initial_state,
                 }));
-            } else if !subtitle_stream.is_subtitle_image() {
+            } else if !subtitle_stream.is_subtitle_image()
+                && final_output_settings.subtitle_mode == SubtitleMode::Burn
+            {
                 filters.push(PipelineFilter::Video(
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),
@@ -481,12 +483,12 @@ impl Pipeline {
                 OutputOption::VideoBitrate(final_output_settings.video_bitrate),
                 OutputOption::VideoBuffer(final_output_settings.video_buffer),
                 OutputOption::DoNotMapMetadata,
-                OutputOption::Format(final_output_settings.format),
                 OutputOption::Duration(duration),
                 OutputOption::TsOffset(final_output_settings.pts_offset),
-                OutputOption::FrameRate(final_output_settings.frame_rate),
+                OutputOption::VideoTrackTimeScale(90_000),
+                OutputOption::FrameRate(final_output_settings.frame_rate.clone()),
+                OutputOption::Format(final_output_settings.format),
             ],
-            output: PipelineOutput { path: output_path },
             output_context,
         })
     }
@@ -620,20 +622,23 @@ impl Pipeline {
                         distinct_paths.iter().position(|p| p == path).unwrap_or(0);
                     audio_label = format!("{}:{}", audio_input_index, index);
                 }
-                PipelineInput::ImageSubtitle {
+                PipelineInput::Subtitle {
                     input_source,
                     index,
                     path,
+                    seek,
                     ..
                 } => {
                     if !distinct_paths.contains(&path.as_str()) {
                         distinct_paths.push(path.as_str());
 
+                        if !seek.is_zero() {
+                            result.extend(args!["-ss", format!("{}ms", seek.as_millis())]);
+                        }
+
                         result.extend(input_source.args_for_input());
                         result.extend(args!["-i", path.to_owned()]);
                     }
-
-                    // TODO: seek?
 
                     let subtitle_input_index =
                         distinct_paths.iter().position(|p| p == path).unwrap_or(0);
@@ -649,17 +654,12 @@ impl Pipeline {
 
         result.extend(args!["-map", filter_chain.video_label().to_owned()]);
         result.extend(args!["-map", filter_chain.audio_label().to_owned()]);
-        if let Some(subtitle_label) = filter_chain.subtitle_label() {
-            result.extend(args!["-map", subtitle_label.to_owned()])
-        }
 
         result.extend(
             self.output_options
                 .iter()
                 .flat_map(|o| o.as_arg(&self.output_context)),
         );
-
-        result.extend(args![self.output.path.to_owned()]);
 
         result
     }
@@ -672,153 +672,6 @@ impl Pipeline {
         }
 
         result
-    }
-
-    fn select_video_stream(
-        input_settings: &InputSettings,
-    ) -> Result<&ProbeResultVideoStream, FFPipelineError> {
-        let mut all_video_streams: Vec<&Box<ProbeResultVideoStream>> = input_settings
-            .video_input
-            .probe_result
-            .streams
-            .iter()
-            .filter_map(|s| match s {
-                ProbeResultStream::Video(video_stream)
-                    if video_stream.codec_type == CodecType::Video =>
-                {
-                    Some(video_stream)
-                }
-                _ => None,
-            })
-            .collect();
-
-        if let Some(video_index) = input_settings.video_input.stream_index {
-            let matched_stream = all_video_streams
-                .iter()
-                .find(|v| v.stream_index == video_index);
-
-            match matched_stream {
-                Some(video_stream) => {
-                    return Ok(video_stream);
-                }
-                None => {
-                    log::warn!(
-                        "unable to locate requested video stream with index {}",
-                        video_index
-                    );
-                }
-            }
-        }
-
-        match all_video_streams.len() {
-            0 => Err(FFPipelineError::VideoInputIsRequired),
-            1 => Ok(all_video_streams[0]),
-            _ => {
-                log::warn!(
-                    "content contains more than one video stream; selecting stream with lowest index"
-                );
-                all_video_streams.sort_by_key(|v| v.stream_index);
-                Ok(all_video_streams[0])
-            }
-        }
-    }
-
-    fn select_audio_stream(
-        input_settings: &InputSettings,
-    ) -> Result<&ProbeResultAudioStream, FFPipelineError> {
-        let mut all_audio_streams: Vec<&ProbeResultAudioStream> = input_settings
-            .audio_input
-            .probe_result
-            .streams
-            .iter()
-            .filter_map(|s| match s {
-                ProbeResultStream::Audio(audio_stream) => Some(audio_stream),
-                _ => None,
-            })
-            .collect();
-
-        if let Some(audio_index) = input_settings.audio_input.stream_index {
-            let matched_stream = all_audio_streams
-                .iter()
-                .find(|a| a.stream_index == audio_index);
-
-            match matched_stream {
-                Some(audio_stream) => {
-                    return Ok(audio_stream);
-                }
-                None => {
-                    log::warn!(
-                        "unable to locate requested audio stream with index {}",
-                        audio_index
-                    );
-                }
-            }
-        }
-
-        match all_audio_streams.len() {
-            0 => Err(FFPipelineError::AudioInputIsRequired),
-            1 => Ok(all_audio_streams[0]),
-            _ => {
-                log::warn!(
-                    "content contains more than one audio stream; selecting stream with greatest number of channels"
-                );
-                all_audio_streams.sort_by_key(|a| std::cmp::Reverse(a.channels));
-                Ok(all_audio_streams[0])
-            }
-        }
-    }
-
-    fn select_subtitle_stream(input_settings: &InputSettings) -> Option<&ProbeResultVideoStream> {
-        let all_subtitle_streams: Vec<&Box<ProbeResultVideoStream>> =
-            match input_settings.subtitle_input.as_ref() {
-                Some(input) => input
-                    .probe_result
-                    .streams
-                    .iter()
-                    .filter_map(|s| match s {
-                        ProbeResultStream::Video(video_stream)
-                            if video_stream.codec_type == CodecType::Subtitle =>
-                        {
-                            Some(video_stream)
-                        }
-                        _ => None,
-                    })
-                    .collect(),
-                None => Vec::new(),
-            };
-
-        if let Some(subtitle_index) = input_settings
-            .subtitle_input
-            .as_ref()
-            .and_then(|i| i.stream_index)
-        {
-            let matched_stream = all_subtitle_streams
-                .iter()
-                .find(|a| a.stream_index == subtitle_index);
-
-            match matched_stream {
-                Some(subtitle_stream) => return Some(subtitle_stream),
-                None => {
-                    log::warn!(
-                        "unable to locate requested subtitle stream with index {}",
-                        subtitle_index
-                    );
-                }
-            }
-        }
-
-        // at this point, select a subtitle if the input is *only* a subtitle
-        if all_subtitle_streams.len() == 1
-            && input_settings
-                .subtitle_input
-                .as_ref()
-                .map(|i| i.probe_result.streams.len() == 1)
-                .unwrap_or(false)
-        {
-            Some(all_subtitle_streams[0])
-        } else {
-            None
-        }
     }
 }
 
