@@ -151,16 +151,14 @@ fn parse_timestamp(s: &str) -> Option<Duration> {
 
     let hours: u64 = parts[0].parse().ok()?;
     let minutes: u64 = parts[1].parse().ok()?;
-
-    let mut sec_parts = parts[2].split('.');
-    let seconds: u64 = sec_parts.next()?.parse().ok()?;
-    let millis: u64 = sec_parts.next().unwrap_or("0").parse().ok()?;
-
-    Some(Duration::from_secs(hours * 3600 + minutes * 60 + seconds) + Duration::from_millis(millis))
+    let seconds_f: f64 = parts[2].parse().ok()?;
+    Some(Duration::from_secs(hours * 3600 + minutes * 60) + Duration::from_secs_f64(seconds_f))
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -213,5 +211,15 @@ and the way we access it is changing
         assert_eq!(parsed[2].start, Duration::from_secs_f64(16.166));
         assert_eq!(parsed[2].end, Duration::from_secs_f64(17.666));
         assert_eq!(parsed[2].text, "[BIRD TWEETS]");
+    }
+
+    #[rstest]
+    #[case("00:00:01.5", 1.5)]
+    #[case("00:01.5", 1.5)]
+    #[case("00:00:01.005", 1.005)]
+    #[case("00:01.005", 1.005)]
+    fn parse_timestamp_seconds_float(#[case] input: &str, #[case] expected: f64) {
+        let duration = parse_timestamp(input);
+        assert_eq!(duration, Some(Duration::from_secs_f64(expected)));
     }
 }

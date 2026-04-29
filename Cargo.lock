@@ -533,6 +533,7 @@ dependencies = [
  "ersatztv-playout",
  "ffpipeline",
  "log",
+ "rstest",
  "schemars",
  "serde",
  "serde_json",
