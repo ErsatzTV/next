@@ -29,7 +29,11 @@ impl PtsScanner {
         let mut entries = Vec::new();
         let mut dir = tokio::fs::read_dir(&self.output_folder).await?;
         while let Ok(Some(entry)) = dir.next_entry().await {
-            if entry.path().ends_with(".ts") {
+            if entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ts"))
+            {
                 entries.push(entry);
             }
         }
