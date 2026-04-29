@@ -517,14 +517,19 @@ impl ChannelSession {
             && let Some(subtitle_stream) = input_settings.select_subtitle_stream()
             && !subtitle_stream.is_subtitle_image()
             && let Some(input) = input_settings.subtitle_input.as_ref()
-            && let Ok(temp_file) =
-                crate::web_vtt::convert_to_vtt(&self.ffmpeg_path, input, subtitle_stream).await
-            && let Ok(cues) = crate::web_vtt::parse_file(temp_file.path()).await
         {
-            subtitle_source = Some(SubtitleSource {
-                cues,
-                next_segment_source_offset: input.in_point,
-            });
+            match crate::web_vtt::convert_to_vtt(&self.ffmpeg_path, input, subtitle_stream).await {
+                Ok(temp_file) => match crate::web_vtt::parse_file(temp_file.path()).await {
+                    Ok(cues) => {
+                        subtitle_source = Some(SubtitleSource {
+                            cues,
+                            next_segment_source_offset: input.in_point,
+                        })
+                    }
+                    Err(err) => log::warn!("error parsing converted vtt: {err}"),
+                },
+                Err(err) => log::warn!("error converting subtitle to vtt: {err}"),
+            }
         }
 
         let pts_offset = output_settings.pts_offset;
