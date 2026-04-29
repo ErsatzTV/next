@@ -11,6 +11,7 @@ members = [
     "crates/libva-sys",
     "crates/libvpl-sys",
     "crates/libvt-sys",
+    "crates/libvulkan-sys",
 ]
 resolver = "3"
 
@@ -31,6 +32,7 @@ libnvidia-sys = { path = "crates/libnvidia-sys" }
 libva-sys = { path = "crates/libva-sys" }
 libvpl-sys = { path = "crates/libvpl-sys" }
 libvt-sys = { path = "crates/libvt-sys" }
+libvulkan-sys = { path = "crates/libvulkan-sys" }
 log = "0.4"
 rand = { version = "0.10", features = ["thread_rng"] }
 rstest = "0.26.1"

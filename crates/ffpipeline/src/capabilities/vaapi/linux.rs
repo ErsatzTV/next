@@ -10,11 +10,13 @@ use crate::error::FFPipelineError;
 use crate::error::FFPipelineError::VaapiCapabilitiesError;
 
 impl VaapiCapabilities {
-    pub fn probe(device: &str, driver: &str) -> Result<VaapiCapabilities, FFPipelineError> {
+    pub fn probe(device: &str, driver: Option<&str>) -> Result<VaapiCapabilities, FFPipelineError> {
         let prev = std::env::var("LIBVA_DRIVER_NAME").ok();
         let prev_level = std::env::var("LIBVA_MESSAGING_LEVEL").ok();
         unsafe {
-            std::env::set_var("LIBVA_DRIVER_NAME", driver);
+            if let Some(driver) = driver {
+                std::env::set_var("LIBVA_DRIVER_NAME", driver);
+            }
             std::env::set_var("LIBVA_MESSAGING_LEVEL", "1");
         };
 

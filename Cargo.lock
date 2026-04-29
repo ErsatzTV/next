@@ -615,6 +615,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 name = "ffpipeline"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "derive_more",
  "enum_dispatch",
  "env_logger",
@@ -623,6 +624,7 @@ dependencies = [
  "libva-sys",
  "libvpl-sys",
  "libvt-sys",
+ "libvulkan-sys",
  "log",
  "rstest",
  "serde",
@@ -1220,6 +1222,13 @@ name = "libvt-sys"
 version = "0.1.0"
 dependencies = [
  "core-foundation",
+]
+
+[[package]]
+name = "libvulkan-sys"
+version = "0.1.0"
+dependencies = [
+ "libloading",
 ]
 
 [[package]]

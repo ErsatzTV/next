@@ -225,7 +225,7 @@ impl HardwareAccel {
                         let capabilities =
                             ffpipeline::capabilities::vaapi::VaapiCapabilities::probe(
                                 vaapi_device.to_str()?,
-                                pipeline_driver.to_string().as_str(),
+                                Some(pipeline_driver.to_string().as_str()),
                             );
 
                         match capabilities {
@@ -281,9 +281,21 @@ impl HardwareAccel {
                     }
                 }
             }
-            HardwareAccel::Vulkan => Some(ffpipeline::hw_accel::HardwareAccel::Vulkan(
-                ffpipeline::accel::vulkan::Vulkan,
-            )),
+            HardwareAccel::Vulkan => {
+                let capabilities = ffpipeline::capabilities::vulkan::VulkanCapabilities::probe();
+                match capabilities {
+                    Ok(capabilities) => {
+                        log::debug!("detected Vulkan capabilities: {:?}", capabilities);
+                        Some(ffpipeline::hw_accel::HardwareAccel::Vulkan(
+                            ffpipeline::accel::vulkan::Vulkan { capabilities },
+                        ))
+                    }
+                    Err(e) => {
+                        log::error!("failed to probe Vulkan capabilities: {}", e);
+                        None
+                    }
+                }
+            }
         }
     }
 }

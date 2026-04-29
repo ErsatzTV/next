@@ -22,4 +22,6 @@ pub enum FFPipelineError {
     VaapiCapabilitiesError(String),
     #[error("error detecting videotoolbox capabilities: {0}")]
     VideoToolboxCapabilitiesError(String),
+    #[error("error detecting vulkan capabilities: {0}")]
+    VulkanCapabilitiesError(String),
 }

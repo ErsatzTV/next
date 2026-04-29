@@ -4,13 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { workspace = true }
 derive_more = { workspace = true }
 enum_dispatch = { workspace = true }
+env_logger = { workspace = true }
 libcl-sys = { workspace = true }
 libnvidia-sys = { workspace = true }
 libva-sys = { workspace = true }
 libvpl-sys = { workspace = true }
 libvt-sys = { workspace = true }
+libvulkan-sys = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -42,13 +42,13 @@ fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities, OpenCLCapabi
     let device_str = device.to_str()?;
 
     if let Some(driver) = find_vaapi_driver() {
-        let caps = VaapiCapabilities::probe(device_str, &driver.to_string()).ok()?;
+        let caps = VaapiCapabilities::probe(device_str, Some(&driver.to_string())).ok()?;
         let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
         return Some((device_str.to_owned(), driver, caps, opencl_caps));
     }
 
     for driver in [VaapiDriver::Ihd, VaapiDriver::I965, VaapiDriver::RadeonSI] {
-        if let Ok(caps) = VaapiCapabilities::probe(device_str, &driver.to_string())
+        if let Ok(caps) = VaapiCapabilities::probe(device_str, Some(&driver.to_string()))
             && caps.count() > 0
         {
             let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
