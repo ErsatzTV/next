@@ -169,7 +169,7 @@ impl PlaylistManager {
 
             self.last_segment_end += Duration::from_secs_f64(duration);
 
-            let vtt_path = file.replace(".ts", ".vtt");
+            let vtt_path = format!("{}.vtt", file.strip_suffix(".ts").unwrap_or(&file));
             let vtt_full = self.output_folder.join(&vtt_path);
             let mpegts_90khz = (((self.pts_offset.unwrap_or_default().duration.as_secs_f64()
                 + (program_date_time - self.channel_start_time).as_seconds_f64())
@@ -210,7 +210,10 @@ impl PlaylistManager {
                 let path = self.output_folder.join(&removed.path);
                 tokio::fs::remove_file(&path).await?;
 
-                let vtt_path = self.output_folder.join(removed.path.replace(".ts", ".vtt"));
+                let vtt_path = self.output_folder.join(format!(
+                    "{}.vtt",
+                    removed.path.strip_suffix(".ts").unwrap_or(&removed.path)
+                ));
                 if vtt_path.exists() {
                     tokio::fs::remove_file(&vtt_path).await?;
                 }
@@ -224,8 +227,10 @@ impl PlaylistManager {
         tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
 
         // generate and atomically save subtitle playlist
-        let generated_subtitle_playlist =
-            self.generate_playlist(|s| s.replace(".ts", ".vtt"), Some(10))?;
+        let generated_subtitle_playlist = self.generate_playlist(
+            |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
+            Some(10),
+        )?;
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
         tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
         tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
