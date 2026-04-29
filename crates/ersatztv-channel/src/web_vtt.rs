@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use ersatztv_channel::error::ChannelError;
 use ffpipeline::input::{InputSource, ProbedInput};
-use ffpipeline::probe::ProbeResultVideoStream;
+use ffpipeline::probe::{CodecType, ProbeResultStream, ProbeResultVideoStream};
 use tempfile::NamedTempFile;
 use tokio::process::Command;
 
@@ -21,6 +21,18 @@ pub(crate) async fn convert_to_vtt(
 ) -> Result<NamedTempFile, ChannelError> {
     match &input.input_source {
         InputSource::Local(local) => {
+            // find index of subtitle *within subtitle streams*
+            let subtitle_index = input
+                .probe_result
+                .streams
+                .iter()
+                .filter_map(|s| match s {
+                    ProbeResultStream::Video(v) if v.codec_type == CodecType::Subtitle => Some(v),
+                    _ => None,
+                })
+                .position(|v| v.stream_index == subtitle_stream.stream_index)
+                .ok_or(ChannelError::FailedToConvertSubtitle)?;
+
             let temp_file = NamedTempFile::with_suffix(".vtt")?;
             let file_name = temp_file.path().to_string_lossy();
             let mut ffmpeg = Command::new(ffmpeg_path)
@@ -32,7 +44,7 @@ pub(crate) async fn convert_to_vtt(
                     "-i",
                     local.path.as_str(),
                     "-map",
-                    &format!("0:s:{}", subtitle_stream.stream_index),
+                    &format!("0:s:{}", subtitle_index),
                     "-c:s",
                     "webvtt",
                     "-y",
