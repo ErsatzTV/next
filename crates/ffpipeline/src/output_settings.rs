@@ -12,6 +12,7 @@ pub struct OutputSettings {
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
     pub tonemap_algorithm: Option<String>,
     pub deinterlace: bool,
     pub accel: Option<HardwareAccel>,
@@ -53,4 +54,10 @@ impl Default for AudioLoudnessSettings {
 pub enum SubtitleMode {
     Burn,
     Convert,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ScalingMode {
+    ScaleAndPad,
+    Stretch,
 }

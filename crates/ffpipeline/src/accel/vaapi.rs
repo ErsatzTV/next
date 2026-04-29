@@ -45,6 +45,7 @@ impl HwAccel for Vaapi {
                 size,
                 input_is_anamorphic,
                 force_original_aspect_ratio,
+                ..
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi)
                 && !current_state.pixel_format.has_alpha() =>
             {

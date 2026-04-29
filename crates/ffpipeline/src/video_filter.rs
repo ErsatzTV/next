@@ -5,6 +5,7 @@ use enum_dispatch::enum_dispatch;
 use crate::accel;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_size::FrameSize;
+use crate::output_settings::ScalingMode;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 
 #[derive(Clone)]
@@ -168,36 +169,36 @@ impl VideoFilterOp for HwDownloadFilter {
 #[derive(Clone)]
 pub struct ScaleFilter {
     pub size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
     pub input_is_anamorphic: bool,
     pub force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleFilter {
     fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        match &self.size {
-            Some(target) => {
-                if state.size == *target {
-                    None
-                } else {
-                    let actual = target.square_pixel_size(state);
-                    let force_original_aspect_ratio = if actual == *target {
-                        None
-                    } else {
-                        Some(ForceOriginalAspectRatio::Decrease)
-                    };
-
-                    Some(
-                        ScaleFilter {
-                            size: Some(actual),
-                            input_is_anamorphic: state.is_anamorphic,
-                            force_original_aspect_ratio,
-                        }
-                        .into(),
-                    )
-                }
-            }
-            None => None,
+        let target = self.size?;
+        if state.size == target {
+            return None;
         }
+
+        let (size, force) = match self.scaling_mode {
+            ScalingMode::ScaleAndPad => {
+                let actual = target.square_pixel_size(state);
+                let force = (actual != target).then_some(ForceOriginalAspectRatio::Decrease);
+                (actual, force)
+            }
+            ScalingMode::Stretch => (target, None),
+        };
+
+        Some(
+            ScaleFilter {
+                size: Some(size),
+                scaling_mode: self.scaling_mode,
+                input_is_anamorphic: state.is_anamorphic,
+                force_original_aspect_ratio: force,
+            }
+            .into(),
+        )
     }
 
     fn apply_to(&self, state: &mut FrameState) {

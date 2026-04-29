@@ -193,6 +193,13 @@
         "folder"
       ]
     },
+    "ScalingMode": {
+      "type": "string",
+      "enum": [
+        "scale_and_pad",
+        "stretch"
+      ]
+    },
     "SubtitleMode": {
       "type": "string",
       "enum": [
@@ -283,6 +290,9 @@
           ],
           "format": "uint32",
           "minimum": 0
+        },
+        "scaling_mode": {
+          "$ref": "#/$defs/ScalingMode"
         },
         "tonemap_algorithm": {
           "type": [

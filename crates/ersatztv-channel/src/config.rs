@@ -109,6 +109,8 @@ pub struct VideoNormalizationConfig {
     pub bit_depth: Option<u8>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    #[serde(default)]
+    pub scaling_mode: ScalingMode,
     pub bitrate_kbps: Option<u32>,
     pub buffer_kbps: Option<u32>,
     pub accel: Option<HardwareAccel>,
@@ -117,6 +119,25 @@ pub struct VideoNormalizationConfig {
     pub tonemap_algorithm: Option<String>,
     #[serde(default)]
     pub deinterlace: bool,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalingMode {
+    #[default]
+    #[serde(alias = "scale_and_pad")]
+    ScaleAndPad,
+    #[serde(alias = "stretch")]
+    Stretch,
+}
+
+impl From<ScalingMode> for ffpipeline::output_settings::ScalingMode {
+    fn from(value: ScalingMode) -> Self {
+        match value {
+            ScalingMode::ScaleAndPad => ffpipeline::output_settings::ScalingMode::ScaleAndPad,
+            ScalingMode::Stretch => ffpipeline::output_settings::ScalingMode::Stretch,
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]

@@ -16,7 +16,7 @@ use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
 use crate::output_option::OutputOption;
-use crate::output_settings::{OutputSettings, SubtitleMode};
+use crate::output_settings::{OutputSettings, ScalingMode, SubtitleMode};
 use crate::overlay_filter::{OverlayFilter, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
@@ -308,11 +308,6 @@ impl Pipeline {
             is_hdr: video_stream.color_params.is_hdr(),
         };
 
-        let initial_scaled_size = final_output_settings
-            .video_size
-            .as_ref()
-            .map(|s| s.square_pixel_size(&initial_state));
-
         let preferred_pixel_format = match final_output_settings.bit_depth {
             Some(10) => video_codec.preferred_pixel_format_10bit,
             Some(8) => video_codec.preferred_pixel_format_8bit,
@@ -366,7 +361,8 @@ impl Pipeline {
             ),
             PipelineFilter::Video(
                 ScaleFilter {
-                    size: initial_scaled_size,
+                    size: final_output_settings.video_size,
+                    scaling_mode: final_output_settings.scaling_mode,
                     input_is_anamorphic: initial_state.is_anamorphic,
                     force_original_aspect_ratio: None,
                 }
@@ -433,6 +429,7 @@ impl Pipeline {
                     secondary: vec![
                         ScaleFilter {
                             size: final_output_settings.video_size,
+                            scaling_mode: ScalingMode::ScaleAndPad,
                             input_is_anamorphic: subtitle_stream.is_anamorphic(),
                             force_original_aspect_ratio: None,
                         }

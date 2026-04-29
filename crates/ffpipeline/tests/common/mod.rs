@@ -9,7 +9,7 @@ use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{InputSettings, InputSource, LocalInputSource, ProbedInput};
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
-    AudioLoudnessSettings, AudioOutputSettings, OutputSettings, SubtitleMode,
+    AudioLoudnessSettings, AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode,
 };
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
 use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
@@ -211,6 +211,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         video_bitrate: params.video_bitrate,
         video_buffer: params.video_buffer,
         video_size: params.video_size,
+        scaling_mode: ScalingMode::ScaleAndPad,
         tonemap_algorithm: params.tonemap_algorithm,
         deinterlace: params.deinterlace,
         accel: params.accel,

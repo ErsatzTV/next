@@ -429,6 +429,7 @@ impl ChannelSession {
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),
             video_buffer: video_norm.buffer_kbps.map(Kbps),
             video_size,
+            scaling_mode: video_norm.scaling_mode.into(),
             tonemap_algorithm: video_norm.tonemap_algorithm.clone(),
             deinterlace: video_norm.deinterlace,
             accel: self.hw_accel.clone(),
