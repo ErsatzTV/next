@@ -381,19 +381,32 @@ impl ChannelSession {
                 .and_then(|s| Self::playout_source_to_input_source(s.clone()).ok())
         };
 
-        let audio_probe_result = self.probe_source(&audio_input_source).await?;
-        let video_probe_result = if audio_source_is_video_source {
-            audio_probe_result.clone()
-        } else {
-            self.probe_source(&video_input_source).await?
+        let audio_fut = self.probe_source(&audio_input_source);
+        let video_fut = async {
+            if audio_source_is_video_source {
+                Ok::<_, ChannelError>(None)
+            } else {
+                self.probe_source(&video_input_source).await.map(Some)
+            }
         };
+        let subtitle_fut = async {
+            if subtitle_source_is_video_source {
+                Ok::<_, ChannelError>(None)
+            } else if let Some(s) = subtitle_input_source.as_ref() {
+                self.probe_source(s).await.map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+
+        let (audio_probe_result, video_probe_opt, subtitle_probe_opt) =
+            tokio::try_join!(audio_fut, video_fut, subtitle_fut)?;
+
+        let video_probe_result = video_probe_opt.unwrap_or_else(|| audio_probe_result.clone());
         let subtitle_probe_result = if subtitle_source_is_video_source {
             Some(video_probe_result.clone())
         } else {
-            match subtitle_input_source.as_ref() {
-                Some(s) => Some(self.probe_source(s).await?),
-                None => None,
-            }
+            subtitle_probe_opt
         };
 
         let audio_norm = &self.channel_config.normalization.audio;
