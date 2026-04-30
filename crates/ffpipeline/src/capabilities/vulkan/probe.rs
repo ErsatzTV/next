@@ -216,12 +216,16 @@ unsafe fn probe_with_instance(
 
             if score > best_score {
                 best_score = score;
-                best_device = Some((device, name, ext_names));
+                best_device = Some((i as u32, device, name, ext_names));
             }
         }
 
-        let (physical_device, device_name, ext_names) = best_device.unwrap();
-        log::debug!("[vulkan] selected device: \"{}\"", device_name);
+        let (device_index, physical_device, device_name, ext_names) = best_device.unwrap();
+        log::debug!(
+            "[vulkan] selected device {}: \"{}\"",
+            device_index,
+            device_name
+        );
 
         let get_video_caps = (vk.vkGetInstanceProcAddr)(
             instance,
@@ -272,6 +276,7 @@ unsafe fn probe_with_instance(
         }
 
         Ok(VulkanCapabilities {
+            device_index,
             supported_decoders,
             supported_encoders,
         })

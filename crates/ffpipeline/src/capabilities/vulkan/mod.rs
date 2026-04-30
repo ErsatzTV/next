@@ -16,6 +16,7 @@ pub(crate) mod stub;
 
 #[derive(Debug, Clone)]
 pub struct VulkanCapabilities {
+    pub(crate) device_index: u32,
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) supported_encoders: HashMap<VideoFormat, Vec<u8>>,
 }

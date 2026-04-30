@@ -103,7 +103,10 @@ impl HwAccel for Vulkan {
     }
 
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
-        args!["-init_hw_device", "vulkan"]
+        args![
+            "-init_hw_device",
+            format!("vulkan:{}", self.capabilities.device_index)
+        ]
     }
 
     fn known_accel(&self) -> &KnownHardwareAccel {
