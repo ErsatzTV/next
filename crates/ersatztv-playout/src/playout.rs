@@ -44,6 +44,8 @@ pub struct PlayoutItem {
     pub source: Option<PlayoutItemSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<PlayoutItemTracks>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watermarks: Vec<Watermark>,
 }
 
 impl PlayoutItem {
@@ -65,6 +67,7 @@ impl PlayoutItem {
                 out_point_ms: out_point.map(|d| d.as_millis() as u64),
             }),
             tracks: None,
+            watermarks: Vec::new(),
         })
     }
 
@@ -89,6 +92,41 @@ pub struct TrackSelection {
     pub source: Option<PlayoutItemSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_index: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Watermark {
+    pub source: PlayoutItemSource,
+    pub location: WatermarkLocation,
+    /// Scale to this percent of primary content width (0–100).
+    /// Omitted = actual size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_percent: Option<f32>,
+    /// Horizontal offset from `location`, as percent of primary content width (0–100).
+    /// Omitted = 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_margin_percent: Option<f32>,
+    /// Vertical offset from `location`, as percent of primary content height (0–100).
+    /// Omitted = 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_margin_percent: Option<f32>,
+    /// Opacity as a percent (0–100). Omitted = fully opaque (100).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity_percent: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatermarkLocation {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]

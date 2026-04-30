@@ -15,7 +15,20 @@
         "audio": {
           "stream_index": 1
         }
-      }
+      },
+      "watermarks": [
+        {
+          "source": {
+            "source_type": "local",
+            "path": "~/Pictures/network-logo.png"
+          },
+          "location": "bottom_right",
+          "width_percent": 10,
+          "horizontal_margin_percent": 2,
+          "vertical_margin_percent": 2,
+          "opacity_percent": 80
+        }
+      ]
     },
     {
       "id": "2",

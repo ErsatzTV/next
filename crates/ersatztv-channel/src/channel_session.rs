@@ -754,6 +754,7 @@ impl ChannelSession {
                 }),
                 subtitle: None,
             }),
+            watermarks: Vec::new(),
         }
     }
 

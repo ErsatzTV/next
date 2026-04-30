@@ -38,9 +38,6 @@ cargo +nightly fmt --all
 # Format check
 cargo +nightly fmt --all -- --check
 
-# Generate playout JSON schema
-cargo run --bin gen_playout_schema
-
 # There are 2 styles of tests in the repository currently, unit and lightweight integration
 # Lightweight integration tests are disabled by default because they require local ffmpeg
 # binaries.
@@ -74,7 +71,7 @@ channels.
 - **`ffpipeline`** — FFmpeg pipeline builder. Probes source media, selects hardware acceleration, constructs filter
   chains, generates ffmpeg command-line args. Key trait: `HwAccel` with implementations for CUDA, QSV, VAAPI,
   VideoToolbox.
-- **`ersatztv-playout`** — Playout JSON data models (serde + schemars). Schema at `schema/playout.json`.
+- **`ersatztv-playout`** — Playout JSON data models (serde). Schema at `schema/playout.json` is hand-maintained - keep it in sync when editing the Rust types.
 - **`ersatztv-core`** — Shared utilities: heartbeat/ready file management, timing constants.
 - **`ersatztv-playout-generator`** — Dev tool for generating playout JSON from video folders or syncing from legacy DB.
 - **`libnvidia-sys`, `libva-sys`, `libvpl-sys`** — FFI bindings for hardware acceleration capability detection.

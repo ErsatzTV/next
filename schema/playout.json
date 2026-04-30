@@ -66,6 +66,13 @@
               "type": "null"
             }
           ]
+        },
+        "watermarks": {
+          "type": "array",
+          "description": "Watermarks (image/video overlays) to composite on top of the primary content for the duration of this item. Omit or set to an empty array for no watermark.",
+          "items": {
+            "$ref": "#/definitions/Watermark"
+          }
         }
       }
     },
@@ -132,6 +139,75 @@
           "description": "Zero-based stream index within the effective source. If omitted, the server picks the first stream of this track's kind."
         }
       }
+    },
+    "Watermark": {
+      "type": "object",
+      "description": "An image or video overlay composited on top of the primary content. Sized and positioned relative to the primary content's frame.",
+      "required": [
+        "source",
+        "location"
+      ],
+      "properties": {
+        "source": {
+          "description": "The source providing the watermark media (typically an image, but any `PlayoutItemSource` is accepted).",
+          "$ref": "#/definitions/PlayoutItemSource"
+        },
+        "location": {
+          "description": "Anchor position within the primary content frame.",
+          "$ref": "#/definitions/WatermarkLocation"
+        },
+        "width_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Scale the watermark to this percent of the primary content width (0–100). Omit to use the watermark's actual size."
+        },
+        "horizontal_margin_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Horizontal offset from the anchor `location`, as a percent of primary content width (0–100). Omit for 0."
+        },
+        "vertical_margin_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Vertical offset from the anchor `location`, as a percent of primary content height (0–100). Omit for 0."
+        },
+        "opacity_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Opacity as a percent (0–100). Omit for fully opaque (100)."
+        }
+      }
+    },
+    "WatermarkLocation": {
+      "type": "string",
+      "description": "Nine-position anchor within the primary content frame. Read like a 3×3 grid: rows top/center/bottom, columns left/center/right; the dead center is `center`.",
+      "enum": [
+        "top_left",
+        "top_center",
+        "top_right",
+        "center_left",
+        "center",
+        "center_right",
+        "bottom_left",
+        "bottom_center",
+        "bottom_right"
+      ]
     },
     "PlayoutItemSource": {
       "description": "A media source. Exactly one variant, distinguished by `source_type`.",
