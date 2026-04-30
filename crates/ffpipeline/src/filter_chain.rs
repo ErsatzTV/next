@@ -492,7 +492,7 @@ impl FilterChain {
             if !pending.is_empty() {
                 flush(&mut filter_chains, &mut pending, &current_in, "v");
                 self.video_label = String::from("[v]");
-            } else {
+            } else if overlay_num > 0 {
                 self.video_label = format!("[{}]", current_in);
             }
         }
@@ -531,7 +531,7 @@ mod tests {
     use crate::hw_accel::HardwareAccel;
     use crate::output_settings::ScalingMode;
     use crate::pipeline::HwPixelFormat;
-    use crate::video_filter::{HwMapFilter, PadFilter, ToneMapFilter};
+    use crate::video_filter::{HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter};
 
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
@@ -1295,6 +1295,29 @@ mod tests {
         assert!(
             filter_complex.contains(expected_order),
             "hwmap to opencl should appear immediately before pad_opencl: {filter_complex}"
+        );
+    }
+
+    #[test]
+    fn build_keeps_stream_specifier_when_only_filter_emits_no_arg() {
+        // this scale filter emits no args
+        let upload: VideoFilter = ScaleFilter {
+            size: None,
+            scaling_mode: ScalingMode::Stretch,
+            input_is_anamorphic: false,
+            force_original_aspect_ratio: None,
+        }
+        .into();
+        assert!(upload.as_arg().is_none());
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(upload)]);
+        chain.build("0:1", "0:0", None, None);
+
+        assert_eq!(chain.video_label(), "0:0");
+        let args = chain.as_arg();
+        assert!(
+            args.is_empty(),
+            "no filter_complex should be emitted: {args:?}"
         );
     }
 }
