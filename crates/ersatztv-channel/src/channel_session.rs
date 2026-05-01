@@ -564,6 +564,7 @@ impl ChannelSession {
                     Ok(cues) => {
                         subtitle_source = Some(SubtitleSource {
                             cues,
+                            cursor: 0,
                             next_segment_source_offset: input.in_point,
                         })
                     }

@@ -15,6 +15,7 @@ const MIN_SEGMENTS: usize = 4;
 #[derive(Clone)]
 pub struct SubtitleSource {
     pub cues: Vec<Cue>,
+    pub(crate) cursor: usize,
     pub next_segment_source_offset: Duration,
 }
 
@@ -343,7 +344,7 @@ impl PlaylistManager {
 }
 
 fn render_subtitle_segment(
-    src: &SubtitleSource,
+    src: &mut SubtitleSource,
     seg_start_src: Duration,
     duration: f64,
     mpegts_90khz: u64,
@@ -354,22 +355,33 @@ fn render_subtitle_segment(
         "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
         mpegts_90khz
     );
-    for cue in src
-        .cues
-        .iter()
-        .filter(|c| c.end > seg_start_src && c.start < seg_end_src)
+
+    let mut segment_cursor = src.cursor;
+
+    while let Some(cue) = src.cues.get(segment_cursor)
+        && cue.start < seg_end_src
     {
-        let local_start = cue.start.saturating_sub(seg_start_src);
-        let local_end = cue
-            .end
-            .saturating_sub(seg_start_src)
-            .min(Duration::from_secs_f64(duration));
-        out.push_str(&format!(
-            "{} --> {}\n{}\n\n",
-            format_vtt_ts(local_start),
-            format_vtt_ts(local_end),
-            cue.text
-        ));
+        if cue.end > seg_start_src {
+            let local_start = cue.start.saturating_sub(seg_start_src);
+            let local_end = cue
+                .end
+                .saturating_sub(seg_start_src)
+                .min(Duration::from_secs_f64(duration));
+            out.push_str(&format!(
+                "{} --> {}\n{}\n\n",
+                format_vtt_ts(local_start),
+                format_vtt_ts(local_end),
+                cue.text
+            ));
+        }
+
+        // walk persistent cursor if this cue will never display again
+        if src.cursor == segment_cursor && cue.end <= seg_end_src {
+            src.cursor += 1;
+        }
+
+        segment_cursor += 1;
     }
+
     out
 }
