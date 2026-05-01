@@ -156,6 +156,7 @@ pub fn build_input(path: &Path, probe: ProbeResult, duration: Duration) -> Input
             stream_index: None,
         },
         subtitle_input: None,
+        watermark_input: None,
     }
 }
 

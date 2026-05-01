@@ -10,6 +10,29 @@ pub struct OverlayFilter {
     pub kind: OverlayKind,
     pub secondary: Vec<VideoFilter>,
     pub secondary_initial_state: FrameState,
+    pub secondary_source: OverlaySource,
+    pub location: Option<FramePoint>,
+}
+
+impl OverlayFilter {
+    pub fn with_kind(&self, kind: OverlayKind) -> OverlayFilter {
+        OverlayFilter {
+            kind,
+            ..self.clone()
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct FramePoint {
+    pub x: u32,
+    pub y: u32,
+}
+
+#[derive(Clone)]
+pub enum OverlaySource {
+    Subtitle,
+    Watermark,
 }
 
 #[derive(Clone)]
@@ -61,12 +84,20 @@ impl OverlayKindOp for SoftwareOverlay {
         }
     }
 
-    fn as_arg(&self) -> Option<String> {
+    fn as_arg(&self, location: Option<FramePoint>) -> Option<String> {
         let fmt = match self.bit_depth {
             10 => "1",
             _ => "0",
         };
-        Some(format!("overlay=x=(W-w)/2:y=(H-h)/2:format={fmt}"))
+
+        if let Some(location) = location {
+            Some(format!(
+                "overlay=x={}:y={}:format={fmt}",
+                location.x, location.y
+            ))
+        } else {
+            Some(format!("overlay=x=(W-w)/2:y=(H-h)/2:format={fmt}"))
+        }
     }
 
     fn configure(&mut self, main: &FrameState) {
@@ -79,7 +110,7 @@ pub trait OverlayKindOp {
     fn apply_to(&self, state: &mut FrameState);
     fn main_input_state(&self, current_state: &FrameState) -> FrameState;
     fn secondary_input_state(&self, current_state: &FrameState) -> FrameState;
-    fn as_arg(&self) -> Option<String>;
+    fn as_arg(&self, location: Option<FramePoint>) -> Option<String>;
 
     /// capture anything needed from main state (e.g. bit depth)
     fn configure(&mut self, _main: &FrameState) {}

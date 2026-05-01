@@ -8,7 +8,7 @@ use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
-    PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
+    PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection, WatermarkLocation,
 };
 use ersatztv_playout::template::expand_template;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
@@ -16,7 +16,7 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{
     HttpInputOptions, HttpInputSource, InputSettings, InputSource, LavfiInputSource,
-    LocalInputSource, ProbedInput,
+    LocalInputSource, ProbedInput, WatermarkInput,
 };
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
@@ -399,8 +399,34 @@ impl ChannelSession {
             }
         };
 
-        let (audio_probe_result, video_probe_opt, subtitle_probe_opt) =
-            tokio::try_join!(audio_fut, video_fut, subtitle_fut)?;
+        let watermark_fut = async {
+            if let Some(w) = current_item.watermark.as_ref() {
+                let input_source = Self::playout_source_to_input_source(w.source.clone())?;
+                let location = Self::playout_location_to_pipeline(&w.location);
+                let width_percent = w.width_percent;
+                let horizontal_margin_percent = w.horizontal_margin_percent;
+                let vertical_margin_percent = w.vertical_margin_percent;
+                let opacity_percent = w.opacity_percent;
+                let stream_index = w.stream_index;
+
+                let probe_result = self.probe_source(&input_source).await?;
+                Ok(Some(WatermarkInput {
+                    input_source,
+                    probe_result,
+                    stream_index,
+                    location,
+                    width_percent,
+                    horizontal_margin_percent,
+                    vertical_margin_percent,
+                    opacity_percent,
+                }))
+            } else {
+                Ok(None)
+            }
+        };
+
+        let (audio_probe_result, video_probe_opt, subtitle_probe_opt, watermark_input) =
+            tokio::try_join!(audio_fut, video_fut, subtitle_fut, watermark_fut)?;
 
         let video_probe_result = video_probe_opt.unwrap_or_else(|| audio_probe_result.clone());
         let subtitle_probe_result = if subtitle_source_is_video_source {
@@ -524,6 +550,7 @@ impl ChannelSession {
                 stream_index: video_index,
             },
             subtitle_input,
+            watermark_input,
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
@@ -767,7 +794,23 @@ impl ChannelSession {
                 }),
                 subtitle: None,
             }),
-            watermarks: Vec::new(),
+            watermark: None,
+        }
+    }
+
+    fn playout_location_to_pipeline(
+        value: &WatermarkLocation,
+    ) -> ffpipeline::input::WatermarkLocation {
+        match value {
+            WatermarkLocation::TopLeft => ffpipeline::input::WatermarkLocation::TopLeft,
+            WatermarkLocation::TopCenter => ffpipeline::input::WatermarkLocation::TopCenter,
+            WatermarkLocation::TopRight => ffpipeline::input::WatermarkLocation::TopRight,
+            WatermarkLocation::CenterLeft => ffpipeline::input::WatermarkLocation::CenterLeft,
+            WatermarkLocation::Center => ffpipeline::input::WatermarkLocation::Center,
+            WatermarkLocation::CenterRight => ffpipeline::input::WatermarkLocation::CenterRight,
+            WatermarkLocation::BottomLeft => ffpipeline::input::WatermarkLocation::BottomLeft,
+            WatermarkLocation::BottomCenter => ffpipeline::input::WatermarkLocation::BottomCenter,
+            WatermarkLocation::BottomRight => ffpipeline::input::WatermarkLocation::BottomRight,
         }
     }
 

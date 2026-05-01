@@ -4,7 +4,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
-use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
+use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
@@ -94,10 +94,7 @@ impl HwAccel for Cuda {
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::OverlayCuda)
                     && current_state.pixel_format.bit_depth() == 8 =>
             {
-                OverlayFilter {
-                    kind: OverlayKind::Cuda(CudaOverlay),
-                    ..overlay_filter.clone()
-                }
+                overlay_filter.with_kind(OverlayKind::Cuda(CudaOverlay))
             }
             _ => overlay_filter.clone(),
         }
@@ -450,7 +447,11 @@ impl OverlayKindOp for CudaOverlay {
         }
     }
 
-    fn as_arg(&self) -> Option<String> {
-        Some(String::from("overlay_cuda=x=(W-w)/2:y=(H-h)/2"))
+    fn as_arg(&self, location: Option<FramePoint>) -> Option<String> {
+        if let Some(location) = location {
+            Some(format!("overlay_cuda=x={}:y={}", location.x, location.y))
+        } else {
+            Some(String::from("overlay_cuda=x=(W-w)/2:y=(H-h)/2"))
+        }
     }
 }

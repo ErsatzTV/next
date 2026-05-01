@@ -14,15 +14,15 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
-use crate::input::{FfmpegInputArgs, InputSettings, InputSource};
+use crate::input::{FfmpegInputArgs, InputSettings, InputSource, WatermarkInput};
 use crate::output_option::OutputOption;
 use crate::output_settings::{OutputSettings, ScalingMode, SubtitleMode};
-use crate::overlay_filter::{OverlayFilter, SoftwareOverlay};
+use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    DeinterlaceFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
-    SubtitlesFilter, ToneMapFilter,
+    ColorChannelMixerFilter, DeinterlaceFilter, FormatFilter, LoopFilter, PadFilter, ScaleFilter,
+    SoftwareDeinterlaceFilter, SubtitlesFilter, ToneMapFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -207,6 +207,12 @@ pub enum PipelineInput {
         path: String,
         seek: Duration,
     },
+    Watermark {
+        input: WatermarkInput,
+        index: u32,
+        path: String,
+        extra_input_args: ArgVec,
+    },
 }
 
 impl PipelineInput {
@@ -215,6 +221,7 @@ impl PipelineInput {
             PipelineInput::Video { .. } => 0,
             PipelineInput::Audio { .. } => 1,
             PipelineInput::Subtitle { .. } => 2,
+            PipelineInput::Watermark { .. } => 3,
         }
     }
 }
@@ -261,6 +268,7 @@ impl Pipeline {
         let video_stream = input_settings.select_video_stream()?;
         let audio_stream = input_settings.select_audio_stream()?;
         let subtitle_stream = input_settings.select_subtitle_stream();
+        let watermark_stream = input_settings.select_watermark_stream();
 
         // TODO: add target profile to config
         let video_codec = match (
@@ -436,6 +444,8 @@ impl Pipeline {
                         .into(),
                     ],
                     secondary_initial_state,
+                    secondary_source: OverlaySource::Subtitle,
+                    location: None,
                 }));
             } else if !subtitle_stream.is_subtitle_image()
                 && final_output_settings.subtitle_mode == SubtitleMode::Burn
@@ -448,6 +458,81 @@ impl Pipeline {
                     .into(),
                 ))
             }
+        }
+
+        if let Some(watermark_stream) = watermark_stream
+            && let Some(watermark_input) = input_settings.watermark_input.as_ref()
+            && let Some(height) = watermark_stream.height
+            && let Some(width) = watermark_stream.width
+        {
+            let extra_input_args = if watermark_stream.is_still_image() {
+                args![
+                    "-loop",
+                    "1",
+                    "-framerate",
+                    output_context.media_frame_rate.r_frame_rate.clone()
+                ]
+            } else if watermark_stream.codec == "gif" || watermark_stream.codec == "apng" {
+                args!["-ignore_loop", "0"]
+            } else {
+                args!["-stream_loop", "-1"]
+            };
+
+            inputs.push(PipelineInput::Watermark {
+                input: watermark_input.clone(),
+                index: watermark_stream.stream_index,
+                path: watermark_input.probe_result.path.to_owned(),
+                extra_input_args,
+            });
+
+            let secondary_initial_state = FrameState {
+                size: FrameSize { width, height },
+                is_anamorphic: false,
+                is_interlaced: false,
+                sample_aspect_ratio: Some(String::from("1:1")),
+                display_aspect_ratio: None,
+                surface: FrameSurface::System,
+                pixel_format: if watermark_stream.pix_fmt.is_empty() {
+                    PixelFormat::Bgra
+                } else {
+                    PixelFormat::parse(&watermark_stream.pix_fmt)
+                },
+                is_hdr: false,
+            };
+
+            let scaled_size = watermark_input.scaled_size(
+                FrameSize { width, height },
+                final_output_settings.video_size,
+            );
+
+            let location = final_output_settings
+                .video_size
+                .as_ref()
+                .map(|s| watermark_input.frame_location(&scaled_size, s));
+
+            filters.push(PipelineFilter::Overlay(OverlayFilter {
+                kind: SoftwareOverlay::default().into(),
+                secondary: vec![
+                    ColorChannelMixerFilter {
+                        alpha: watermark_input.opacity_percent.unwrap_or(0f32) / 100.0f32,
+                    }
+                    .into(),
+                    FormatFilter {
+                        format: PixelFormat::Yuva420p,
+                    }
+                    .into(),
+                    ScaleFilter {
+                        size: Some(scaled_size),
+                        scaling_mode: ScalingMode::ScaleAndPad,
+                        input_is_anamorphic: false,
+                        force_original_aspect_ratio: None,
+                    }
+                    .into(),
+                ],
+                secondary_initial_state,
+                secondary_source: OverlaySource::Watermark,
+                location,
+            }));
         }
 
         Ok(Pipeline {
@@ -556,6 +641,7 @@ impl Pipeline {
         let mut audio_label = String::from("0:a");
         let mut video_label = String::from("0:v");
         let mut subtitle_label = None;
+        let mut watermark_label = None;
 
         let mut distinct_paths: Vec<&str> = Vec::new();
 
@@ -641,11 +727,34 @@ impl Pipeline {
                         distinct_paths.iter().position(|p| p == path).unwrap_or(0);
                     subtitle_label = Some(format!("{}:{}", subtitle_input_index, index));
                 }
+                PipelineInput::Watermark {
+                    input,
+                    index,
+                    path,
+                    extra_input_args,
+                } => {
+                    if !distinct_paths.contains(&path.as_str()) {
+                        distinct_paths.push(path.as_str());
+
+                        result.extend(input.input_source.args_for_input());
+                        result.extend(extra_input_args.clone());
+                        result.extend(args!["-i", path.to_owned()]);
+                    }
+
+                    let watermark_input_index =
+                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
+                    watermark_label = Some(format!("{}:{}", watermark_input_index, index))
+                }
             }
         }
 
         let mut filter_chain = self.filter_chain.to_owned();
-        filter_chain.build(&audio_label, &video_label, subtitle_label.as_ref());
+        filter_chain.build(
+            &audio_label,
+            &video_label,
+            subtitle_label.as_ref(),
+            watermark_label.as_ref(),
+        );
 
         result.extend(filter_chain.as_arg());
 

@@ -44,8 +44,8 @@ pub struct PlayoutItem {
     pub source: Option<PlayoutItemSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<PlayoutItemTracks>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub watermarks: Vec<Watermark>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<Watermark>,
 }
 
 impl PlayoutItem {
@@ -67,7 +67,7 @@ impl PlayoutItem {
                 out_point_ms: out_point.map(|d| d.as_millis() as u64),
             }),
             tracks: None,
-            watermarks: Vec::new(),
+            watermark: None,
         })
     }
 
@@ -97,6 +97,8 @@ pub struct TrackSelection {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Watermark {
     pub source: PlayoutItemSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_index: Option<u32>,
     pub location: WatermarkLocation,
     /// Scale to this percent of primary content width (0–100).
     /// Omitted = actual size.

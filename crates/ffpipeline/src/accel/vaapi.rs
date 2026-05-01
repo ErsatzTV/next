@@ -5,7 +5,7 @@ use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
-use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp};
+use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
@@ -139,10 +139,7 @@ impl HwAccel for Vaapi {
                     && self.capabilities.can_overlay
                     && self.capabilities.vpp_supports_format(&PixelFormat::Bgra) =>
             {
-                OverlayFilter {
-                    kind: OverlayKind::Vaapi(VaapiOverlay),
-                    ..overlay_filter.clone()
-                }
+                overlay_filter.with_kind(OverlayKind::Vaapi(VaapiOverlay))
             }
             _ => overlay_filter.clone(),
         }
@@ -442,8 +439,12 @@ impl OverlayKindOp for VaapiOverlay {
         }
     }
 
-    fn as_arg(&self) -> Option<String> {
-        Some(String::from("overlay_vaapi=x=(W-w)/2:y=(H-h)/2"))
+    fn as_arg(&self, location: Option<FramePoint>) -> Option<String> {
+        if let Some(location) = location {
+            Some(format!("overlay_vaapi=x={}:y={}", location.x, location.y))
+        } else {
+            Some(String::from("overlay_vaapi=x=(W-w)/2:y=(H-h)/2"))
+        }
     }
 }
 

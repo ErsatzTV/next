@@ -2,7 +2,7 @@ use crate::ArgVec;
 use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
-use crate::overlay_filter::{OverlayFilter, OverlayKindOp};
+use crate::overlay_filter::{OverlayFilter, OverlayKindOp, OverlaySource};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
@@ -380,6 +380,7 @@ impl FilterChain {
         audio_label: &str,
         video_label: &str,
         subtitle_label: Option<&String>,
+        watermark_label: Option<&String>,
     ) {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
@@ -441,7 +442,12 @@ impl FilterChain {
                         }
                     }
                     PipelineFilter::Overlay(overlay) => {
-                        let Some(sub_in) = subtitle_label else {
+                        let sec_label = match overlay.secondary_source {
+                            OverlaySource::Subtitle => subtitle_label,
+                            OverlaySource::Watermark => watermark_label,
+                        };
+
+                        let Some(sec_in) = sec_label else {
                             continue;
                         };
 
@@ -457,12 +463,12 @@ impl FilterChain {
                             .filter_map(|f| f.as_arg())
                             .collect();
                         let sec_ref = if sec_args.is_empty() {
-                            sub_in.to_owned()
+                            sec_in.to_owned()
                         } else {
                             let sec_label = format!("v_s{}", overlay_num);
                             filter_chains.push(format!(
                                 "[{}]{}[{}]",
-                                sub_in,
+                                sec_in,
                                 sec_args.join(","),
                                 sec_label
                             ));
@@ -470,7 +476,7 @@ impl FilterChain {
                         };
 
                         let out_label = format!("v_o{}", overlay_num);
-                        if let Some(arg) = overlay.kind.as_arg() {
+                        if let Some(arg) = overlay.kind.as_arg(overlay.location.clone()) {
                             filter_chains.push(format!(
                                 "[{}][{}]{}[{}]",
                                 current_in, sec_ref, arg, out_label
@@ -690,7 +696,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None);
+        chain.build("0:a", "0:v", None, None);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -973,7 +979,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None);
+        chain.build("0:a", "0:v", None, None);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1257,7 +1263,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None);
+        chain.build("0:a", "0:v", None, None);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);

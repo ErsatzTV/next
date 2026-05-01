@@ -55,6 +55,7 @@ pub enum VideoFilter {
     Deinterlace(DeinterlaceFilter),
     HwMap(HwMapFilter),
     Subtitles(SubtitlesFilter),
+    ColorChannelMixer(ColorChannelMixerFilter),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -300,8 +301,12 @@ pub struct FormatFilter {
 }
 
 impl VideoFilterOp for FormatFilter {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if state.pixel_format == self.format {
+            None
+        } else {
+            Some(self.clone().into())
+        }
     }
 
     fn apply_to(&self, state: &mut FrameState) {
@@ -469,6 +474,33 @@ impl VideoFilterOp for SubtitlesFilter {
         } else {
             Some(format!("subtitles={}", escaped_path))
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct ColorChannelMixerFilter {
+    pub alpha: f32,
+}
+
+impl VideoFilterOp for ColorChannelMixerFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if self.alpha == 1f32 {
+            None
+        } else {
+            Some(self.clone().into())
+        }
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {
+        // no change to state
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("colorchannelmixer=aa={}", self.alpha))
     }
 }
 

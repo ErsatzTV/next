@@ -27,6 +27,8 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
     "pgs",
 ];
 
+static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
+
 #[derive(Debug, Clone)]
 pub struct ProbeResultColorParams {
     pub color_range: Option<String>,
@@ -112,6 +114,10 @@ impl ProbeResultVideoStream {
     pub fn is_subtitle_image(&self) -> bool {
         self.codec_type == CodecType::Subtitle
             && SUBTITLE_IMAGE_CODECS.contains(&self.codec.as_str())
+    }
+
+    pub fn is_still_image(&self) -> bool {
+        self.codec_type == CodecType::Video && STILL_IMAGE_CODECS.contains(&self.codec.as_str())
     }
 }
 

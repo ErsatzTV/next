@@ -5,6 +5,8 @@ use simple_expand_tilde::expand_tilde;
 
 use crate::ArgVec;
 use crate::error::FFPipelineError;
+use crate::frame_size::FrameSize;
+use crate::overlay_filter::FramePoint;
 use crate::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
 };
@@ -13,6 +15,7 @@ pub struct InputSettings {
     pub audio_input: ProbedInput,
     pub video_input: ProbedInput,
     pub subtitle_input: Option<ProbedInput>,
+    pub watermark_input: Option<WatermarkInput>,
 }
 
 impl InputSettings {
@@ -154,6 +157,54 @@ impl InputSettings {
             None
         }
     }
+
+    pub fn select_watermark_stream(&self) -> Option<&ProbeResultVideoStream> {
+        let mut all_watermark_streams: Vec<&Box<ProbeResultVideoStream>> =
+            match self.watermark_input.as_ref() {
+                Some(input) => input
+                    .probe_result
+                    .streams
+                    .iter()
+                    .filter_map(|s| match s {
+                        ProbeResultStream::Video(video_stream)
+                            if video_stream.codec_type == CodecType::Video =>
+                        {
+                            Some(video_stream)
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+
+        if let Some(watermark_index) = self.watermark_input.as_ref().and_then(|i| i.stream_index) {
+            let matched_stream = all_watermark_streams
+                .iter()
+                .find(|a| a.stream_index == watermark_index);
+
+            match matched_stream {
+                Some(watermark_stream) => return Some(watermark_stream),
+                None => {
+                    log::warn!(
+                        "unable to locate requested watermark stream with index {}",
+                        watermark_index
+                    );
+                }
+            }
+        }
+
+        match all_watermark_streams.len() {
+            0 => None,
+            1 => Some(all_watermark_streams[0]),
+            _ => {
+                log::warn!(
+                    "content contains more than one watermark video stream; selecting stream with lowest index"
+                );
+                all_watermark_streams.sort_by_key(|v| v.stream_index);
+                Some(all_watermark_streams[0])
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -165,7 +216,7 @@ pub struct HttpInputOptions {
     pub reconnect_delay_max: Option<u32>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LocalInputSource {
     pub path: String,
 }
@@ -179,18 +230,18 @@ impl LocalInputSource {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LavfiInputSource {
     pub params: String,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HttpInputSource {
     pub uri: String,
     pub options: HttpInputOptions,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[enum_dispatch(Probeable)]
 #[enum_dispatch(FfmpegInputArgs)]
 pub enum InputSource {
@@ -269,4 +320,128 @@ pub struct ProbedInput {
     pub in_point: Duration,
     pub out_point: Duration,
     pub stream_index: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatermarkInput {
+    pub input_source: InputSource,
+    pub probe_result: ProbeResult,
+    pub stream_index: Option<u32>,
+    pub location: WatermarkLocation,
+    pub width_percent: Option<f32>,
+    pub horizontal_margin_percent: Option<f32>,
+    pub vertical_margin_percent: Option<f32>,
+    pub opacity_percent: Option<f32>,
+}
+
+impl WatermarkInput {
+    pub(crate) fn scaled_size(
+        &self,
+        watermark_size: FrameSize,
+        video_size: Option<FrameSize>,
+    ) -> FrameSize {
+        if let Some(output_size) = video_size
+            && let Some(width_percent) = self.width_percent
+        {
+            let mut scaled_width =
+                f32::round((width_percent / 100f32) * output_size.width as f32) as u32;
+            let aspect_ratio = watermark_size.height as f32 / watermark_size.width as f32;
+            let mut scaled_height = f32::round(scaled_width as f32 * aspect_ratio) as u32;
+            if scaled_width % 2 == 1 {
+                scaled_width += 1;
+            }
+            if scaled_height % 2 == 1 {
+                scaled_height += 1;
+            }
+            FrameSize {
+                width: scaled_width,
+                height: scaled_height,
+            }
+        } else {
+            watermark_size
+        }
+    }
+
+    pub(crate) fn frame_location(
+        &self,
+        scaled_size: &FrameSize,
+        video_size: &FrameSize,
+    ) -> FramePoint {
+        let horizontal_margin = f32::round(
+            self.horizontal_margin_percent.unwrap_or(0f32) / 100f32 * video_size.width as f32,
+        ) as u32;
+        let vertical_margin = f32::round(
+            self.vertical_margin_percent.unwrap_or(0f32) / 100f32 * video_size.height as f32,
+        ) as u32;
+
+        match self.location {
+            WatermarkLocation::TopLeft => FramePoint {
+                x: horizontal_margin,
+                y: vertical_margin,
+            },
+            WatermarkLocation::TopCenter => FramePoint {
+                x: video_size.width.saturating_sub(scaled_size.width) / 2 + horizontal_margin,
+                y: vertical_margin,
+            },
+            WatermarkLocation::TopRight => FramePoint {
+                x: video_size
+                    .width
+                    .saturating_sub(scaled_size.width)
+                    .saturating_sub(horizontal_margin),
+                y: vertical_margin,
+            },
+            WatermarkLocation::CenterLeft => FramePoint {
+                x: horizontal_margin,
+                y: video_size.height.saturating_sub(scaled_size.height) / 2 + vertical_margin,
+            },
+            WatermarkLocation::Center => FramePoint {
+                x: video_size.width.saturating_sub(scaled_size.width) / 2 + horizontal_margin,
+                y: video_size.height.saturating_sub(scaled_size.height) / 2 + vertical_margin,
+            },
+            WatermarkLocation::CenterRight => FramePoint {
+                x: video_size
+                    .width
+                    .saturating_sub(scaled_size.width)
+                    .saturating_sub(horizontal_margin),
+                y: video_size.height.saturating_sub(scaled_size.height) / 2 + vertical_margin,
+            },
+            WatermarkLocation::BottomLeft => FramePoint {
+                x: horizontal_margin,
+                y: video_size
+                    .height
+                    .saturating_sub(scaled_size.height)
+                    .saturating_sub(vertical_margin),
+            },
+            WatermarkLocation::BottomCenter => FramePoint {
+                x: video_size.width.saturating_sub(scaled_size.width) / 2 + horizontal_margin,
+                y: video_size
+                    .height
+                    .saturating_sub(scaled_size.height)
+                    .saturating_sub(vertical_margin),
+            },
+            WatermarkLocation::BottomRight => FramePoint {
+                x: video_size
+                    .width
+                    .saturating_sub(scaled_size.width)
+                    .saturating_sub(horizontal_margin),
+                y: video_size
+                    .height
+                    .saturating_sub(scaled_size.height)
+                    .saturating_sub(vertical_margin),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum WatermarkLocation {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
 }
