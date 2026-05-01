@@ -505,20 +505,28 @@ impl Pipeline {
                 final_output_settings.video_size,
             );
 
-            let location = final_output_settings
-                .video_size
-                .as_ref()
-                .map(|s| watermark_input.frame_location(&scaled_size, s));
+            let location = Some(
+                watermark_input.frame_location(
+                    &scaled_size,
+                    final_output_settings
+                        .video_size
+                        .as_ref()
+                        .unwrap_or(&initial_state.size),
+                ),
+            );
 
             filters.push(PipelineFilter::Overlay(OverlayFilter {
                 kind: SoftwareOverlay::default().into(),
                 secondary: vec![
                     ColorChannelMixerFilter {
-                        alpha: watermark_input.opacity_percent.unwrap_or(0f32) / 100.0f32,
+                        alpha: watermark_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
                     }
                     .into(),
                     FormatFilter {
-                        format: PixelFormat::Yuva420p,
+                        format: match secondary_initial_state.pixel_format.bit_depth() {
+                            10 => PixelFormat::Yuva420p10le,
+                            _ => PixelFormat::Yuva420p,
+                        },
                     }
                     .into(),
                     ScaleFilter {
