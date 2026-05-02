@@ -115,6 +115,8 @@ pub struct Watermark {
     /// Opacity as a percent (0–100). Omitted = fully opaque (100).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opacity_percent: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<WatermarkTiming>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -129,6 +131,31 @@ pub enum WatermarkLocation {
     BottomLeft,
     BottomCenter,
     BottomRight,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "timing_type", rename_all = "snake_case")]
+pub enum WatermarkTiming {
+    Periodic {
+        clock: PeriodicClock,
+        frequency_seconds: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        phase_offset_seconds: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        disable_after_seconds: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fade_in_seconds: Option<f32>,
+        hold_seconds: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fade_out_seconds: Option<f32>,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeriodicClock {
+    Wall,
+    Content,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
