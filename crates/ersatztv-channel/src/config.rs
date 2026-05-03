@@ -129,6 +129,8 @@ pub enum ScalingMode {
     ScaleAndPad,
     #[serde(alias = "stretch")]
     Stretch,
+    #[serde(alias = "crop")]
+    Crop,
 }
 
 impl From<ScalingMode> for ffpipeline::output_settings::ScalingMode {
@@ -136,6 +138,7 @@ impl From<ScalingMode> for ffpipeline::output_settings::ScalingMode {
         match value {
             ScalingMode::ScaleAndPad => ffpipeline::output_settings::ScalingMode::ScaleAndPad,
             ScalingMode::Stretch => ffpipeline::output_settings::ScalingMode::Stretch,
+            ScalingMode::Crop => ffpipeline::output_settings::ScalingMode::Crop,
         }
     }
 }

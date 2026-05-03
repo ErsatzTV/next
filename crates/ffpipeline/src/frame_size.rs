@@ -37,7 +37,7 @@ impl FromStr for FrameSize {
 }
 
 impl FrameSize {
-    pub(crate) fn square_pixel_size(&self, frame_state: &FrameState) -> FrameSize {
+    pub(crate) fn square_pixel_size_contain(&self, frame_state: &FrameState) -> FrameSize {
         let mut source_width = frame_state.size.width as f64;
         let source_height = frame_state.size.height as f64;
 
@@ -55,6 +55,27 @@ impl FrameSize {
         FrameSize {
             width: ((source_width * min_percent).round_ties_even() as u32).min(self.width),
             height: ((source_height * min_percent).round_ties_even() as u32).min(self.height),
+        }
+    }
+
+    pub(crate) fn square_pixel_size_cover(&self, frame_state: &FrameState) -> FrameSize {
+        let mut source_width = frame_state.size.width as f64;
+        let source_height = frame_state.size.height as f64;
+
+        if frame_state.is_anamorphic
+            && let Some(sar) = Self::sar_as_float(frame_state)
+        {
+            source_width *= sar;
+        }
+
+        let max_percent = f64::max(
+            self.width as f64 / source_width,
+            self.height as f64 / source_height,
+        );
+
+        FrameSize {
+            width: (source_width * max_percent).round_ties_even() as u32,
+            height: (source_height * max_percent).round_ties_even() as u32,
         }
     }
 
@@ -128,7 +149,7 @@ mod tests {
             height: 720,
         };
 
-        assert_eq!(target.square_pixel_size(&state), target);
+        assert_eq!(target.square_pixel_size_contain(&state), target);
     }
 
     #[test]
@@ -152,6 +173,6 @@ mod tests {
             height: 1080,
         };
 
-        assert_eq!(target.square_pixel_size(&state), target);
+        assert_eq!(target.square_pixel_size_contain(&state), target);
     }
 }

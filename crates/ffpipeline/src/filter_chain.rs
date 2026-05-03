@@ -529,6 +529,7 @@ mod tests {
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
+    use crate::output_settings::ScalingMode;
     use crate::pipeline::HwPixelFormat;
     use crate::video_filter::{HwMapFilter, PadFilter, ToneMapFilter};
 
@@ -1045,6 +1046,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 
@@ -1067,6 +1069,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 
@@ -1089,6 +1092,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 
@@ -1111,6 +1115,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 
@@ -1134,6 +1139,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 
@@ -1204,6 +1210,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 
@@ -1252,6 +1259,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            scaling_mode: ScalingMode::ScaleAndPad,
         }
         .into();
 

@@ -21,8 +21,8 @@ use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    ColorChannelMixerFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter, PadFilter,
-    ScaleFilter, SoftwareDeinterlaceFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
+    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter,
+    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -379,6 +379,14 @@ impl Pipeline {
             PipelineFilter::Video(
                 PadFilter {
                     size: final_output_settings.video_size.to_owned(),
+                    scaling_mode: final_output_settings.scaling_mode,
+                }
+                .into(),
+            ),
+            PipelineFilter::Video(
+                CropFilter {
+                    size: final_output_settings.video_size.to_owned(),
+                    scaling_mode: final_output_settings.scaling_mode,
                 }
                 .into(),
             ),

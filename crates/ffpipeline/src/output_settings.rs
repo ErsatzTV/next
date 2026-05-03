@@ -60,4 +60,5 @@ pub enum SubtitleMode {
 pub enum ScalingMode {
     ScaleAndPad,
     Stretch,
+    Crop,
 }

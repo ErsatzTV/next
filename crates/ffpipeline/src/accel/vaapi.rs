@@ -56,7 +56,7 @@ impl HwAccel for Vaapi {
                 }
                 .into()
             }
-            VideoFilter::Pad(PadFilter { size }) => {
+            VideoFilter::Pad(PadFilter { size, .. }) => {
                 let mut pad_options = vec![KnownVideoFilter::PadVaapi];
                 if self.opencl_capabilities.can_pad() {
                     pad_options.push(KnownVideoFilter::PadOpencl);

@@ -59,6 +59,7 @@ pub enum VideoFilter {
     Subtitles(SubtitlesFilter),
     ColorChannelMixer(ColorChannelMixerFilter),
     Fade(FadeFilter),
+    Crop(CropFilter),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -185,13 +186,22 @@ impl VideoFilterOp for ScaleFilter {
             return None;
         }
 
+        // no need to scale "cropped" content that is already large enough
+        if self.scaling_mode == ScalingMode::Crop
+            && state.size.height >= target.height
+            && state.size.width >= target.width
+        {
+            return None;
+        }
+
         let (size, force) = match self.scaling_mode {
             ScalingMode::ScaleAndPad => {
-                let actual = target.square_pixel_size(state);
+                let actual = target.square_pixel_size_contain(state);
                 let force = (actual != target).then_some(ForceOriginalAspectRatio::Decrease);
                 (actual, force)
             }
             ScalingMode::Stretch => (target, None),
+            ScalingMode::Crop => (target.square_pixel_size_cover(state), None),
         };
 
         Some(
@@ -245,10 +255,15 @@ impl VideoFilterOp for ScaleFilter {
 #[derive(Clone)]
 pub struct PadFilter {
     pub size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
 }
 
 impl VideoFilterOp for PadFilter {
     fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if self.scaling_mode != ScalingMode::ScaleAndPad {
+            return None;
+        }
+
         match &self.size {
             Some(target) if state.size != *target => Some(self.clone().into()),
             _ => None,
@@ -688,6 +703,42 @@ impl FadePoint {
         }
 
         result
+    }
+}
+
+#[derive(Clone)]
+pub struct CropFilter {
+    pub size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
+}
+
+impl VideoFilterOp for CropFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if self.scaling_mode != ScalingMode::Crop {
+            return None;
+        }
+
+        match &self.size {
+            Some(target) if state.size != *target => Some(self.clone().into()),
+            _ => None,
+        }
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::System;
+        }
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        self.size
+            .as_ref()
+            .map(|size| format!("crop={}:{}", size.width, size.height))
     }
 }
 

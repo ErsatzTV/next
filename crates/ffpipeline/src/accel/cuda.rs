@@ -46,7 +46,7 @@ impl HwAccel for Cuda {
                 }
                 .into()
             }
-            VideoFilter::Pad(PadFilter { size })
+            VideoFilter::Pad(PadFilter { size, .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda) =>
             {
                 PadCuda { size: *size }.into()
