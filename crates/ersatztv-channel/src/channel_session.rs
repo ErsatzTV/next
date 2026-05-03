@@ -827,15 +827,16 @@ fn playout_location_to_pipeline(value: &WatermarkLocation) -> ffpipeline::input:
 fn playout_timing_to_pipeline(
     value: Option<&WatermarkTiming>,
 ) -> Option<ffpipeline::input::WatermarkTiming> {
-    if let Some(WatermarkTiming::Periodic {
-        clock,
-        frequency_ms,
-        phase_offset_ms,
-        disable_after_ms,
-        fade_ms,
-        hold_ms,
-    }) = value
-    {
+    value.map(|timing| {
+        let WatermarkTiming::Periodic {
+            clock,
+            frequency_ms,
+            phase_offset_ms,
+            disable_after_ms,
+            fade_ms,
+            hold_ms,
+        } = timing;
+
         let clock = match clock {
             PeriodicClock::Content => ffpipeline::input::PeriodicClock::Content,
             PeriodicClock::Wall => ffpipeline::input::PeriodicClock::Wall,
@@ -850,10 +851,6 @@ fn playout_timing_to_pipeline(
             hold_ms: *hold_ms,
         };
 
-        Some(ffpipeline::input::WatermarkTiming::Periodic(
-            periodic_timing,
-        ))
-    } else {
-        None
-    }
+        ffpipeline::input::WatermarkTiming::Periodic(periodic_timing)
+    })
 }

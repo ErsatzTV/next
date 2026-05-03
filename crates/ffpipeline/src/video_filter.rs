@@ -596,7 +596,7 @@ impl FadePoint {
         let hold = Duration::from_millis(timing.hold_ms);
 
         if fade > hold || 2 * fade + hold > frequency {
-            log::error!("watermark requires fade <= hold and 2 * fade + hold < frequency");
+            log::error!("watermark requires fade <= hold and 2 * fade + hold <= frequency");
             return result;
         }
 
@@ -623,16 +623,27 @@ impl FadePoint {
             .map(|d| item_start + Duration::from_millis(d))
             .unwrap_or(item_finish);
 
+        let in_point_ms = in_point.as_millis() as i128;
+        let fade_ms = fade.as_millis() as i128;
+        let hold_ms = hold.as_millis() as i128;
+
         while current_time < stop_at {
-            let delta = current_time - item_start;
-            let delta_std = if delta.is_positive() {
-                Duration::from_millis(delta.whole_milliseconds() as u64)
+            let delta_ms = (current_time - item_start).whole_milliseconds();
+
+            let fade_in_time_ms = delta_ms - in_point_ms;
+            let fade_out_time_ms = (delta_ms + fade_ms + hold_ms) - in_point_ms;
+
+            let fade_in_time = if fade_in_time_ms >= 0 {
+                Some(Duration::from_millis(fade_in_time_ms as u64))
             } else {
-                Duration::ZERO
+                None
             };
 
-            let fade_in_time = delta_std.checked_sub(in_point);
-            let fade_out_time = (delta_std + fade + hold).checked_sub(in_point);
+            let fade_out_time = if fade_out_time_ms >= 0 {
+                Some(Duration::from_millis(fade_out_time_ms as u64))
+            } else {
+                None
+            };
 
             if let Some(t) = fade_in_time
                 && current_time >= item_start
