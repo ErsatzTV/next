@@ -20,6 +20,7 @@ serde_json = { workspace = true }
 simple-expand-tilde = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]

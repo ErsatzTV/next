@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use enum_dispatch::enum_dispatch;
 use simple_expand_tilde::expand_tilde;
+use time::OffsetDateTime;
 
 use crate::ArgVec;
 use crate::error::FFPipelineError;
@@ -12,6 +13,7 @@ use crate::probe::{
 };
 
 pub struct InputSettings {
+    pub start: OffsetDateTime,
     pub audio_input: ProbedInput,
     pub video_input: ProbedInput,
     pub subtitle_input: Option<ProbedInput>,
@@ -332,6 +334,28 @@ pub struct WatermarkInput {
     pub horizontal_margin_percent: Option<f32>,
     pub vertical_margin_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
+    pub timing: Option<WatermarkTiming>,
+}
+
+#[derive(Debug, Clone)]
+pub enum WatermarkTiming {
+    Periodic(PeriodicTiming),
+}
+
+#[derive(Debug, Clone)]
+pub struct PeriodicTiming {
+    pub clock: PeriodicClock,
+    pub frequency_ms: u64,
+    pub phase_offset_ms: Option<u64>,
+    pub disable_after_ms: Option<u64>,
+    pub fade_ms: Option<u64>,
+    pub hold_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum PeriodicClock {
+    Wall,
+    Content,
 }
 
 impl WatermarkInput {

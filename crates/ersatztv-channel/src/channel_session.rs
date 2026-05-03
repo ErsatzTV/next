@@ -8,7 +8,8 @@ use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
-    PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection, WatermarkLocation,
+    PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
+    WatermarkLocation, WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
@@ -402,23 +403,20 @@ impl ChannelSession {
         let watermark_fut = async {
             if let Some(w) = current_item.watermark.as_ref() {
                 let input_source = Self::playout_source_to_input_source(w.source.clone())?;
-                let location = Self::playout_location_to_pipeline(&w.location);
-                let width_percent = w.width_percent;
-                let horizontal_margin_percent = w.horizontal_margin_percent;
-                let vertical_margin_percent = w.vertical_margin_percent;
-                let opacity_percent = w.opacity_percent;
-                let stream_index = w.stream_index;
+                let location = playout_location_to_pipeline(&w.location);
+                let timing = playout_timing_to_pipeline(w.timing.as_ref());
 
                 let probe_result = self.probe_source(&input_source).await?;
                 Ok(Some(WatermarkInput {
                     input_source,
                     probe_result,
-                    stream_index,
+                    stream_index: w.stream_index,
                     location,
-                    width_percent,
-                    horizontal_margin_percent,
-                    vertical_margin_percent,
-                    opacity_percent,
+                    width_percent: w.width_percent,
+                    horizontal_margin_percent: w.horizontal_margin_percent,
+                    vertical_margin_percent: w.vertical_margin_percent,
+                    opacity_percent: w.opacity_percent,
+                    timing,
                 }))
             } else {
                 Ok(None)
@@ -531,6 +529,7 @@ impl ChannelSession {
         };
 
         let input_settings = InputSettings {
+            start: current_item.start,
             audio_input: ProbedInput {
                 input_source: audio_input_source,
                 in_point: audio_timing.in_point,
@@ -799,22 +798,6 @@ impl ChannelSession {
         }
     }
 
-    fn playout_location_to_pipeline(
-        value: &WatermarkLocation,
-    ) -> ffpipeline::input::WatermarkLocation {
-        match value {
-            WatermarkLocation::TopLeft => ffpipeline::input::WatermarkLocation::TopLeft,
-            WatermarkLocation::TopCenter => ffpipeline::input::WatermarkLocation::TopCenter,
-            WatermarkLocation::TopRight => ffpipeline::input::WatermarkLocation::TopRight,
-            WatermarkLocation::CenterLeft => ffpipeline::input::WatermarkLocation::CenterLeft,
-            WatermarkLocation::Center => ffpipeline::input::WatermarkLocation::Center,
-            WatermarkLocation::CenterRight => ffpipeline::input::WatermarkLocation::CenterRight,
-            WatermarkLocation::BottomLeft => ffpipeline::input::WatermarkLocation::BottomLeft,
-            WatermarkLocation::BottomCenter => ffpipeline::input::WatermarkLocation::BottomCenter,
-            WatermarkLocation::BottomRight => ffpipeline::input::WatermarkLocation::BottomRight,
-        }
-    }
-
     fn resolve_source<F>(item: &PlayoutItem, pick: F) -> Option<PlayoutItemSource>
     where
         F: FnOnce(&PlayoutItemTracks) -> Option<&TrackSelection>,
@@ -824,5 +807,53 @@ impl ChannelSession {
             .and_then(pick)
             .and_then(|sel| sel.source.clone())
             .or_else(|| item.source.clone())
+    }
+}
+
+fn playout_location_to_pipeline(value: &WatermarkLocation) -> ffpipeline::input::WatermarkLocation {
+    match value {
+        WatermarkLocation::TopLeft => ffpipeline::input::WatermarkLocation::TopLeft,
+        WatermarkLocation::TopCenter => ffpipeline::input::WatermarkLocation::TopCenter,
+        WatermarkLocation::TopRight => ffpipeline::input::WatermarkLocation::TopRight,
+        WatermarkLocation::CenterLeft => ffpipeline::input::WatermarkLocation::CenterLeft,
+        WatermarkLocation::Center => ffpipeline::input::WatermarkLocation::Center,
+        WatermarkLocation::CenterRight => ffpipeline::input::WatermarkLocation::CenterRight,
+        WatermarkLocation::BottomLeft => ffpipeline::input::WatermarkLocation::BottomLeft,
+        WatermarkLocation::BottomCenter => ffpipeline::input::WatermarkLocation::BottomCenter,
+        WatermarkLocation::BottomRight => ffpipeline::input::WatermarkLocation::BottomRight,
+    }
+}
+
+fn playout_timing_to_pipeline(
+    value: Option<&WatermarkTiming>,
+) -> Option<ffpipeline::input::WatermarkTiming> {
+    if let Some(WatermarkTiming::Periodic {
+        clock,
+        frequency_ms,
+        phase_offset_ms,
+        disable_after_ms,
+        fade_ms,
+        hold_ms,
+    }) = value
+    {
+        let clock = match clock {
+            PeriodicClock::Content => ffpipeline::input::PeriodicClock::Content,
+            PeriodicClock::Wall => ffpipeline::input::PeriodicClock::Wall,
+        };
+
+        let periodic_timing = ffpipeline::input::PeriodicTiming {
+            clock,
+            frequency_ms: *frequency_ms,
+            phase_offset_ms: *phase_offset_ms,
+            disable_after_ms: *disable_after_ms,
+            fade_ms: *fade_ms,
+            hold_ms: *hold_ms,
+        };
+
+        Some(ffpipeline::input::WatermarkTiming::Periodic(
+            periodic_timing,
+        ))
+    } else {
+        None
     }
 }

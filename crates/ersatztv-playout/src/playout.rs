@@ -144,10 +144,8 @@ pub enum WatermarkTiming {
         #[serde(skip_serializing_if = "Option::is_none")]
         disable_after_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        fade_in_ms: Option<u64>,
+        fade_ms: Option<u64>,
         hold_ms: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        fade_out_ms: Option<u64>,
     },
 }
 

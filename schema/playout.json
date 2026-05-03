@@ -230,7 +230,7 @@
     },
     "PeriodicTiming": {
       "type": "object",
-      "description": "Cyclical visibility: the watermark fades in, holds, and fades out once every `frequency_ms`. Cycle length is start-to-start, so `fade_in_ms + hold_ms + fade_out_ms` must be ≤ `frequency_ms`.",
+      "description": "Cyclical visibility: the watermark fades in, holds, and fades out once every `frequency_ms`. Cycle length is start-to-start, so `2 * fade_ms + hold_ms` must be ≤ `frequency_ms`, and `fade_ms` must be ≤ `hold_ms`.",
       "required": [
         "timing_type",
         "clock",
@@ -267,26 +267,18 @@
           "minimum": 1,
           "description": "Cap on the time, measured from the start of the playout item in milliseconds, during which new appearances are allowed to begin. An appearance already in progress at the cap is allowed to fade out cleanly. Omit for no cap."
         },
-        "fade_in_ms": {
+        "fade_ms": {
           "type": [
             "integer",
             "null"
           ],
           "minimum": 0,
-          "description": "Fade-in duration in milliseconds. Omit for 1000; set to 0 for a hard cut in."
+          "description": "Fade-in and fade-out duration in milliseconds (symmetric). Must be ≤ `hold_ms`. Omit for 1000; set to 0 for hard cuts."
         },
         "hold_ms": {
           "type": "integer",
           "minimum": 0,
           "description": "Time held fully visible between fade-in and fade-out, in milliseconds."
-        },
-        "fade_out_ms": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0,
-          "description": "Fade-out duration in milliseconds. Omit for 1000; set to 0 for a hard cut out."
         }
       }
     },

@@ -13,6 +13,7 @@ use ffpipeline::output_settings::{
 };
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
 use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
+use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 
 static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
@@ -139,6 +140,7 @@ pub async fn probe_file(ffmpeg: &Path, ffprobe: &Path, path: &Path) -> ProbeResu
 pub fn build_input(path: &Path, probe: ProbeResult, duration: Duration) -> InputSettings {
     let path_str = path.to_string_lossy().into_owned();
     InputSettings {
+        start: OffsetDateTime::now_utc(),
         audio_input: ProbedInput {
             input_source: InputSource::Local(LocalInputSource {
                 path: path_str.clone(),

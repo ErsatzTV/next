@@ -1,10 +1,12 @@
 use std::time::Duration;
 
 use enum_dispatch::enum_dispatch;
+use time::OffsetDateTime;
 
 use crate::accel;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_size::FrameSize;
+use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::ScalingMode;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 
@@ -56,6 +58,7 @@ pub enum VideoFilter {
     HwMap(HwMapFilter),
     Subtitles(SubtitlesFilter),
     ColorChannelMixer(ColorChannelMixerFilter),
+    Fade(FadeFilter),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -504,8 +507,183 @@ impl VideoFilterOp for ColorChannelMixerFilter {
     }
 }
 
+#[derive(Clone)]
+pub struct FadeFilter {
+    point: FadePoint,
+    duration: Duration,
+}
+
+impl FadeFilter {
+    pub fn for_watermark(
+        timing: Option<&WatermarkTiming>,
+        item_start: OffsetDateTime,
+        in_point: Duration,
+        out_point: Duration,
+    ) -> Vec<FadeFilter> {
+        if let Some(WatermarkTiming::Periodic(timing)) = timing {
+            let duration = Duration::from_millis(timing.fade_ms.unwrap_or(1000));
+            let points = FadePoint::periodic(timing, item_start, in_point, out_point);
+            points
+                .iter()
+                .map(|p| FadeFilter {
+                    point: *p,
+                    duration,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl VideoFilterOp for FadeFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        Some(self.clone().into())
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {
+        // no change to state
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        let in_out = match self.point.mode {
+            FadeMode::In => "in",
+            FadeMode::Out => "out",
+        };
+
+        Some(format!(
+            "fade={in_out}:st={}:d={}:alpha=1:enable='between(t,{},{})'",
+            self.point.time.as_secs_f64(),
+            self.duration.as_secs_f64(),
+            self.point.enable_start.as_secs_f64(),
+            self.point.enable_finish.as_secs_f64(),
+        ))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FadeMode {
+    In,
+    Out,
+}
+
+#[derive(Clone, Copy)]
+struct FadePoint {
+    mode: FadeMode,
+    time: Duration,
+    enable_start: Duration,
+    enable_finish: Duration,
+}
+
+impl FadePoint {
+    pub fn periodic(
+        timing: &PeriodicTiming,
+        item_start: OffsetDateTime,
+        in_point: Duration,
+        out_point: Duration,
+    ) -> Vec<FadePoint> {
+        let mut result = Vec::new();
+
+        let duration = out_point - in_point;
+        let item_finish = item_start + duration;
+
+        let frequency = Duration::from_millis(timing.frequency_ms);
+        let fade = Duration::from_millis(timing.fade_ms.unwrap_or(1000));
+        let hold = Duration::from_millis(timing.hold_ms);
+
+        if fade > hold || 2 * fade + hold > frequency {
+            log::error!("watermark requires fade <= hold and 2 * fade + hold < frequency");
+            return result;
+        }
+
+        // find periodic base
+        let mut current_time = match timing.clock {
+            PeriodicClock::Content => {
+                item_start + Duration::from_millis(timing.phase_offset_ms.unwrap_or(0))
+            }
+            PeriodicClock::Wall => {
+                let phase = timing.phase_offset_ms.unwrap_or(0) as i64;
+                let freq = timing.frequency_ms as i64;
+
+                let item_ms = (item_start.unix_timestamp_nanos() / 1_000_000) as i64;
+
+                let n = (item_ms - phase).div_euclid(freq);
+                let last_ms = n * freq + phase;
+
+                OffsetDateTime::UNIX_EPOCH + Duration::from_millis(last_ms as u64)
+            }
+        };
+
+        let stop_at = timing
+            .disable_after_ms
+            .map(|d| item_start + Duration::from_millis(d))
+            .unwrap_or(item_finish);
+
+        while current_time < stop_at {
+            let delta = current_time - item_start;
+            let delta_std = if delta.is_positive() {
+                Duration::from_millis(delta.whole_milliseconds() as u64)
+            } else {
+                Duration::ZERO
+            };
+
+            let fade_in_time = delta_std.checked_sub(in_point);
+            let fade_out_time = (delta_std + fade + hold).checked_sub(in_point);
+
+            if let Some(t) = fade_in_time
+                && current_time >= item_start
+            {
+                result.push(FadePoint {
+                    mode: FadeMode::In,
+                    time: t,
+                    enable_start: t,
+                    enable_finish: (t + fade).min(duration),
+                });
+            }
+
+            if let Some(t) = fade_out_time {
+                result.push(FadePoint {
+                    mode: FadeMode::Out,
+                    time: t,
+                    enable_start: t,
+                    enable_finish: (t + fade).min(duration),
+                });
+            }
+
+            current_time += frequency;
+        }
+
+        result.retain(|p| p.enable_start < p.enable_finish);
+
+        // overlap 'enable' windows on consecutive fades
+        for i in 0..result.len() {
+            result[i].enable_start = if i == 0 {
+                Duration::ZERO
+            } else {
+                result[i - 1].time + fade
+            };
+        }
+
+        for i in 0..result.len() {
+            result[i].enable_finish = if i == result.len() - 1 {
+                duration
+            } else {
+                result[i + 1].time.saturating_sub(fade)
+            };
+        }
+
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use time::{Date, Month, Time, UtcOffset};
+
     use super::*;
 
     #[test]
@@ -585,5 +763,34 @@ mod tests {
         }
         .into();
         assert_eq!(filter.required_surface(), None);
+    }
+
+    #[test]
+    fn fade_point_periodic() {
+        // every 5 min
+        let timing = PeriodicTiming {
+            clock: PeriodicClock::Wall,
+            frequency_ms: 300_000,
+            phase_offset_ms: Some(0),
+            disable_after_ms: Some(3_000_000),
+            fade_ms: Some(1_000),
+            hold_ms: 8_000,
+        };
+
+        // starts at midnight
+        let item_start = OffsetDateTime::new_in_offset(
+            Date::from_calendar_date(2026, Month::May, 1).unwrap(),
+            Time::from_hms(0, 0, 0).unwrap(),
+            UtcOffset::from_hms(-5, 0, 0).unwrap(),
+        );
+
+        // join at 4:45
+        let in_point = Duration::from_mins(4) + Duration::from_secs(45);
+
+        let points = FadePoint::periodic(&timing, item_start, in_point, Duration::from_secs(734));
+
+        assert_eq!(points.len(), 4);
+        assert_eq!(points[0].time, Duration::from_secs(15));
+        assert_eq!(points[2].time, Duration::from_secs(5 * 60 + 15));
     }
 }

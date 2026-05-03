@@ -21,8 +21,8 @@ use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    ColorChannelMixerFilter, DeinterlaceFilter, FormatFilter, LoopFilter, PadFilter, ScaleFilter,
-    SoftwareDeinterlaceFilter, SubtitlesFilter, ToneMapFilter,
+    ColorChannelMixerFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter, PadFilter,
+    ScaleFilter, SoftwareDeinterlaceFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -515,28 +515,39 @@ impl Pipeline {
                 ),
             );
 
+            let mut secondary_filters: Vec<VideoFilter> = vec![
+                ColorChannelMixerFilter {
+                    alpha: watermark_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
+                }
+                .into(),
+                FormatFilter {
+                    format: match secondary_initial_state.pixel_format.bit_depth() {
+                        10 => PixelFormat::Yuva420p10le,
+                        _ => PixelFormat::Yuva420p,
+                    },
+                }
+                .into(),
+                ScaleFilter {
+                    size: Some(scaled_size),
+                    scaling_mode: ScalingMode::ScaleAndPad,
+                    input_is_anamorphic: false,
+                    force_original_aspect_ratio: None,
+                }
+                .into(),
+            ];
+
+            let fade_filters = FadeFilter::for_watermark(
+                watermark_input.timing.as_ref(),
+                input_settings.start,
+                input_settings.video_input.in_point,
+                input_settings.video_input.out_point,
+            );
+
+            secondary_filters.extend(fade_filters.iter().map(|f| f.clone().into()));
+
             filters.push(PipelineFilter::Overlay(OverlayFilter {
                 kind: SoftwareOverlay::default().into(),
-                secondary: vec![
-                    ColorChannelMixerFilter {
-                        alpha: watermark_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
-                    }
-                    .into(),
-                    FormatFilter {
-                        format: match secondary_initial_state.pixel_format.bit_depth() {
-                            10 => PixelFormat::Yuva420p10le,
-                            _ => PixelFormat::Yuva420p,
-                        },
-                    }
-                    .into(),
-                    ScaleFilter {
-                        size: Some(scaled_size),
-                        scaling_mode: ScalingMode::ScaleAndPad,
-                        input_is_anamorphic: false,
-                        force_original_aspect_ratio: None,
-                    }
-                    .into(),
-                ],
+                secondary: secondary_filters,
                 secondary_initial_state,
                 secondary_source: OverlaySource::Watermark,
                 location,
