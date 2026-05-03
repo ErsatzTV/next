@@ -197,7 +197,8 @@
       "type": "string",
       "enum": [
         "scale_and_pad",
-        "stretch"
+        "stretch",
+        "crop"
       ]
     },
     "SubtitleMode": {
