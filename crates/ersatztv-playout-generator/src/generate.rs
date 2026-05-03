@@ -39,7 +39,7 @@ pub async fn generate_playout(
     if let Some(h) = horizon
         && h >= threshold
     {
-        log::debug!("nothing to add before {target}");
+        log::info!("nothing to add before {target}");
         return Ok(());
     }
 
@@ -86,12 +86,9 @@ async fn scan_horizon(
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         if let Some(file_name_os) = entry.path().file_stem() {
-            let file_name = file_name_os
-                .to_os_string()
-                .into_string()
-                .map_err(|_| PlayoutGeneratorError::ScanHorizonFailure)?;
+            let file_name = file_name_os.to_string_lossy();
 
-            if let Some((_, finish)) = parse_playout_filename(file_name.as_str())
+            if let Some((_, finish)) = parse_playout_filename(&file_name)
                 && (result.is_none() || result.is_some_and(|max| finish > max))
             {
                 result = Some(finish);
@@ -259,7 +256,7 @@ async fn write_playout_file(
         let formatted_finish = last.finish.format(&DATE_FORMAT)?;
 
         let output_file = format!("{formatted_start}_{formatted_finish}.json");
-        log::debug!("output_file: {output_file}");
+        log::info!("output_file: {output_file}");
 
         let output_path = output_folder.join(&output_file);
         let playout = Playout::new(items);
@@ -280,15 +277,17 @@ async fn gc_old_playouts(
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         if let Some(file_name_os) = entry.path().file_stem() {
-            let file_name = file_name_os
-                .to_os_string()
-                .into_string()
-                .map_err(|_| PlayoutGeneratorError::ScanHorizonFailure)?;
+            let file_name = file_name_os.to_string_lossy();
 
-            if let Some((_, finish)) = parse_playout_filename(file_name.as_str())
+            if let Some((_, finish)) = parse_playout_filename(&file_name)
                 && finish < before
+                && let Err(e) = tokio::fs::remove_file(entry.path()).await
             {
-                tokio::fs::remove_file(entry.path()).await?;
+                log::warn!(
+                    "Failed to remove old playout file {:?}: {}",
+                    entry.path(),
+                    e
+                );
             }
         }
     }

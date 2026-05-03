@@ -45,7 +45,7 @@ enum Commands {
 
 #[tokio::main]
 pub async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .filter_module("sqlx", log::LevelFilter::Warn)
         .init();
 

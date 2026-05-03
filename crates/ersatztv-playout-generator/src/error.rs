@@ -19,7 +19,4 @@ pub enum PlayoutGeneratorError {
 
     #[error("no source content was found")]
     NoSourceContent,
-
-    #[error("failed to scan existing playout json files")]
-    ScanHorizonFailure,
 }
