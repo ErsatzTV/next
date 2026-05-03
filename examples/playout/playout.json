@@ -29,12 +29,12 @@
         "timing": {
           "timing_type": "periodic",
           "clock": "wall",
-          "frequency_seconds": 300,
-          "phase_offset_seconds": 0,
-          "disable_after_seconds": 3000,
-          "fade_in_seconds": 1,
-          "hold_seconds": 8,
-          "fade_out_seconds": 1
+          "frequency_ms": 300000,
+          "phase_offset_ms": 0,
+          "disable_after_ms": 3000000,
+          "fade_in_ms": 1000,
+          "hold_ms": 8000,
+          "fade_out_ms": 1000
         }
       }
     },

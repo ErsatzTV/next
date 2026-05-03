@@ -138,16 +138,16 @@ pub enum WatermarkLocation {
 pub enum WatermarkTiming {
     Periodic {
         clock: PeriodicClock,
-        frequency_seconds: f32,
+        frequency_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
-        phase_offset_seconds: Option<f32>,
+        phase_offset_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        disable_after_seconds: Option<f32>,
+        disable_after_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        fade_in_seconds: Option<f32>,
-        hold_seconds: f32,
+        fade_in_ms: Option<u64>,
+        hold_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
-        fade_out_seconds: Option<f32>,
+        fade_out_ms: Option<u64>,
     },
 }
 
