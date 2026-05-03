@@ -174,6 +174,7 @@ pub enum VideoFormat {
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HardwareAccel {
+    Amf,
     Cuda,
     Qsv,
     Vaapi,
@@ -187,6 +188,9 @@ impl HardwareAccel {
         channel_config: &ChannelConfig,
     ) -> Option<ffpipeline::hw_accel::HardwareAccel> {
         match self {
+            HardwareAccel::Amf => Some(ffpipeline::hw_accel::HardwareAccel::Amf(
+                ffpipeline::accel::amf::Amf,
+            )),
             HardwareAccel::Cuda => {
                 let capabilities = ffpipeline::capabilities::nvidia::NvidiaCapabilities::probe();
                 match capabilities {

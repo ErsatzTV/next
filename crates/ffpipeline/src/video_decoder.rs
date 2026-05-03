@@ -29,16 +29,10 @@ impl VideoDecoder {
 
         match &output_settings.accel {
             Some(accel) => {
-                if Self::can_hw_decode(
-                    accel,
-                    &video_stream.codec,
-                    &video_stream.profile,
-                    &video_stream.pix_fmt,
-                ) {
+                if let Some(decoder) = accel.make_decoder(ffmpeg_info, video_stream) {
                     VideoDecoder::HardwareAccel {
                         accel: Box::new(accel.clone()),
-                        decoder: accel
-                            .make_decoder(ffmpeg_info, video_stream.color_params.is_hdr()),
+                        decoder,
                     }
                 } else {
                     VideoDecoder::Software
@@ -79,9 +73,5 @@ impl VideoDecoder {
             VideoDecoder::Software => Vec::new(),
             VideoDecoder::HardwareAccel { decoder, .. } => decoder.args.clone(),
         }
-    }
-
-    fn can_hw_decode(accel: &HardwareAccel, codec: &str, profile: &str, pix_fmt: &str) -> bool {
-        accel.can_decode(codec, profile, &PixelFormat::parse(pix_fmt))
     }
 }

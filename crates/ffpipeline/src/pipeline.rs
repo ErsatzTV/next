@@ -79,6 +79,7 @@ pub(crate) struct OutputContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display)]
 pub enum FrameSurface {
     System,
+    Amf,
     Cuda,
     Qsv,
     Vaapi,
@@ -90,6 +91,7 @@ pub enum FrameSurface {
 impl FrameSurface {
     pub(crate) fn device_name(&self) -> Option<&'static str> {
         match self {
+            FrameSurface::Amf => Some("amf"),
             FrameSurface::Cuda => Some("cuda"),
             FrameSurface::OpenCL => Some("opencl"),
             FrameSurface::Qsv => Some("qsv"),
@@ -248,7 +250,10 @@ impl Pipeline {
         let mut final_output_settings = output_settings;
 
         if let Some(accel) = &final_output_settings.accel
-            && !ffmpeg_info.has_hw_accel(accel.known_accel())
+            && accel
+                .known_accel()
+                .map(|a| !ffmpeg_info.has_hw_accel(a))
+                .unwrap_or(false)
         {
             log::warn!("ffmpeg does not support requested accel {:?}", accel);
             final_output_settings.accel = None;

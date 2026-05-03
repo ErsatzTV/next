@@ -4,6 +4,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
 
@@ -82,20 +83,32 @@ impl HwAccel for VideoToolbox {
         args!["-init_hw_device", "videotoolbox"]
     }
 
-    fn known_accel(&self) -> &KnownHardwareAccel {
-        &KnownHardwareAccel::VideoToolbox
+    fn known_accel(&self) -> Option<&KnownHardwareAccel> {
+        Some(&KnownHardwareAccel::VideoToolbox)
     }
 
-    fn make_decoder(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> HwDecoder {
-        HwDecoder {
-            args: args![
-                "-hwaccel",
-                "videotoolbox",
-                "-hwaccel_output_format",
-                "videotoolbox_vld",
-            ],
-            surface: FrameSurface::VideoToolbox,
-            filters: Vec::new(),
+    fn make_decoder(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        video_stream: &ProbeResultVideoStream,
+    ) -> Option<HwDecoder> {
+        if self.can_decode(
+            &video_stream.codec,
+            &video_stream.profile,
+            &PixelFormat::parse(&video_stream.pix_fmt),
+        ) {
+            Some(HwDecoder {
+                args: args![
+                    "-hwaccel",
+                    "videotoolbox",
+                    "-hwaccel_output_format",
+                    "videotoolbox_vld",
+                ],
+                surface: FrameSurface::VideoToolbox,
+                filters: Vec::new(),
+            })
+        } else {
+            None
         }
     }
 }

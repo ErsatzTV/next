@@ -1,3 +1,4 @@
+pub mod amf;
 pub mod cuda;
 pub(crate) mod opencl;
 pub mod qsv;

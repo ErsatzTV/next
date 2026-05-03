@@ -9,6 +9,7 @@ use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindO
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
+use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
     DeinterlaceFilter, ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter,
@@ -264,20 +265,32 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn known_accel(&self) -> &KnownHardwareAccel {
-        &KnownHardwareAccel::Vaapi
+    fn known_accel(&self) -> Option<&KnownHardwareAccel> {
+        Some(&KnownHardwareAccel::Vaapi)
     }
 
-    fn make_decoder(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> HwDecoder {
-        HwDecoder {
-            args: args![
-                "-hwaccel",
-                KnownHardwareAccel::Vaapi,
-                "-hwaccel_output_format",
-                KnownHardwareAccel::Vaapi,
-            ],
-            surface: FrameSurface::Vaapi,
-            filters: Vec::new(),
+    fn make_decoder(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        video_stream: &ProbeResultVideoStream,
+    ) -> Option<HwDecoder> {
+        if self.can_decode(
+            &video_stream.codec,
+            &video_stream.profile,
+            &PixelFormat::parse(&video_stream.pix_fmt),
+        ) {
+            Some(HwDecoder {
+                args: args![
+                    "-hwaccel",
+                    KnownHardwareAccel::Vaapi,
+                    "-hwaccel_output_format",
+                    KnownHardwareAccel::Vaapi,
+                ],
+                surface: FrameSurface::Vaapi,
+                filters: Vec::new(),
+            })
+        } else {
+            None
         }
     }
 

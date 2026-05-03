@@ -4,6 +4,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{DeinterlaceFilter, ScaleFilter, VideoFilter, VideoFilterOp};
 
@@ -94,15 +95,27 @@ impl HwAccel for Qsv {
         args!["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw",]
     }
 
-    fn known_accel(&self) -> &KnownHardwareAccel {
-        &KnownHardwareAccel::Qsv
+    fn known_accel(&self) -> Option<&KnownHardwareAccel> {
+        Some(&KnownHardwareAccel::Qsv)
     }
 
-    fn make_decoder(&self, _ffmpeg_info: &FfmpegInfo, _is_hdr: bool) -> HwDecoder {
-        HwDecoder {
-            args: args!["-hwaccel", "qsv", "-hwaccel_output_format", "qsv",],
-            surface: FrameSurface::Qsv,
-            filters: Vec::new(),
+    fn make_decoder(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        video_stream: &ProbeResultVideoStream,
+    ) -> Option<HwDecoder> {
+        if self.can_decode(
+            &video_stream.codec,
+            &video_stream.profile,
+            &PixelFormat::parse(&video_stream.pix_fmt),
+        ) {
+            Some(HwDecoder {
+                args: args!["-hwaccel", "qsv", "-hwaccel_output_format", "qsv",],
+                surface: FrameSurface::Qsv,
+                filters: Vec::new(),
+            })
+        } else {
+            None
         }
     }
 

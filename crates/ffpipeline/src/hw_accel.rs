@@ -7,6 +7,7 @@ use crate::overlay_filter::OverlayFilter;
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
+use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::VideoFilter;
 use crate::{ArgVec, accel};
@@ -58,8 +59,12 @@ pub trait HwAccel {
         None
     }
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec;
-    fn known_accel(&self) -> &KnownHardwareAccel;
-    fn make_decoder(&self, ffmpeg_info: &FfmpegInfo, is_hdr: bool) -> HwDecoder;
+    fn known_accel(&self) -> Option<&KnownHardwareAccel>;
+    fn make_decoder(
+        &self,
+        ffmpeg_info: &FfmpegInfo,
+        video_stream: &ProbeResultVideoStream,
+    ) -> Option<HwDecoder>;
     fn output_format(&self, source_pixel_format: &PixelFormat) -> HwPixelFormat {
         match source_pixel_format.bit_depth() {
             10 => HwPixelFormat::P010le,
@@ -75,6 +80,7 @@ pub trait HwAccel {
 #[enum_dispatch(HwAccel)]
 #[strum(serialize_all = "lowercase")]
 pub enum HardwareAccel {
+    Amf(accel::amf::Amf),
     Cuda(accel::cuda::Cuda),
     Qsv(accel::qsv::Qsv),
     Vaapi(accel::vaapi::Vaapi),
