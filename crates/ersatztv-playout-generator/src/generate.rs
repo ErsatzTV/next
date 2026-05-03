@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ersatztv_playout::playout::{
     DATE_FORMAT, Playout, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
+    parse_playout_filename,
 };
 use ffpipeline::probe::{ProbeResult, ProbeResultStream};
 use rand::RngExt;
@@ -13,10 +14,50 @@ use walkdir::WalkDir;
 use crate::error::PlayoutGeneratorError;
 use crate::{IMAGE_EXTENSIONS, is_image_extension, is_video_extension, to_probe_result};
 
+const BUILD_UNDER: time::Duration = time::Duration::hours(36);
+const TO_BUILD: time::Duration = time::Duration::hours(48);
+const TO_RETAIN: time::Duration = time::Duration::days(1);
+
 pub async fn generate_playout(
-    content_folder: &PathBuf,
+    content_folder: &Path,
     output_folder: &PathBuf,
 ) -> Result<(), PlayoutGeneratorError> {
+    let video_list = probe_content(content_folder).await?;
+    if video_list.is_empty() {
+        return Err(PlayoutGeneratorError::NoSourceContent);
+    }
+
+    if !output_folder.exists() {
+        tokio::fs::create_dir_all(output_folder).await?;
+    }
+
+    let now = OffsetDateTime::now_local()?;
+    let threshold = now + BUILD_UNDER;
+    let target = now + TO_BUILD;
+    let horizon = scan_horizon(output_folder).await?;
+
+    if let Some(h) = horizon
+        && h >= threshold
+    {
+        log::debug!("nothing to add before {target}");
+        return Ok(());
+    }
+
+    let gen_start = horizon.filter(|h| *h > now).unwrap_or(now);
+
+    let mut rng = rand::rng();
+    let playout_items = build_items(gen_start, target, &video_list, &mut rng).await;
+
+    write_playout_file(output_folder, playout_items).await?;
+
+    gc_old_playouts(output_folder, now - TO_RETAIN).await?;
+
+    Ok(())
+}
+
+async fn probe_content(
+    content_folder: &Path,
+) -> Result<Vec<(PathBuf, ProbeResult)>, PlayoutGeneratorError> {
     // find all available video files
     let mut video_paths: HashMap<PathBuf, ProbeResult> = HashMap::new();
     for dir_entry in WalkDir::new(content_folder)
@@ -31,29 +72,52 @@ pub async fn generate_playout(
         }
     }
 
-    if video_paths.is_empty() {
-        return Err(PlayoutGeneratorError::NoSourceContent);
+    Ok(video_paths.into_iter().collect())
+}
+
+async fn scan_horizon(
+    output_folder: &Path,
+) -> Result<Option<OffsetDateTime>, PlayoutGeneratorError> {
+    let mut result = None;
+
+    let mut entries = tokio::fs::read_dir(output_folder)
+        .await
+        .map_err(PlayoutGeneratorError::IoFailure)?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Some(file_name_os) = entry.path().file_stem() {
+            let file_name = file_name_os
+                .to_os_string()
+                .into_string()
+                .map_err(|_| PlayoutGeneratorError::ScanHorizonFailure)?;
+
+            if let Some((_, finish)) = parse_playout_filename(file_name.as_str())
+                && (result.is_none() || result.is_some_and(|max| finish > max))
+            {
+                result = Some(finish);
+            }
+        }
     }
 
-    // generate output file name
-    let start = OffsetDateTime::now_local()?.truncate_to_day();
-    let formatted_start = start.format(&DATE_FORMAT)?;
-    let finish = start + time::Duration::days(1) - time::Duration::seconds(1);
+    Ok(result)
+}
 
-    let video_list: Vec<(PathBuf, ProbeResult)> = video_paths.into_iter().collect();
-
-    // fill output file with content
+async fn build_items(
+    start: OffsetDateTime,
+    finish: OffsetDateTime,
+    video_list: &[(PathBuf, ProbeResult)],
+    rng: &mut impl rand::Rng,
+) -> Vec<PlayoutItem> {
     let mut playout_items: Vec<PlayoutItem> = Vec::new();
     let mut current_time = start;
-    let mut rng = rand::rng();
-    let mut shuffled = video_list.clone();
-    shuffled.shuffle(&mut rng);
+    let mut shuffled = video_list.to_vec();
+    shuffled.shuffle(rng);
     let mut cursor = 0;
 
     while current_time < finish {
         if cursor >= shuffled.len() {
             let last = shuffled.last().cloned();
-            shuffled.shuffle(&mut rng);
+            shuffled.shuffle(rng);
             if shuffled.len() > 1
                 && let Some(ref last) = last
                 && shuffled[0].0 == last.0
@@ -180,18 +244,54 @@ pub async fn generate_playout(
         }
     }
 
-    let formatted_finish = current_time.format(&DATE_FORMAT)?;
-    let output_file = format!("{formatted_start}_{formatted_finish}.json");
-    log::debug!("output_file: {output_file}");
+    playout_items
+}
 
-    if !output_folder.exists() {
-        tokio::fs::create_dir_all(output_folder).await?;
+async fn write_playout_file(
+    output_folder: &Path,
+    items: Vec<PlayoutItem>,
+) -> Result<(), PlayoutGeneratorError> {
+    if let Some(first) = items.first()
+        && let Some(last) = items.last()
+    {
+        // generate output file name
+        let formatted_start = first.start.format(&DATE_FORMAT)?;
+        let formatted_finish = last.finish.format(&DATE_FORMAT)?;
+
+        let output_file = format!("{formatted_start}_{formatted_finish}.json");
+        log::debug!("output_file: {output_file}");
+
+        let output_path = output_folder.join(&output_file);
+        let playout = Playout::new(items);
+        let output_string = serde_json::to_string_pretty(&playout)?;
+        tokio::fs::write(&output_path, output_string).await?;
     }
 
-    let output_path = output_folder.join(&output_file);
-    let playout = Playout::new(playout_items);
-    let output_string = serde_json::to_string_pretty(&playout)?;
-    tokio::fs::write(&output_path, output_string).await?;
+    Ok(())
+}
+
+async fn gc_old_playouts(
+    output_folder: &Path,
+    before: OffsetDateTime,
+) -> Result<(), PlayoutGeneratorError> {
+    let mut entries = tokio::fs::read_dir(output_folder)
+        .await
+        .map_err(PlayoutGeneratorError::IoFailure)?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Some(file_name_os) = entry.path().file_stem() {
+            let file_name = file_name_os
+                .to_os_string()
+                .into_string()
+                .map_err(|_| PlayoutGeneratorError::ScanHorizonFailure)?;
+
+            if let Some((_, finish)) = parse_playout_filename(file_name.as_str())
+                && finish < before
+            {
+                tokio::fs::remove_file(entry.path()).await?;
+            }
+        }
+    }
 
     Ok(())
 }

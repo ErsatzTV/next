@@ -1,6 +1,6 @@
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
-use ersatztv_playout::playout::{DATE_FORMAT, PlayoutItem, PlayoutLoadResult};
+use ersatztv_playout::playout::{PlayoutItem, PlayoutLoadResult, parse_playout_filename};
 use time::OffsetDateTime;
 
 pub struct PlayoutLoader {
@@ -66,35 +66,11 @@ impl PlayoutLoader {
                     ChannelError::ChannelConfigFailure(String::from("os string error"))
                 })?;
 
-                if path.ends_with(".json") {
-                    let split: Vec<&str> = file_name.split("_").collect();
-                    if split.len() == 2 {
-                        let maybe_start = OffsetDateTime::parse(split[0], &DATE_FORMAT)
-                            .ok()
-                            .or_else(|| parse_unix_timestamp(split[0]));
-
-                        let maybe_finish = OffsetDateTime::parse(split[1], &DATE_FORMAT)
-                            .ok()
-                            .or_else(|| parse_unix_timestamp(split[1]));
-
-                        match (maybe_start, maybe_finish) {
-                            (Some(start), Some(finish)) => {
-                                log::trace!(
-                                    "Successfully parsed playout date range ({}, {}).",
-                                    start,
-                                    finish
-                                );
-                                if now >= &start && now < &finish {
-                                    return Ok(path);
-                                }
-                            }
-                            _ => {
-                                log::debug!(
-                                    "Could not parse start and end time for filename {file_name}"
-                                )
-                            }
-                        }
-                    }
+                if let Some((start, finish)) = parse_playout_filename(file_name.as_str())
+                    && now >= &start
+                    && now < &finish
+                {
+                    return Ok(path);
                 }
             }
         }
@@ -113,19 +89,5 @@ impl PlayoutLoader {
             .iter()
             .find(|i| &i.start > now)
             .map(|i| i.start)
-    }
-}
-
-fn parse_unix_timestamp(timestamp: &str) -> Option<OffsetDateTime> {
-    let maybe_epoch = timestamp
-        .parse::<i64>()
-        .map(|i| if timestamp.len() > 10 { i / 1000 } else { i });
-
-    if let Ok(epoch) = maybe_epoch {
-        // TODO: Could use more logging maybe
-        OffsetDateTime::from_unix_timestamp(epoch).ok()
-    } else {
-        log::trace!("Couldn't parse Unix timestamp ({})", timestamp);
-        None
     }
 }

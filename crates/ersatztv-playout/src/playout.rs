@@ -210,3 +210,35 @@ pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
 
     Ok(PlayoutLoadResult { playout })
 }
+
+pub fn parse_playout_filename(file_stem: &str) -> Option<(OffsetDateTime, OffsetDateTime)> {
+    let split: Vec<&str> = file_stem.split("_").collect();
+    if split.len() == 2 {
+        let maybe_start = OffsetDateTime::parse(split[0], &DATE_FORMAT)
+            .ok()
+            .or_else(|| parse_unix_timestamp(split[0]));
+
+        let maybe_finish = OffsetDateTime::parse(split[1], &DATE_FORMAT)
+            .ok()
+            .or_else(|| parse_unix_timestamp(split[1]));
+
+        return match (maybe_start, maybe_finish) {
+            (Some(start), Some(finish)) => Some((start, finish)),
+            _ => None,
+        };
+    }
+
+    None
+}
+
+fn parse_unix_timestamp(timestamp: &str) -> Option<OffsetDateTime> {
+    let maybe_epoch = timestamp
+        .parse::<i64>()
+        .map(|i| if timestamp.len() > 10 { i / 1000 } else { i });
+
+    if let Ok(epoch) = maybe_epoch {
+        OffsetDateTime::from_unix_timestamp(epoch).ok()
+    } else {
+        None
+    }
+}
