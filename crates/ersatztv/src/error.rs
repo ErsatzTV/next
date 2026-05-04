@@ -18,14 +18,24 @@ pub enum LineupError {
 
     #[error("unable to find channel with number {0}")]
     ChannelNotFound(String),
+
+    #[error("channel is not yet ready")]
+    ChannelNotReady,
 }
 
 impl IntoResponse for LineupError {
     fn into_response(self) -> Response {
-        let status = match self {
-            LineupError::ChannelNotFound(_) => StatusCode::NOT_FOUND,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        (status, self.to_string()).into_response()
+        match self {
+            LineupError::ChannelNotFound(_) => {
+                (StatusCode::NOT_FOUND, self.to_string()).into_response()
+            }
+            LineupError::ChannelNotReady => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(axum::http::header::RETRY_AFTER, "5")],
+                "channel not ready",
+            )
+                .into_response(),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response(),
+        }
     }
 }

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_NAME, READY_FILE_TIMEOUT, wait_for_file};
+use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_NAME};
 use tokio::sync::{Mutex, watch};
 
 use crate::channel_model::ChannelModel;
@@ -28,20 +29,24 @@ impl ChannelSession {
             .map_err(LineupError::Io)?;
 
         let (ready_sender, ready_receiver) = watch::channel(false);
-
-        let ready_file = channel.output_folder().join(READY_FILE_NAME);
-        tokio::spawn(async move {
-            if wait_for_file(&ready_file, READY_FILE_TIMEOUT).await {
-                let _ = ready_sender.send(true);
-            }
-        });
-
-        let channel_number = channel.number().to_owned();
-
         let ready_file = channel.output_folder().join(READY_FILE_NAME);
         let heartbeat_file = channel.output_folder().join(HEARTBEAT_FILE_NAME);
+        let channel_number = channel.number().to_owned();
+
         tokio::spawn(async move {
+            let ready_file_clone = ready_file.clone();
+            let watcher = tokio::spawn(async move {
+                loop {
+                    if ready_file_clone.exists() {
+                        let _ = ready_sender.send(true);
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            });
+
             let _ = child.wait().await;
+            watcher.abort();
             log::debug!("channel {} exited", &channel_number);
             active.lock().await.remove(&channel_number);
 

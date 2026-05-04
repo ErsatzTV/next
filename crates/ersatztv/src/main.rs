@@ -10,7 +10,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use clap::Parser;
-use ersatztv_core::{HEARTBEAT_FILE_NAME, empty_folder};
+use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_TIMEOUT, empty_folder};
 use tokio::signal;
 use tokio::sync::Mutex;
 use tower::ServiceBuilder;
@@ -151,10 +151,12 @@ async fn stream(
         }
     };
 
-    ready_receiver
-        .wait_for(|&ready| ready)
-        .await
-        .map_err(|_| LineupError::ChannelNotFound(String::from("channel timeout")))?;
+    let wait = ready_receiver.wait_for(|&r| r);
+    match tokio::time::timeout(READY_FILE_TIMEOUT, wait).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) => return Err(LineupError::ChannelNotReady), // child died
+        Err(_) => return Err(LineupError::ChannelNotReady),     // 30s deadline
+    }
 
     let content = get_multi_variant(channel, request);
 
