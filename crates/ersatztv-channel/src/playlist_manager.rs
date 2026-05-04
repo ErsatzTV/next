@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use ersatztv_channel::error::ChannelError;
@@ -13,7 +14,7 @@ const MIN_SEGMENTS: usize = 4;
 
 #[derive(Clone)]
 pub struct SubtitleSource {
-    pub cues: Vec<Cue>,
+    pub cues: Arc<Vec<Cue>>,
     pub(crate) cursor: usize,
     pub next_segment_source_offset: Duration,
 }

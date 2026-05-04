@@ -21,7 +21,8 @@ use ffpipeline::input::{
 };
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
-use ffpipeline::probe::{ProbeResult, Probeable};
+use ffpipeline::probe::{ProbeResult, ProbeResultVideoStream, Probeable};
+use ffpipeline::web_vtt::Cue;
 use ffpipeline::{pipeline, probe};
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
@@ -77,6 +78,8 @@ pub struct ChannelSession {
     state: ChannelSessionState,
 
     timeout_notify: Arc<tokio::sync::Notify>,
+
+    cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
 }
 
 impl ChannelSession {
@@ -162,6 +165,7 @@ impl ChannelSession {
             start_time_offset,
             state: ChannelSessionState::SeekAndWorkAhead,
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
+            cached_subtitles: None,
         })
     }
 
@@ -558,22 +562,19 @@ impl ChannelSession {
             && let Some(subtitle_stream) = input_settings.select_subtitle_stream()
             && !subtitle_stream.is_subtitle_image()
             && let Some(input) = input_settings.subtitle_input.as_ref()
-        {
-            match ffpipeline::web_vtt::convert_to_vtt(&self.ffmpeg_path, input, subtitle_stream)
-                .await
-            {
-                Ok(temp_file) => match ffpipeline::web_vtt::parse_file(temp_file.path()).await {
-                    Ok(cues) => {
-                        subtitle_source = Some(SubtitleSource {
-                            cues,
-                            cursor: 0,
-                            next_segment_source_offset: input.in_point,
-                        })
-                    }
-                    Err(err) => log::warn!("error parsing converted vtt: {err}"),
-                },
-                Err(err) => log::warn!("error converting subtitle to vtt: {err}"),
+            && let Some(cues) = match &self.cached_subtitles {
+                Some((id, c)) if id == &current_item.id => Some(Arc::clone(c)),
+                _ => {
+                    self.extract_and_convert_subs(input, subtitle_stream, current_item)
+                        .await
+                }
             }
+        {
+            subtitle_source = Some(SubtitleSource {
+                cues,
+                cursor: 0,
+                next_segment_source_offset: input.in_point,
+            });
         }
 
         let pts_offset = output_settings.pts_offset;
@@ -812,6 +813,35 @@ impl ChannelSession {
             .and_then(pick)
             .and_then(|sel| sel.source.clone())
             .or_else(|| item.source.clone())
+    }
+
+    async fn extract_and_convert_subs(
+        &mut self,
+        input: &ProbedInput,
+        subtitle_stream: &ProbeResultVideoStream,
+        current_item: &PlayoutItem,
+    ) -> Option<Arc<Vec<Cue>>> {
+        {
+            match ffpipeline::web_vtt::convert_to_vtt(&self.ffmpeg_path, input, subtitle_stream)
+                .await
+            {
+                Ok(temp_file) => match ffpipeline::web_vtt::parse_file(temp_file.path()).await {
+                    Ok(extracted_cues) => {
+                        let arc = Arc::new(extracted_cues);
+                        self.cached_subtitles = Some((current_item.id.clone(), Arc::clone(&arc)));
+                        Some(arc)
+                    }
+                    Err(err) => {
+                        log::warn!("error parsing converted vtt: {err}");
+                        None
+                    }
+                },
+                Err(err) => {
+                    log::warn!("error converting subtitle to vtt: {err}");
+                    None
+                }
+            }
+        }
     }
 }
 
