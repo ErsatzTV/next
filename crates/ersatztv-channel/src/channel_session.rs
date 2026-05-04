@@ -677,6 +677,7 @@ impl ChannelSession {
                 timeout_us,
                 reconnect,
                 reconnect_delay_max,
+                keep_alive,
                 ..
             } => {
                 let expanded_uri = expand_template(&uri)?;
@@ -695,6 +696,7 @@ impl ChannelSession {
                         timeout_us,
                         reconnect: reconnect.unwrap_or(true),
                         reconnect_delay_max,
+                        keep_alive,
                     },
                 }))
             }

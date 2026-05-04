@@ -200,6 +200,9 @@ pub enum PlayoutItemSource {
         /// Maps directly to the reconnect_delay_max ffmpeg option
         #[serde(skip_serializing_if = "Option::is_none")]
         reconnect_delay_max: Option<u32>,
+        /// Enable persistent connections in ffmpeg (default: false)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        keep_alive: Option<bool>,
     },
 }
 

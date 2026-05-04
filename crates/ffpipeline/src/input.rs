@@ -216,6 +216,7 @@ pub struct HttpInputOptions {
     pub timeout_us: Option<u64>,
     pub reconnect: bool,
     pub reconnect_delay_max: Option<u32>,
+    pub keep_alive: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -280,12 +281,14 @@ impl FfmpegInputArgs for HttpInputSource {
                 "1",
                 "-reconnect_streamed",
                 "1",
-                "-multiple_requests",
-                "1",
             ]);
             if let Some(max_delay) = self.options.reconnect_delay_max {
                 args.extend(args!["-reconnect_delay_max", max_delay.to_string()]);
             }
+        }
+
+        if self.options.keep_alive.is_some_and(|ka| ka) {
+            args.extend(args!["-multiple_requests", "1"])
         }
 
         if let Some(timeout) = self.options.timeout_us {

@@ -452,6 +452,13 @@
           ],
           "minimum": 0,
           "description": "Maximum reconnect delay in seconds. Maps to ffmpeg's `reconnect_delay_max`."
+        },
+        "keep_alive": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Enable persistent connections in ffmpeg. Default: false."
         }
       }
     }
