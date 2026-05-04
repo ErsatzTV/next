@@ -177,6 +177,7 @@ pub enum HardwareAccel {
     Amf,
     Cuda,
     Qsv,
+    Rkmpp,
     Vaapi,
     VideoToolbox,
     Vulkan,
@@ -217,6 +218,21 @@ impl HardwareAccel {
                     }
                     Err(e) => {
                         log::error!("failed to probe QSV capabilities: {}", e);
+                        None
+                    }
+                }
+            }
+            HardwareAccel::Rkmpp => {
+                let capabilities = ffpipeline::capabilities::rkmpp::RkmppCapabilities::probe();
+                match capabilities {
+                    Ok(capabilities) => {
+                        log::debug!("detected rkmpp capabilities: {:?}", capabilities);
+                        Some(ffpipeline::hw_accel::HardwareAccel::Rkmpp(
+                            ffpipeline::accel::rkmpp::Rkmpp { capabilities },
+                        ))
+                    }
+                    Err(e) => {
+                        log::error!("failed to probe rkmpp capabilities: {}", e);
                         None
                     }
                 }

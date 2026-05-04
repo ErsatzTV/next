@@ -83,6 +83,7 @@ pub enum HardwareAccel {
     Amf(accel::amf::Amf),
     Cuda(accel::cuda::Cuda),
     Qsv(accel::qsv::Qsv),
+    Rkmpp(accel::rkmpp::Rkmpp),
     Vaapi(accel::vaapi::Vaapi),
     VideoToolbox(accel::video_toolbox::VideoToolbox),
     Vulkan(accel::vulkan::Vulkan),

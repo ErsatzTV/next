@@ -149,8 +149,10 @@
     "HardwareAccel": {
       "type": "string",
       "enum": [
+        "amf",
         "cuda",
         "qsv",
+        "rkmpp",
         "vaapi",
         "videotoolbox",
         "vulkan"

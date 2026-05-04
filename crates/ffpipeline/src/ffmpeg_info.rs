@@ -25,6 +25,8 @@ pub enum KnownHardwareAccel {
     Cuda,
     #[strum(serialize = "qsv")]
     Qsv,
+    #[strum(serialize = "rkmpp")]
+    Rkmpp,
     #[strum(serialize = "vaapi")]
     Vaapi,
     #[strum(serialize = "videotoolbox")]
