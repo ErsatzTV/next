@@ -12,7 +12,7 @@ pub const MPP_VIDEO_CodingHEVC: i32 = 0x0100_0004;
 
 pub struct MppLib {
     _lib: Library,
-    pub mpp_check_support_format: unsafe extern "C" fn(ctx_type: i32, coding: i32) -> i32,
+    mpp_check_support_format: unsafe extern "C" fn(ctx_type: i32, coding: i32) -> i32,
 }
 
 impl MppLib {

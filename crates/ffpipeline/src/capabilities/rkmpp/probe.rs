@@ -11,7 +11,7 @@ const DECODER_CODECS: &[(i32, VideoFormat, bool)] = &[
     (MPP_VIDEO_CodingAVC, VideoFormat::H264, false),
     (MPP_VIDEO_CodingHEVC, VideoFormat::Hevc, true),
     (MPP_VIDEO_CodingVP8, VideoFormat::Vp8, false),
-    (MPP_VIDEO_CodingVP9, VideoFormat::Vp9, true),
+    (MPP_VIDEO_CodingVP9, VideoFormat::Vp9, false),
 ];
 
 /// ffmpeg only supports 8-bit encoding with rkmpp
