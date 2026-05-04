@@ -59,7 +59,7 @@ pub async fn convert_to_vtt(
 
     let mut ffmpeg = Command::new(ffmpeg_path)
         .args(args.iter().map(Cow::as_ref))
-        .stdout(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| FFPipelineError::FailedToConvertSubtitle)?;
@@ -76,14 +76,10 @@ pub async fn convert_to_vtt(
 }
 
 pub async fn parse_file(path: &Path) -> Result<Vec<Cue>, FFPipelineError> {
-    if path.exists() {
-        let contents = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|_| FFPipelineError::FailedToParseSubtitle)?;
-        return parse_internal(&contents);
-    }
-
-    Err(FFPipelineError::FailedToParseSubtitle)
+    let contents = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|_| FFPipelineError::FailedToParseSubtitle)?;
+    parse_internal(&contents)
 }
 
 pub fn format_vtt_ts(duration: Duration) -> String {

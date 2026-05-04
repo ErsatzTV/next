@@ -37,7 +37,7 @@ impl ChannelSession {
             let ready_file_clone = ready_file.clone();
             let watcher = tokio::spawn(async move {
                 loop {
-                    if ready_file_clone.exists() {
+                    if tokio::fs::metadata(&ready_file_clone).await.is_ok() {
                         let _ = ready_sender.send(true);
                         return;
                     }
