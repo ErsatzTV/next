@@ -513,20 +513,26 @@ impl Pipeline {
                 is_hdr: false,
             };
 
+            let video_size = final_output_settings
+                .video_size
+                .as_ref()
+                .unwrap_or(&initial_state.size);
+
+            let source_content_size = match final_output_settings.scaling_mode {
+                ScalingMode::ScaleAndPad => video_size.square_pixel_size_contain(&initial_state),
+                ScalingMode::Crop | ScalingMode::Stretch => *video_size,
+            };
+
             let scaled_size = watermark_input.scaled_size(
                 FrameSize { width, height },
                 final_output_settings.video_size,
             );
 
-            let location = Some(
-                watermark_input.frame_location(
-                    &scaled_size,
-                    final_output_settings
-                        .video_size
-                        .as_ref()
-                        .unwrap_or(&initial_state.size),
-                ),
-            );
+            let location = Some(watermark_input.frame_location(
+                &source_content_size,
+                &scaled_size,
+                video_size,
+            ));
 
             let mut secondary_filters: Vec<VideoFilter> = vec![
                 ColorChannelMixerFilter {

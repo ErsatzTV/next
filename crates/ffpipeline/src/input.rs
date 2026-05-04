@@ -331,6 +331,7 @@ pub struct WatermarkInput {
     pub stream_index: Option<u32>,
     pub location: WatermarkLocation,
     pub width_percent: Option<f32>,
+    pub within_source_content: Option<bool>,
     pub horizontal_margin_percent: Option<f32>,
     pub vertical_margin_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
@@ -388,15 +389,31 @@ impl WatermarkInput {
 
     pub(crate) fn frame_location(
         &self,
+        source_content_size: &FrameSize,
         scaled_size: &FrameSize,
         video_size: &FrameSize,
     ) -> FramePoint {
-        let horizontal_margin = f32::round(
-            self.horizontal_margin_percent.unwrap_or(0f32) / 100f32 * video_size.width as f32,
-        ) as u32;
-        let vertical_margin = f32::round(
-            self.vertical_margin_percent.unwrap_or(0f32) / 100f32 * video_size.height as f32,
-        ) as u32;
+        let (h_ref, v_ref, h_pad_offset, v_pad_offset) =
+            if self.within_source_content.unwrap_or(false) {
+                let h_pad = video_size.width.saturating_sub(source_content_size.width);
+                let v_pad = video_size.height.saturating_sub(source_content_size.height);
+                (
+                    source_content_size.width,
+                    source_content_size.height,
+                    h_pad / 2,
+                    v_pad / 2,
+                )
+            } else {
+                (video_size.width, video_size.height, 0, 0)
+            };
+
+        let horizontal_margin =
+            f32::round(self.horizontal_margin_percent.unwrap_or(0f32) / 100f32 * h_ref as f32)
+                as u32
+                + h_pad_offset;
+        let vertical_margin =
+            f32::round(self.vertical_margin_percent.unwrap_or(0f32) / 100f32 * v_ref as f32) as u32
+                + v_pad_offset;
 
         match self.location {
             WatermarkLocation::TopLeft => FramePoint {

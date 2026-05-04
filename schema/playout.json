@@ -204,6 +204,13 @@
           "maximum": 100,
           "description": "Opacity as a percent (0–100). Omit for fully opaque (100)."
         },
+        "within_source_content": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "When true, position margins are measured from the edges of the source content rather than the padded output frame, so letterbox/pillarbox bars push the watermark inward and keep it inside the visible content. When false, margins are relative to the full padded frame, so a 0% margin can land inside the bars. Has no effect when the primary content fills the output (crop/stretch). Omit for false."
+        },
         "timing": {
           "description": "Visibility schedule for the watermark. Omit for an always-on watermark.",
           "oneOf": [

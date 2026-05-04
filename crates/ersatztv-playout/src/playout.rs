@@ -104,6 +104,14 @@ pub struct Watermark {
     /// Omitted = actual size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width_percent: Option<f32>,
+    /// When `true`, position margins are measured from the edges of the source
+    /// content rather than the padded output frame, so letterbox/pillarbox bars
+    /// push the watermark inward and keep it inside the visible content. When
+    /// `false`, margins are relative to the full padded frame, so a 0% margin
+    /// can land inside the bars. Has no effect when the primary content fills
+    /// the output (crop/stretch). Omitted = `false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within_source_content: Option<bool>,
     /// Horizontal offset from `location`, as percent of primary content width (0–100).
     /// Omitted = 0.
     #[serde(skip_serializing_if = "Option::is_none")]

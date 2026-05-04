@@ -413,6 +413,7 @@ impl ChannelSession {
                     stream_index: w.stream_index,
                     location,
                     width_percent: w.width_percent,
+                    within_source_content: w.within_source_content,
                     horizontal_margin_percent: w.horizontal_margin_percent,
                     vertical_margin_percent: w.vertical_margin_percent,
                     opacity_percent: w.opacity_percent,
