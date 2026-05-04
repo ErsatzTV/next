@@ -26,3 +26,4 @@ pub mod probe;
 pub mod video_codec;
 pub mod video_decoder;
 pub mod video_filter;
+pub mod web_vtt;

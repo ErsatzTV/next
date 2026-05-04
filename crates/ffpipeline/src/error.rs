@@ -24,4 +24,8 @@ pub enum FFPipelineError {
     VideoToolboxCapabilitiesError(String),
     #[error("error detecting vulkan capabilities: {0}")]
     VulkanCapabilitiesError(String),
+    #[error("failed to convert subtitle")]
+    FailedToConvertSubtitle,
+    #[error("failed to parse subtitle")]
+    FailedToParseSubtitle,
 }

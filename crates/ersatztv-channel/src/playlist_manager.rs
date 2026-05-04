@@ -5,10 +5,9 @@ use std::time::Duration;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
 use ffpipeline::pipeline::PtsOffset;
+use ffpipeline::web_vtt::{Cue, format_vtt_ts};
 use time::OffsetDateTime;
 use time::macros::format_description;
-
-use crate::web_vtt::{Cue, format_vtt_ts};
 
 const MIN_SEGMENTS: usize = 4;
 
