@@ -7,6 +7,7 @@ members = [
     "crates/ersatztv-playout-generator",
     "crates/ffpipeline",
     "crates/libcl-sys",
+    "crates/libmpp-sys",
     "crates/libnvidia-sys",
     "crates/libva-sys",
     "crates/libvpl-sys",
@@ -28,6 +29,7 @@ ffpipeline = { path = "crates/ffpipeline" }
 filetime = "0.2"
 libloading = "0.9"
 libcl-sys = { path = "crates/libcl-sys" }
+libmpp-sys = { path = "crates/libmpp-sys" }
 libnvidia-sys = { path = "crates/libnvidia-sys" }
 libva-sys = { path = "crates/libva-sys" }
 libvpl-sys = { path = "crates/libvpl-sys" }

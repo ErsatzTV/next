@@ -18,6 +18,8 @@ pub enum FFPipelineError {
     OpenCLCapabilitiesError(String),
     #[error("error detecting qsv capabilities: {0}")]
     QsvCapabilitiesError(String),
+    #[error("error detecting rkmpp capabilities: {0}")]
+    RkmppCapabilitiesError(String),
     #[error("error detecting vaapi capabilities: {0}")]
     VaapiCapabilitiesError(String),
     #[error("error detecting videotoolbox capabilities: {0}")]

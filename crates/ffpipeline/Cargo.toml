@@ -9,6 +9,7 @@ derive_more = { workspace = true }
 enum_dispatch = { workspace = true }
 env_logger = { workspace = true }
 libcl-sys = { workspace = true }
+libmpp-sys = { workspace = true }
 libnvidia-sys = { workspace = true }
 libva-sys = { workspace = true }
 libvpl-sys = { workspace = true }

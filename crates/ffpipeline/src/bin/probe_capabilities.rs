@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::qsv::QsvCapabilities;
+use ffpipeline::capabilities::rkmpp::RkmppCapabilities;
 use ffpipeline::capabilities::vaapi::VaapiCapabilities;
 use ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities;
 use ffpipeline::capabilities::vulkan::VulkanCapabilities;
@@ -19,6 +20,7 @@ struct Cli {
 enum Accel {
     Cuda,
     Qsv,
+    Rkmpp,
     Vaapi {
         #[arg(long, default_value = "/dev/dri/renderD128")]
         device: String,
@@ -83,6 +85,7 @@ fn main() {
     let result = match cli.accel {
         Accel::Cuda => print_cuda(),
         Accel::Qsv => print_qsv(),
+        Accel::Rkmpp => print_rkmpp(),
         Accel::Vaapi { device, driver } => print_vaapi(&device, driver.as_deref()),
         Accel::VideoToolbox => print_videotoolbox(),
         Accel::Vulkan => print_vulkan(),
@@ -142,6 +145,18 @@ fn print_qsv() -> Result<(), String> {
 
     println!();
     print_vpp_table(|pf| caps.vpp_supports_format(pf));
+
+    Ok(())
+}
+
+fn print_rkmpp() -> Result<(), String> {
+    let caps = RkmppCapabilities::probe().map_err(|e| e.to_string())?;
+    println!("=== RKMPP (Rockchip MPP) Capabilities ===");
+    println!();
+
+    print_decode_table(ALL_FORMATS, |f, bd| caps.can_decode(f, bd));
+    println!();
+    print_encode_table(ALL_FORMATS, |f, bd| caps.can_encode(f, bd));
 
     Ok(())
 }
