@@ -82,6 +82,8 @@ jobs:
         run: rustup show active-toolchain
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-ubuntu22
 
       - name: Install Cross-Compilation Tools
         if: runner.os == 'Linux'
