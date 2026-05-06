@@ -78,7 +78,7 @@ jobs:
             exe_ext: .exe
             archive_ext: .zip
             should_run_tests: true
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: linux-x64
             rust_target: x86_64-unknown-linux-gnu
             exe_ext: ""
@@ -90,13 +90,13 @@ jobs:
             exe_ext: ""
             archive_ext: .tar.gz
             should_run_tests: false
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: linux-arm
             rust_target: armv7-unknown-linux-gnueabihf
             exe_ext: ""
             archive_ext: .tar.gz
             should_run_tests: false
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             target: linux-arm64
             rust_target: aarch64-unknown-linux-gnu
             exe_ext: ""
