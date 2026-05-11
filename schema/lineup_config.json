@@ -27,11 +27,29 @@
         "config": {
           "type": "string"
         },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
         },
         "number": {
           "type": "string"
+        },
+        "tvg_id": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

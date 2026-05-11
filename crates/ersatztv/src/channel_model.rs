@@ -47,7 +47,7 @@ impl ChannelModel {
             name: channel.name.clone(),
             config_path: channel_config,
             output_folder: output_folder.join(&channel.number),
-            tvg_id: channel.tvg_id.unwrap_or(channel.number.clone()),
+            tvg_id: channel.tvg_id.unwrap_or_else(|| channel.number.clone()),
             logo: channel.logo.clone(),
             group: channel.group.clone(),
         })
@@ -73,11 +73,11 @@ impl ChannelModel {
         self.tvg_id.as_str()
     }
 
-    pub fn logo(&self) -> Option<&String> {
-        self.logo.as_ref()
+    pub fn logo(&self) -> Option<&str> {
+        self.logo.as_deref()
     }
 
-    pub fn group(&self) -> Option<&String> {
-        self.group.as_ref()
+    pub fn group(&self) -> Option<&str> {
+        self.group.as_deref()
     }
 }
