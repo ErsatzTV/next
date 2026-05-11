@@ -29,6 +29,9 @@ pub struct ChannelConfig {
     pub number: String,
     pub name: String,
     pub config: String,
+    pub tvg_id: Option<String>,
+    pub logo: Option<String>,
+    pub group: Option<String>,
 }
 
 fn server_config_default() -> ServerConfig {

@@ -214,8 +214,25 @@ async fn channel_playlist(
     let mut content = String::new();
     content.push_str("#EXTM3U\n");
     for channel in &state.channels {
+        let logo = channel
+            .logo()
+            .map(|l| format!(" tvg-logo=\"{l}\""))
+            .unwrap_or(String::new());
+
+        let group = channel
+            .group()
+            .map(|g| format!(" group-title=\"{g}\""))
+            .unwrap_or(String::new());
+
         // TODO: kodiprop when user agent starts with "kodi"
-        content.push_str(&format!("#EXTINF:0, {}\n", channel.name()));
+        content.push_str(&format!(
+            "#EXTINF:0 tvg-id=\"{}\" tvg-name=\"{}\"{}{}, {}\n",
+            channel.tvg_id(),
+            channel.name(),
+            logo,
+            group,
+            channel.name()
+        ));
         content.push_str(&format!(
             "{}/channel/{}.m3u8",
             get_scheme_host(&request),

@@ -10,7 +10,10 @@
     {
       "number": "1",
       "name": "ErsatzTV",
-      "config": "./channel.json"
+      "config": "./channel.json",
+      "tvg_id": "ersatztv.1",
+      "logo": "https://ersatztv.org/images/branding/ersatztv_icon@84.png",
+      "group": "ErsatzTV"
     }
   ]
 }
