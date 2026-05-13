@@ -113,6 +113,54 @@
         }
       }
     },
+    "BwdifCudaOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "BwdifOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeinterlaceQsvOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeinterlaceVaapiOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "FfmpegConfig": {
       "type": "object",
       "properties": {
@@ -265,6 +313,46 @@
     "VideoFilterOptionsConfig": {
       "type": "object",
       "properties": {
+        "bwdif": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BwdifOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bwdif_cuda": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BwdifCudaOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deinterlace_qsv": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeinterlaceQsvOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deinterlace_vaapi": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeinterlaceVaapiOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "libplacebo": {
           "anyOf": [
             {
@@ -289,6 +377,36 @@
           "anyOf": [
             {
               "$ref": "#/$defs/TonemapOpenclOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "w3fdif": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/W3fdifOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "yadif": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/YadifOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "yadif_cuda": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/YadifCudaOptions"
             },
             {
               "type": "null"
@@ -397,6 +515,42 @@
           "minimum": 0
         }
       }
+    },
+    "W3fdifOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "YadifCudaOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "YadifOptions": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
