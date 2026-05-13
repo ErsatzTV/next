@@ -216,7 +216,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         video_buffer: params.video_buffer,
         video_size: params.video_size,
         scaling_mode: ScalingMode::ScaleAndPad,
-        filter_options: VideoFilterOptions::default(),
+        filter_options: params.filter_options,
         deinterlace: params.deinterlace,
         accel: params.accel,
         format: OutputFormat::Hls {
