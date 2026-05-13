@@ -114,6 +114,7 @@ pub struct VideoNormalizationConfig {
     pub scaling_mode: ScalingMode,
     pub bitrate_kbps: Option<u32>,
     pub buffer_kbps: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_optional_accel")]
     pub accel: Option<HardwareAccel>,
     pub vaapi_device: Option<PathBuf>,
     pub vaapi_driver: Option<VaapiDriver>,
@@ -514,4 +515,17 @@ fn deserialize_bit_depth<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u8>, 
 
 fn deserialize_optional_path<'de, D: Deserializer<'de>>(d: D) -> Result<Option<PathBuf>, D::Error> {
     Ok(Option::<PathBuf>::deserialize(d)?.filter(|p| !p.as_os_str().is_empty()))
+}
+
+fn deserialize_optional_accel<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Option<HardwareAccel>, D::Error> {
+    let s = Option::<String>::deserialize(d)?;
+    match s.as_deref() {
+        None | Some("") => Ok(None),
+        Some(v) => {
+            HardwareAccel::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(v))
+                .map(Some)
+        }
+    }
 }
