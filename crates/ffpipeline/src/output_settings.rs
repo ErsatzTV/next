@@ -13,7 +13,7 @@ pub struct OutputSettings {
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,
-    pub tonemap_algorithm: Option<String>,
+    pub filter_options: VideoFilterOptions,
     pub deinterlace: bool,
     pub accel: Option<HardwareAccel>,
     pub format: OutputFormat,
@@ -21,6 +21,28 @@ pub struct OutputSettings {
     pub realtime: bool,
     pub frame_rate: Option<FrameRate>,
     pub subtitle_mode: SubtitleMode,
+}
+
+#[derive(Debug, Default)]
+pub struct VideoFilterOptions {
+    pub libplacebo: LibplaceboOptions,
+    pub tonemap: TonemapOptions,
+    pub tonemap_opencl: TonemapOpenclOptions,
+}
+
+#[derive(Debug, Default)]
+pub struct LibplaceboOptions {
+    pub tonemapping: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct TonemapOptions {
+    pub tonemap: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct TonemapOpenclOptions {
+    pub tonemap: Option<String>,
 }
 
 #[derive(Debug)]

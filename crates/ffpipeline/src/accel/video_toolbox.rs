@@ -3,6 +3,7 @@ use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
+use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -25,6 +26,7 @@ impl HwAccel for VideoToolbox {
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
         _current_state: &FrameState,
+        _filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {

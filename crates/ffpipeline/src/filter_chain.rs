@@ -2,6 +2,7 @@ use crate::ArgVec;
 use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
+use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{OverlayFilter, OverlayKindOp, OverlaySource};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
 use crate::video_filter::{
@@ -92,6 +93,7 @@ impl FilterChain {
         &mut self,
         ffmpeg_info: &FfmpegInfo,
         accel: &Option<HardwareAccel>,
+        filter_options: &VideoFilterOptions,
         initial_state: &FrameState,
         encoder_surface: &FrameSurface,
         encoder_pixel_format: &Option<PixelFormat>,
@@ -104,7 +106,9 @@ impl FilterChain {
             match filter {
                 PipelineFilter::Video(video_filter) => {
                     let mut best = match accel {
-                        Some(a) => a.best_filter(video_filter, ffmpeg_info, &current_state),
+                        Some(a) => {
+                            a.best_filter(video_filter, ffmpeg_info, &current_state, filter_options)
+                        }
                         _ => video_filter.clone(),
                     };
 
@@ -182,6 +186,7 @@ impl FilterChain {
                     sec.resolve(
                         ffmpeg_info,
                         sec_accel,
+                        filter_options,
                         &best.secondary_initial_state,
                         &sec_req.surface,
                         &Some(sec_req.pixel_format),
@@ -614,6 +619,7 @@ mod tests {
         let accel = vaapi_accel();
         let initial_state = hdr_vaapi_state();
         let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
 
         let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
@@ -626,6 +632,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -681,6 +688,7 @@ mod tests {
         let accel = vaapi_accel();
         let initial_state = hdr_vaapi_state();
         let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
 
         let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
@@ -693,6 +701,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -729,6 +738,7 @@ mod tests {
         let accel = vaapi_accel();
         let initial_state = hdr_vaapi_state();
         let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
 
         let format_filter: VideoFilter = FormatFilter {
             format: PixelFormat::Nv12,
@@ -740,6 +750,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -763,6 +774,7 @@ mod tests {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -770,7 +782,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(
                 result,
@@ -788,6 +800,7 @@ mod tests {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, true, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -795,7 +808,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(
                 result,
@@ -813,6 +826,7 @@ mod tests {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, false, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -820,7 +834,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::ToneMap(_)),
             "expected software ToneMap fallback, got {:?}",
@@ -836,6 +850,7 @@ mod tests {
             KnownVideoFilter::TonemapVaapi,
         ]);
         let state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -843,7 +858,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::TonemapOpencl(_)),
             "expected TonemapOpencl on iHD when both are available, got {:?}",
@@ -856,6 +871,7 @@ mod tests {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, false, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -863,7 +879,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::TonemapVaapi(_)),
             "expected TonemapVaapi on iHD when opencl is unavailable, got {:?}",
@@ -876,6 +892,7 @@ mod tests {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[]);
         let state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -883,7 +900,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::ToneMap(_)),
             "expected software ToneMap when ffmpeg has no hw tonemap filters, got {:?}",
@@ -895,6 +912,7 @@ mod tests {
     fn best_filter_falls_back_for_non_p010le_input() {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, true, false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
+        let filter_options = VideoFilterOptions::default();
 
         let mut state = hdr_vaapi_state();
         state.pixel_format = PixelFormat::Nv12;
@@ -905,7 +923,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::ToneMap(_)),
             "expected software ToneMap for non-P010le input, got {:?}",
@@ -919,6 +937,7 @@ mod tests {
         let accel = HardwareAccel::Vaapi(vaapi);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let initial_state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let tonemap: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -930,6 +949,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -965,6 +985,7 @@ mod tests {
         let accel = HardwareAccel::Vaapi(vaapi);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::TonemapVaapi]);
         let initial_state = hdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let tonemap: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
@@ -976,6 +997,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -1040,6 +1062,7 @@ mod tests {
         let ffmpeg_info =
             ffmpeg_info_with_filters(&[KnownVideoFilter::PadVaapi, KnownVideoFilter::PadOpencl]);
         let state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1050,7 +1073,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::PadVaapi(PadVaapi { .. })),
             "expected PadVaapi when both pad_vaapi and pad_opencl available, got {:?}",
@@ -1063,6 +1086,7 @@ mod tests {
         let vaapi = vaapi_accel_with_opencl(true);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
         let state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1073,7 +1097,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::PadOpencl(PadOpencl { .. })),
             "expected PadOpencl when pad_vaapi unavailable, got {:?}",
@@ -1086,6 +1110,7 @@ mod tests {
         let vaapi = vaapi_accel_with_opencl(false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[]);
         let state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1096,7 +1121,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::Pad(_)),
             "expected software Pad fallback, got {:?}",
@@ -1109,6 +1134,7 @@ mod tests {
         let vaapi = vaapi_accel_with_opencl(false);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
         let state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let input: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1119,7 +1145,7 @@ mod tests {
         }
         .into();
 
-        let result = vaapi.best_filter(&input, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
         assert!(
             matches!(result, VideoFilter::Pad(_)),
             "expected software Pad when no OpenCL capabilities, got {:?}",
@@ -1133,6 +1159,7 @@ mod tests {
         let accel = HardwareAccel::Vaapi(vaapi);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
         let initial_state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let pad: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1147,6 +1174,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -1204,6 +1232,7 @@ mod tests {
         let ffmpeg_info =
             ffmpeg_info_with_filters(&[KnownVideoFilter::PadVaapi, KnownVideoFilter::PadOpencl]);
         let initial_state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let pad: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1218,6 +1247,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
@@ -1253,6 +1283,7 @@ mod tests {
         let accel = HardwareAccel::Vaapi(vaapi);
         let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::PadOpencl]);
         let initial_state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
 
         let pad: VideoFilter = PadFilter {
             size: Some(FrameSize {
@@ -1267,6 +1298,7 @@ mod tests {
         chain.resolve(
             &ffmpeg_info,
             &Some(accel),
+            &filter_options,
             &initial_state,
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),

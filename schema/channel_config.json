@@ -158,6 +158,18 @@
         "vulkan"
       ]
     },
+    "LibplaceboOptions": {
+      "type": "object",
+      "properties": {
+        "tonemapping": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "NormalizationConfig": {
       "type": "object",
       "properties": {
@@ -218,6 +230,30 @@
         }
       }
     },
+    "TonemapOpenclOptions": {
+      "type": "object",
+      "properties": {
+        "tonemap": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "TonemapOptions": {
+      "type": "object",
+      "properties": {
+        "tonemap": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "VaapiDriver": {
       "type": "string",
       "enum": [
@@ -225,6 +261,42 @@
         "i965",
         "radeonsi"
       ]
+    },
+    "VideoFilterOptionsConfig": {
+      "type": "object",
+      "properties": {
+        "libplacebo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LibplaceboOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tonemap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TonemapOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tonemap_opencl": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TonemapOpenclOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "VideoFormat": {
       "type": "string",
@@ -276,6 +348,9 @@
           "type": "boolean",
           "default": false
         },
+        "filters": {
+          "$ref": "#/$defs/VideoFilterOptionsConfig"
+        },
         "format": {
           "anyOf": [
             {
@@ -296,12 +371,6 @@
         },
         "scaling_mode": {
           "$ref": "#/$defs/ScalingMode"
-        },
-        "tonemap_algorithm": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "vaapi_device": {
           "type": [

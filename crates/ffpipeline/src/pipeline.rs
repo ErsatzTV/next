@@ -16,7 +16,7 @@ use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{FfmpegInputArgs, InputSettings, InputSource, WatermarkInput};
 use crate::output_option::OutputOption;
-use crate::output_settings::{OutputSettings, ScalingMode, SubtitleMode};
+use crate::output_settings::{OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions};
 use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
@@ -233,6 +233,7 @@ impl PipelineInput {
 pub struct Pipeline {
     ffmpeg_info: FfmpegInfo,
     accel: Option<HardwareAccel>,
+    filter_options: VideoFilterOptions,
     initial_state: FrameState,
 
     global_options: Vec<GlobalOption>,
@@ -359,7 +360,7 @@ impl Pipeline {
             ),
             PipelineFilter::Video(
                 ToneMapFilter {
-                    algorithm: final_output_settings.tonemap_algorithm.clone(),
+                    algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
                     output_format: match final_output_settings.bit_depth {
                         Some(10) => PixelFormat::Yuv420p10le,
                         _ => PixelFormat::Yuv420p,
@@ -578,6 +579,7 @@ impl Pipeline {
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
             accel: final_output_settings.accel.clone(),
+            filter_options: final_output_settings.filter_options,
             initial_state: initial_state.clone(),
             global_options: vec![
                 // hardware accel should use a single thread
@@ -658,6 +660,7 @@ impl Pipeline {
         self.filter_chain.resolve(
             &self.ffmpeg_info,
             &self.accel,
+            &self.filter_options,
             &self.initial_state,
             &self.output_context.preferred_surface,
             &self.output_context.preferred_pixel_format,

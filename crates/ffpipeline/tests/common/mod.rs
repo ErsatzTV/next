@@ -10,6 +10,7 @@ use ffpipeline::input::{InputSettings, InputSource, LocalInputSource, ProbedInpu
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
     AudioLoudnessSettings, AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode,
+    VideoFilterOptions,
 };
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
 use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
@@ -176,7 +177,7 @@ pub struct TestOutputParams {
     pub loudness: Option<AudioLoudnessSettings>,
     pub accel: Option<HardwareAccel>,
     pub frame_rate: Option<FrameRate>,
-    pub tonemap_algorithm: Option<String>,
+    pub filter_options: VideoFilterOptions,
 }
 
 impl Default for TestOutputParams {
@@ -194,7 +195,7 @@ impl Default for TestOutputParams {
             loudness: None,
             accel: None,
             frame_rate: None,
-            tonemap_algorithm: None,
+            filter_options: VideoFilterOptions::default(),
         }
     }
 }
@@ -215,7 +216,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         video_buffer: params.video_buffer,
         video_size: params.video_size,
         scaling_mode: ScalingMode::ScaleAndPad,
-        tonemap_algorithm: params.tonemap_algorithm,
+        filter_options: VideoFilterOptions::default(),
         deinterlace: params.deinterlace,
         accel: params.accel,
         format: OutputFormat::Hls {

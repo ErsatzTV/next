@@ -3,6 +3,7 @@ use enum_dispatch::enum_dispatch;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
+use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::OverlayFilter;
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
@@ -19,6 +20,7 @@ pub trait HwAccel {
         video_filter: &VideoFilter,
         _ffmpeg_info: &FfmpegInfo,
         _current_state: &FrameState,
+        _filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         video_filter.clone()
     }

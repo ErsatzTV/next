@@ -11,6 +11,7 @@ use ffpipeline::capabilities::vaapi::VaapiCapabilities;
 use ffpipeline::ffmpeg_info::KnownHardwareAccel;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
+use ffpipeline::output_settings::{TonemapOpenclOptions, VideoFilterOptions};
 use ffpipeline::pipeline::{AudioFormat, VideoFormat};
 use rstest::rstest;
 use tokio::sync::OnceCell;
@@ -128,7 +129,12 @@ async fn tonemap(
                 video_format: Some(vf),
                 video_size: Some(res),
                 bit_depth: Some(bpp),
-                tonemap_algorithm: Some("hable".to_string()),
+                filter_options: VideoFilterOptions {
+                    tonemap_opencl: TonemapOpenclOptions {
+                        tonemap: Some("hable".to_string()),
+                    },
+                    ..VideoFilterOptions::default()
+                },
                 ..TestOutputParams::default()
             },
             expected_video_codec: vf.to_string(),

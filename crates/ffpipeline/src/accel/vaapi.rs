@@ -5,6 +5,7 @@ use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
+use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
     FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
@@ -40,6 +41,7 @@ impl HwAccel for Vaapi {
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
         current_state: &FrameState,
+        filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
@@ -87,8 +89,8 @@ impl HwAccel for Vaapi {
             }
 
             VideoFilter::ToneMap(ToneMapFilter {
-                algorithm,
                 output_format: format,
+                ..
             }) => {
                 let tonemap_output_format = self.output_format(format);
                 let can_vaapi_tonemap = match (&current_state.pixel_format, tonemap_output_format) {
@@ -109,7 +111,7 @@ impl HwAccel for Vaapi {
                 if let Some(hw_filter) = ffmpeg_info.find_best_fit(tonemap_options.as_slice()) {
                     match hw_filter {
                         KnownVideoFilter::TonemapOpencl => TonemapOpencl {
-                            algorithm: algorithm.clone(),
+                            algorithm: filter_options.tonemap_opencl.tonemap.clone(),
                             output_format: self.output_format(format),
                         }
                         .into(),
@@ -570,13 +572,14 @@ mod tests {
             },
             ..make_frame_state()
         };
+        let filter_options = VideoFilterOptions::default();
 
         let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
             filter: SoftwareDeinterlaceFilter::Yadif,
             input_is_interlaced: true,
         });
 
-        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state, &filter_options);
 
         assert!(
             matches!(
@@ -625,13 +628,14 @@ mod tests {
             is_interlaced: true,
             ..make_frame_state()
         };
+        let filter_options = VideoFilterOptions::default();
 
         let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
             filter: SoftwareDeinterlaceFilter::Yadif,
             input_is_interlaced: true,
         });
 
-        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state, &filter_options);
 
         assert!(
             matches!(&result, VideoFilter::Deinterlace(_)),
@@ -645,13 +649,14 @@ mod tests {
         let vaapi = make_vaapi();
         let ffmpeg_info = make_ffmpeg_info(&[KnownVideoFilter::DeinterlaceVaapi]);
         let state = make_frame_state();
+        let filter_options = VideoFilterOptions::default();
 
         let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
             filter: SoftwareDeinterlaceFilter::Yadif,
             input_is_interlaced: false,
         });
 
-        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state);
+        let result = vaapi.best_filter(&sw_deinterlace, &ffmpeg_info, &state, &filter_options);
 
         assert!(
             matches!(&result, VideoFilter::Deinterlace(_)),

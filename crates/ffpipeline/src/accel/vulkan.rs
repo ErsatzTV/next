@@ -3,6 +3,7 @@ use crate::capabilities::vulkan::VulkanCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
+use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -19,6 +20,7 @@ impl HwAccel for Vulkan {
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
         current_state: &FrameState,
+        filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
@@ -35,10 +37,10 @@ impl HwAccel for Vulkan {
                 .into()
             }
             VideoFilter::ToneMap(ToneMapFilter {
-                algorithm,
                 output_format: format,
+                ..
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) => LibplaceboVulkan {
-                algorithm: algorithm.clone(),
+                algorithm: filter_options.libplacebo.tonemapping.clone(),
                 format: match format {
                     PixelFormat::Yuv420p10le => PixelFormat::P010le,
                     _ => PixelFormat::Nv12,

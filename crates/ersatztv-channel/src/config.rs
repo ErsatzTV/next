@@ -116,9 +116,52 @@ pub struct VideoNormalizationConfig {
     pub accel: Option<HardwareAccel>,
     pub vaapi_device: Option<PathBuf>,
     pub vaapi_driver: Option<VaapiDriver>,
-    pub tonemap_algorithm: Option<String>,
     #[serde(default)]
     pub deinterlace: bool,
+    #[serde(default)]
+    pub filters: VideoFilterOptionsConfig,
+}
+
+#[derive(Deserialize, Clone, Debug, Default, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct VideoFilterOptionsConfig {
+    pub libplacebo: Option<LibplaceboOptions>,
+    pub tonemap: Option<TonemapOptions>,
+    pub tonemap_opencl: Option<TonemapOpenclOptions>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TonemapOptions {
+    pub tonemap: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TonemapOpenclOptions {
+    pub tonemap: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LibplaceboOptions {
+    pub tonemapping: Option<String>,
+}
+
+impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilterOptions {
+    fn from(value: VideoFilterOptionsConfig) -> Self {
+        ffpipeline::output_settings::VideoFilterOptions {
+            libplacebo: ffpipeline::output_settings::LibplaceboOptions {
+                tonemapping: value.libplacebo.and_then(|o| o.tonemapping),
+            },
+            tonemap: ffpipeline::output_settings::TonemapOptions {
+                tonemap: value.tonemap.and_then(|o| o.tonemap),
+            },
+            tonemap_opencl: ffpipeline::output_settings::TonemapOpenclOptions {
+                tonemap: value.tonemap_opencl.and_then(|o| o.tonemap),
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Copy, Debug, JsonSchema, Default)]

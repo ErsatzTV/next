@@ -4,6 +4,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
+use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
@@ -30,6 +31,7 @@ impl HwAccel for Cuda {
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
         current_state: &FrameState,
+        filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
@@ -53,11 +55,11 @@ impl HwAccel for Cuda {
                 PadCuda { size: *size }.into()
             }
             VideoFilter::ToneMap(ToneMapFilter {
-                algorithm,
                 output_format: format,
+                ..
             }) if current_state.is_hdr && current_state.surface == FrameSurface::Vulkan => {
                 LibplaceboCuda {
-                    algorithm: algorithm.clone(),
+                    algorithm: filter_options.libplacebo.tonemapping.clone(),
                     format: match format {
                         PixelFormat::Yuv420p10le => PixelFormat::P010le,
                         _ => PixelFormat::Nv12,
