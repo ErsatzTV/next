@@ -7,7 +7,7 @@ use crate::accel;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
-use crate::output_settings::ScalingMode;
+use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 
 #[derive(Clone)]
@@ -29,11 +29,18 @@ impl ForceOriginalAspectRatio {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct SoftwareDeinterlaceOptions {
+    pub bwdif: BwdifOptions,
+    pub w3fdif: W3fdifOptions,
+    pub yadif: YadifOptions,
+}
+
 #[derive(Clone)]
 pub enum SoftwareDeinterlaceFilter {
-    Bwdif,
-    Yadif,
-    W3fdif,
+    Bwdif(BwdifOptions),
+    Yadif(YadifOptions),
+    W3fdif(W3fdifOptions),
 }
 
 #[enum_dispatch]
@@ -376,6 +383,7 @@ impl VideoFilterOp for ToneMapFilter {
 #[derive(Clone)]
 pub struct DeinterlaceFilter {
     pub filter: SoftwareDeinterlaceFilter,
+    pub options: SoftwareDeinterlaceOptions,
     pub input_is_interlaced: bool,
 }
 
@@ -390,14 +398,22 @@ impl VideoFilterOp for DeinterlaceFilter {
 
             if let Some(known_filter) = best {
                 let software_filter = match known_filter {
-                    KnownVideoFilter::Yadif => SoftwareDeinterlaceFilter::Yadif,
-                    KnownVideoFilter::Bwdif => SoftwareDeinterlaceFilter::Bwdif,
-                    KnownVideoFilter::W3fdif => SoftwareDeinterlaceFilter::W3fdif,
+                    KnownVideoFilter::Yadif => {
+                        SoftwareDeinterlaceFilter::Yadif(self.options.yadif.clone())
+                    }
+                    KnownVideoFilter::Bwdif => {
+                        SoftwareDeinterlaceFilter::Bwdif(self.options.bwdif.clone())
+                    }
+                    KnownVideoFilter::W3fdif => {
+                        SoftwareDeinterlaceFilter::W3fdif(self.options.w3fdif.clone())
+                    }
                     _ => return None,
                 };
                 return Some(
                     DeinterlaceFilter {
                         filter: software_filter,
+                        // unused after this point
+                        options: SoftwareDeinterlaceOptions::default(),
                         input_is_interlaced: self.input_is_interlaced,
                     }
                     .into(),
@@ -422,9 +438,18 @@ impl VideoFilterOp for DeinterlaceFilter {
 
     fn as_arg(&self) -> Option<String> {
         match &self.filter {
-            SoftwareDeinterlaceFilter::Yadif => Some(String::from("yadif=1")),
-            SoftwareDeinterlaceFilter::Bwdif => Some(String::from("bwdif=1")),
-            SoftwareDeinterlaceFilter::W3fdif => Some(String::from("w3fdif=1")),
+            SoftwareDeinterlaceFilter::Yadif(options) => {
+                let mode = options.mode.as_deref().unwrap_or("1");
+                Some(format!("yadif={mode}"))
+            }
+            SoftwareDeinterlaceFilter::Bwdif(options) => {
+                let mode = options.mode.as_deref().unwrap_or("1");
+                Some(format!("bwdif={mode}"))
+            }
+            SoftwareDeinterlaceFilter::W3fdif(options) => {
+                let mode = options.mode.as_deref().unwrap_or("1");
+                Some(format!("w3fdif=mode={mode}"))
+            }
         }
     }
 }

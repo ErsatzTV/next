@@ -4,7 +4,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
-use crate::output_settings::VideoFilterOptions;
+use crate::output_settings::{BwdifCudaOptions, VideoFilterOptions, YadifCudaOptions};
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
@@ -70,7 +70,9 @@ impl HwAccel for Cuda {
             VideoFilter::Deinterlace(DeinterlaceFilter { .. }) => {
                 let best_cuda_filter = ffmpeg_info
                     .find_best_fit(&[KnownVideoFilter::YadifCuda, KnownVideoFilter::BwdifCuda])
-                    .and_then(|known_filter| CudaDeinterlaceFilter::try_from(known_filter).ok());
+                    .and_then(|known_filter| {
+                        CudaDeinterlaceFilter::load(known_filter, filter_options).ok()
+                    });
 
                 if let Some(best_cuda_filter) = best_cuda_filter {
                     return DeinterlaceCuda {
@@ -400,18 +402,24 @@ pub struct DeinterlaceCuda {
     pub(crate) filter: CudaDeinterlaceFilter,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum CudaDeinterlaceFilter {
-    Bwdif,
-    Yadif,
+    Bwdif(BwdifCudaOptions),
+    Yadif(YadifCudaOptions),
 }
 
-impl TryFrom<&KnownVideoFilter> for CudaDeinterlaceFilter {
-    type Error = String;
-    fn try_from(known_filter: &KnownVideoFilter) -> Result<CudaDeinterlaceFilter, Self::Error> {
+impl CudaDeinterlaceFilter {
+    fn load(
+        known_filter: &KnownVideoFilter,
+        filter_options: &VideoFilterOptions,
+    ) -> Result<CudaDeinterlaceFilter, String> {
         match known_filter {
-            KnownVideoFilter::BwdifCuda => Ok(CudaDeinterlaceFilter::Bwdif),
-            KnownVideoFilter::YadifCuda => Ok(CudaDeinterlaceFilter::Yadif),
+            KnownVideoFilter::BwdifCuda => Ok(CudaDeinterlaceFilter::Bwdif(
+                filter_options.bwdif_cuda.clone(),
+            )),
+            KnownVideoFilter::YadifCuda => Ok(CudaDeinterlaceFilter::Yadif(
+                filter_options.yadif_cuda.clone(),
+            )),
             _ => Err(format!("Unknown cuda deinterlace filter: {}", known_filter)),
         }
     }
@@ -432,9 +440,15 @@ impl VideoFilterOp for DeinterlaceCuda {
     }
 
     fn as_arg(&self) -> Option<String> {
-        match self.filter {
-            CudaDeinterlaceFilter::Bwdif => Some(String::from("bwdif_cuda=1")),
-            CudaDeinterlaceFilter::Yadif => Some(String::from("yadif_cuda=1")),
+        match &self.filter {
+            CudaDeinterlaceFilter::Bwdif(options) => {
+                let mode = options.mode.as_deref().unwrap_or("1");
+                Some(format!("bwdif_cuda={mode}"))
+            }
+            CudaDeinterlaceFilter::Yadif(options) => {
+                let mode = options.mode.as_deref().unwrap_or("1");
+                Some(format!("yadif_cuda={mode}"))
+            }
         }
     }
 }

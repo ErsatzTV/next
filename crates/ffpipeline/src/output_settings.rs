@@ -25,9 +25,36 @@ pub struct OutputSettings {
 
 #[derive(Debug, Default)]
 pub struct VideoFilterOptions {
+    pub bwdif: BwdifOptions,
+    pub bwdif_cuda: BwdifCudaOptions,
+    pub deinterlace_qsv: DeinterlaceQsvOptions,
+    pub deinterlace_vaapi: DeinterlaceVaapiOptions,
     pub libplacebo: LibplaceboOptions,
     pub tonemap: TonemapOptions,
     pub tonemap_opencl: TonemapOpenclOptions,
+    pub w3fdif: W3fdifOptions,
+    pub yadif: YadifOptions,
+    pub yadif_cuda: YadifCudaOptions,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BwdifOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DeinterlaceQsvOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DeinterlaceVaapiOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BwdifCudaOptions {
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -43,6 +70,21 @@ pub struct TonemapOptions {
 #[derive(Debug, Default)]
 pub struct TonemapOpenclOptions {
     pub tonemap: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct W3fdifOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct YadifOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct YadifCudaOptions {
+    pub mode: Option<String>,
 }
 
 #[derive(Debug)]

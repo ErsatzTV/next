@@ -16,13 +16,16 @@ use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{FfmpegInputArgs, InputSettings, InputSource, WatermarkInput};
 use crate::output_option::OutputOption;
-use crate::output_settings::{OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions};
+use crate::output_settings::{
+    OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
+};
 use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter,
-    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
+    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions, SubtitlesFilter,
+    ToneMapFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -370,7 +373,12 @@ impl Pipeline {
             ),
             PipelineFilter::Video(
                 DeinterlaceFilter {
-                    filter: SoftwareDeinterlaceFilter::Yadif,
+                    filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
+                    options: SoftwareDeinterlaceOptions {
+                        bwdif: final_output_settings.filter_options.bwdif.clone(),
+                        w3fdif: final_output_settings.filter_options.w3fdif.clone(),
+                        yadif: final_output_settings.filter_options.yadif.clone(),
+                    },
                     input_is_interlaced: initial_state.is_interlaced,
                 }
                 .into(),

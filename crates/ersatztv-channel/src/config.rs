@@ -127,9 +127,46 @@ pub struct VideoNormalizationConfig {
 #[derive(Deserialize, Clone, Debug, Default, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct VideoFilterOptionsConfig {
+    pub bwdif: Option<BwdifOptions>,
+    pub bwdif_cuda: Option<BwdifCudaOptions>,
+    pub deinterlace_qsv: Option<DeinterlaceQsvOptions>,
+    pub deinterlace_vaapi: Option<DeinterlaceVaapiOptions>,
     pub libplacebo: Option<LibplaceboOptions>,
     pub tonemap: Option<TonemapOptions>,
     pub tonemap_opencl: Option<TonemapOpenclOptions>,
+    pub w3fdif: Option<W3fdifOptions>,
+    pub yadif: Option<YadifOptions>,
+    pub yadif_cuda: Option<YadifCudaOptions>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BwdifOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BwdifCudaOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeinterlaceQsvOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeinterlaceVaapiOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LibplaceboOptions {
+    pub tonemapping: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
@@ -146,13 +183,37 @@ pub struct TonemapOpenclOptions {
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct LibplaceboOptions {
-    pub tonemapping: Option<String>,
+pub struct W3fdifOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct YadifOptions {
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct YadifCudaOptions {
+    pub mode: Option<String>,
 }
 
 impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilterOptions {
     fn from(value: VideoFilterOptionsConfig) -> Self {
         ffpipeline::output_settings::VideoFilterOptions {
+            bwdif: ffpipeline::output_settings::BwdifOptions {
+                mode: value.bwdif.and_then(|o| o.mode),
+            },
+            bwdif_cuda: ffpipeline::output_settings::BwdifCudaOptions {
+                mode: value.bwdif_cuda.and_then(|o| o.mode),
+            },
+            deinterlace_qsv: ffpipeline::output_settings::DeinterlaceQsvOptions {
+                mode: value.deinterlace_qsv.and_then(|o| o.mode),
+            },
+            deinterlace_vaapi: ffpipeline::output_settings::DeinterlaceVaapiOptions {
+                mode: value.deinterlace_vaapi.and_then(|o| o.mode),
+            },
             libplacebo: ffpipeline::output_settings::LibplaceboOptions {
                 tonemapping: value.libplacebo.and_then(|o| o.tonemapping),
             },
@@ -161,6 +222,15 @@ impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilter
             },
             tonemap_opencl: ffpipeline::output_settings::TonemapOpenclOptions {
                 tonemap: value.tonemap_opencl.and_then(|o| o.tonemap),
+            },
+            w3fdif: ffpipeline::output_settings::W3fdifOptions {
+                mode: value.w3fdif.and_then(|o| o.mode),
+            },
+            yadif: ffpipeline::output_settings::YadifOptions {
+                mode: value.yadif.and_then(|o| o.mode),
+            },
+            yadif_cuda: ffpipeline::output_settings::YadifCudaOptions {
+                mode: value.yadif_cuda.and_then(|o| o.mode),
             },
         }
     }

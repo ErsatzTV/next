@@ -81,9 +81,8 @@ impl HwAccel for Vaapi {
             }) if *input_is_interlaced
                 && ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceVaapi) =>
             {
-                // TODO: Offer customization here?
                 DeinterlaceVaapi {
-                    mode: DeinterlaceVaapiMode::Default,
+                    mode: filter_options.deinterlace_vaapi.mode.clone(),
                 }
                 .into()
             }
@@ -463,18 +462,9 @@ impl OverlayKindOp for VaapiOverlay {
     }
 }
 
-#[derive(Clone, Copy, strum::EnumString, strum::Display)]
-pub enum DeinterlaceVaapiMode {
-    Default = 0,
-    Bob = 1,
-    Weave = 2,
-    MotionAdaptive = 3,
-    MotionCompensated = 4,
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct DeinterlaceVaapi {
-    pub mode: DeinterlaceVaapiMode,
+    pub mode: Option<String>,
 }
 
 impl VideoFilterOp for DeinterlaceVaapi {
@@ -492,11 +482,8 @@ impl VideoFilterOp for DeinterlaceVaapi {
     }
 
     fn as_arg(&self) -> Option<String> {
-        let mode_str = match self.mode {
-            DeinterlaceVaapiMode::Default => String::from(""),
-            mode => format!("=mode={}", mode),
-        };
-        Some(format!("deinterlace_vaapi{}", mode_str))
+        let mode = self.mode.as_deref().unwrap_or("0");
+        Some(format!("deinterlace_vaapi=mode={mode}"))
     }
 }
 
@@ -507,8 +494,11 @@ mod tests {
     use super::*;
     use crate::ffmpeg_info::FfmpegInfo;
     use crate::frame_size::FrameSize;
+    use crate::output_settings::YadifOptions;
     use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
-    use crate::video_filter::{DeinterlaceFilter, SoftwareDeinterlaceFilter};
+    use crate::video_filter::{
+        DeinterlaceFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions,
+    };
 
     fn make_ffmpeg_info(filters: &[KnownVideoFilter]) -> FfmpegInfo {
         let mut video_filters = HashSet::new();
@@ -575,7 +565,8 @@ mod tests {
         let filter_options = VideoFilterOptions::default();
 
         let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
-            filter: SoftwareDeinterlaceFilter::Yadif,
+            filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
+            options: SoftwareDeinterlaceOptions::default(),
             input_is_interlaced: true,
         });
 
@@ -584,14 +575,15 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                VideoFilter::DeinterlaceVaapi(DeinterlaceVaapi {
-                    mode: DeinterlaceVaapiMode::Default
-                })
+                VideoFilter::DeinterlaceVaapi(DeinterlaceVaapi { mode: None })
             ),
             "expected DeinterlaceVaapi with Default mode, got {:?}",
             result.as_arg()
         );
-        assert_eq!(result.as_arg(), Some(String::from("deinterlace_vaapi")));
+        assert_eq!(
+            result.as_arg(),
+            Some(String::from("deinterlace_vaapi=mode=0"))
+        );
     }
 
     #[test]
@@ -608,9 +600,7 @@ mod tests {
             ..make_frame_state()
         };
 
-        let filter = DeinterlaceVaapi {
-            mode: DeinterlaceVaapiMode::Default,
-        };
+        let filter = DeinterlaceVaapi { mode: None };
         filter.apply_to(&mut state);
 
         assert!(!state.is_interlaced);
@@ -631,7 +621,8 @@ mod tests {
         let filter_options = VideoFilterOptions::default();
 
         let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
-            filter: SoftwareDeinterlaceFilter::Yadif,
+            filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
+            options: SoftwareDeinterlaceOptions::default(),
             input_is_interlaced: true,
         });
 
@@ -652,7 +643,8 @@ mod tests {
         let filter_options = VideoFilterOptions::default();
 
         let sw_deinterlace = VideoFilter::Deinterlace(DeinterlaceFilter {
-            filter: SoftwareDeinterlaceFilter::Yadif,
+            filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
+            options: SoftwareDeinterlaceOptions::default(),
             input_is_interlaced: false,
         });
 

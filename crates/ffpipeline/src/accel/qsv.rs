@@ -20,7 +20,7 @@ impl HwAccel for Qsv {
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
         _current_state: &FrameState,
-        _filter_options: &VideoFilterOptions,
+        filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
@@ -35,7 +35,10 @@ impl HwAccel for Qsv {
             VideoFilter::Deinterlace(DeinterlaceFilter { .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceQsv) =>
             {
-                DeinterlaceQsv.into()
+                DeinterlaceQsv {
+                    mode: filter_options.deinterlace_qsv.mode.clone(),
+                }
+                .into()
             }
             _ => video_filter.clone(),
         }
@@ -195,7 +198,9 @@ impl VideoFilterOp for FormatQsv {
 }
 
 #[derive(Clone)]
-pub struct DeinterlaceQsv;
+pub struct DeinterlaceQsv {
+    pub mode: Option<String>,
+}
 
 impl VideoFilterOp for DeinterlaceQsv {
     fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
@@ -212,6 +217,7 @@ impl VideoFilterOp for DeinterlaceQsv {
     }
 
     fn as_arg(&self) -> Option<String> {
-        Some(String::from("deinterlace_qsv"))
+        let mode = self.mode.as_deref().unwrap_or("2");
+        Some(format!("deinterlace_qsv=mode={mode}"))
     }
 }
