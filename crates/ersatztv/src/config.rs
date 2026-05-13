@@ -28,7 +28,11 @@ pub struct OutputConfig {
 pub struct ChannelConfig {
     pub number: String,
     pub name: String,
+    /// Base configuration path
     pub config: String,
+    /// Optional configuration overlay paths; values will be merged with base config, nulls will remove keys from base config
+    #[serde(default)]
+    pub overlays: Vec<String>,
     pub tvg_id: Option<String>,
     pub logo: Option<String>,
     pub group: Option<String>,

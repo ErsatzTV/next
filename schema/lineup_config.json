@@ -25,6 +25,7 @@
       "type": "object",
       "properties": {
         "config": {
+          "description": "Base configuration path",
           "type": "string"
         },
         "group": {
@@ -44,6 +45,14 @@
         },
         "number": {
           "type": "string"
+        },
+        "overlays": {
+          "description": "Optional configuration overlay paths; values will be merged with base config, nulls will remove keys from base config",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
         },
         "tvg_id": {
           "type": [

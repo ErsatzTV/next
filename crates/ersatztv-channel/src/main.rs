@@ -22,10 +22,14 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Print debug information using the provided configuration
-    Debug { config_path: PathBuf },
+    Debug {
+        #[arg(required = true, num_args = 1..)]
+        config_paths: Vec<PathBuf>,
+    },
     /// Run the channel using the provided configuration
     Run {
-        config_path: PathBuf,
+        #[arg(required = true, num_args = 1..)]
+        config_paths: Vec<PathBuf>,
         #[arg(short, long)]
         output_folder: PathBuf,
         #[arg(short, long)]
@@ -52,23 +56,20 @@ async fn run() -> Result<(), ChannelError> {
 
     match args.command {
         Commands::Run {
-            config_path,
+            config_paths,
             output_folder,
             number,
         } => {
-            let channel_config = if config_path.to_str().is_some_and(|p| p == "-") {
-                ChannelConfig::from_stdin(&output_folder, &number).await?
-            } else {
-                ChannelConfig::from_file(&config_path, &output_folder, &number).await?
-            };
+            let channel_config =
+                ChannelConfig::from_sources(&config_paths, &output_folder, &number).await?;
 
             // start channel session
             let mut channel_session = ChannelSession::new(channel_config)?;
             channel_session.run().await
         }
-        Commands::Debug { config_path } => {
+        Commands::Debug { config_paths } => {
             let channel_config =
-                ChannelConfig::from_file(&config_path, &std::env::temp_dir(), "debug").await?;
+                ChannelConfig::from_sources(&config_paths, &std::env::temp_dir(), "debug").await?;
 
             log::debug!("{:?}", channel_config);
 

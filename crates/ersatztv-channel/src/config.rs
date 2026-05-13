@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
@@ -399,44 +400,56 @@ impl From<SubtitleMode> for ffpipeline::output_settings::SubtitleMode {
 }
 
 impl ChannelConfig {
-    pub async fn from_stdin(
+    pub async fn from_sources(
+        sources: &[PathBuf],
         output_folder: &PathBuf,
         number: &str,
     ) -> Result<ChannelConfig, ChannelError> {
-        let mut config_string = String::new();
-        let limit = 256 * 1024; // 256K
-        let mut reader = tokio::io::stdin().take(limit);
+        let stdin_count = sources
+            .iter()
+            .filter(|s| s.to_str().is_some_and(|p| p == "-"))
+            .count();
 
-        reader.read_to_string(&mut config_string).await?;
+        if stdin_count > 1 {
+            return Err(ChannelError::ChannelConfigFailure(String::from(
+                "cannot load more than one channel config from stdin",
+            )));
+        }
 
-        let mut channel_config: ChannelConfig = serde_json::from_str(&config_string)
+        let mut config_value: Value = Value::Null;
+        let mut relative_to: PathBuf = std::env::current_dir()?;
+
+        for config_path in sources {
+            let config_string = if config_path.to_str().is_some_and(|p| p == "-") {
+                let mut result = String::new();
+                let limit = 256 * 1024; // 256K
+                let mut reader = tokio::io::stdin().take(limit);
+                reader.read_to_string(&mut result).await?;
+                relative_to = std::env::current_dir()?;
+                result
+            } else {
+                relative_to = config_path
+                    .parent()
+                    .ok_or(ChannelError::ChannelConfigFailure(String::from(
+                        "failed to find parent of config",
+                    )))?
+                    .to_path_buf();
+
+                tokio::fs::read_to_string(config_path)
+                    .await
+                    .map_err(ChannelError::ChannelConfigIoFailure)?
+            };
+
+            let v: Value = serde_json::from_str(config_string.as_str())
+                .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
+
+            crate::merge::deep_merge(&mut config_value, v);
+        }
+
+        let mut channel_config: ChannelConfig = serde_json::from_value(config_value)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
-        let playout_relative_to = std::env::current_dir()?;
-
-        channel_config.finalize(&playout_relative_to, output_folder, number)?;
-
-        Ok(channel_config)
-    }
-
-    pub async fn from_file(
-        path: &PathBuf,
-        output_folder: &PathBuf,
-        number: &str,
-    ) -> Result<ChannelConfig, ChannelError> {
-        let config_string = tokio::fs::read_to_string(path)
-            .await
-            .map_err(ChannelError::ChannelConfigIoFailure)?;
-        let mut channel_config: ChannelConfig = serde_json::from_str(&config_string)
-            .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
-
-        let playout_relative_to =
-            path.parent()
-                .ok_or(ChannelError::ChannelConfigFailure(String::from(
-                    "failed to find parent of config",
-                )))?;
-
-        channel_config.finalize(playout_relative_to, output_folder, number)?;
+        channel_config.finalize(&relative_to, output_folder, number)?;
 
         Ok(channel_config)
     }

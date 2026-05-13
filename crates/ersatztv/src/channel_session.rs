@@ -25,6 +25,7 @@ impl ChannelSession {
             .arg("--number")
             .arg(channel.number())
             .arg(channel.config_path())
+            .args(channel.overlay_paths())
             .spawn()
             .map_err(LineupError::Io)?;
 
