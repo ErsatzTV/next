@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ersatztv::error::LineupError;
 use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_NAME};
 use tokio::sync::{Mutex, watch};
 
 use crate::channel_model::ChannelModel;
-use crate::error::LineupError;
 
 pub struct ChannelSession {
     ready_receiver: watch::Receiver<bool>,

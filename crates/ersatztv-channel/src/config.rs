@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
@@ -8,6 +8,12 @@ use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
 
 use crate::error::ChannelError;
+
+pub const PATH_FIELDS: &[&str] = &[
+    "/playout/folder",
+    "/ffmpeg/ffmpeg_path",
+    "/ffmpeg/ffprobe_path",
+];
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
@@ -488,9 +494,10 @@ impl ChannelConfig {
         }
 
         let mut config_value: Value = Value::Null;
-        let mut relative_to: PathBuf = std::env::current_dir()?;
 
         for config_path in sources {
+            let relative_to;
+
             let config_string = if config_path.to_str().is_some_and(|p| p == "-") {
                 let mut result = String::new();
                 let limit = 256 * 1024; // 256K
@@ -511,26 +518,23 @@ impl ChannelConfig {
                     .map_err(ChannelError::ChannelConfigIoFailure)?
             };
 
-            let v: Value = serde_json::from_str(config_string.as_str())
+            let mut v: Value = serde_json::from_str(config_string.as_str())
                 .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
-            crate::merge::deep_merge(&mut config_value, v);
+            ersatztv_core::resolve_relative_paths(&mut v, &relative_to, PATH_FIELDS);
+
+            ersatztv_core::deep_merge(&mut config_value, v);
         }
 
         let mut channel_config: ChannelConfig = serde_json::from_value(config_value)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
-        channel_config.finalize(&relative_to, output_folder, number)?;
+        channel_config.finalize(output_folder, number)?;
 
         Ok(channel_config)
     }
 
-    fn finalize(
-        &mut self,
-        playout_relative_to: &Path,
-        output_folder: &PathBuf,
-        number: &str,
-    ) -> Result<(), ChannelError> {
+    fn finalize(&mut self, output_folder: &PathBuf, number: &str) -> Result<(), ChannelError> {
         if self.normalization.video.format.is_some() && self.normalization.video.bit_depth.is_none()
         {
             return Err(ChannelError::ChannelConfigFailure(String::from(
@@ -538,18 +542,7 @@ impl ChannelConfig {
             )));
         }
 
-        // expand playout folder
-        let playout_folder = PathBuf::from(&self.playout.folder);
-        let expanded_playout_folder =
-            expand_tilde(&playout_folder).ok_or(ChannelError::ChannelConfigExpandPlayoutFolder)?;
-        let relative_playout_folder = if expanded_playout_folder.is_relative() {
-            playout_relative_to
-                .join(&expanded_playout_folder)
-                .canonicalize()?
-        } else {
-            expanded_playout_folder
-        };
-        self.expanded_playout_folder = relative_playout_folder;
+        self.expanded_playout_folder = PathBuf::from(&self.playout.folder);
 
         // expand output folder
         self.expanded_output_folder =

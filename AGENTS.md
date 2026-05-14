@@ -17,17 +17,23 @@ cargo build --workspace --all-features
 # Run the IPTV server
 cargo run --bin ersatztv -- <path/to/lineup.json>
 
+# Scaffold a new lineup with N channels (creates lineup.json, hls/, channels/<N>/{channel.json,playout/})
+cargo run --bin ersatztv -- add-lineup <path/to/lineup.json> --channels <N>
+
+# Add a channel to an existing lineup
+cargo run --bin ersatztv -- add-channel <path/to/lineup.json> --number <X>
+
 # Run a single channel worker (usually spawned by the server)
 cargo run --bin ersatztv-channel -- run <path/to/channel.json> --output-folder <dir> --number <N>
 
 # Debug channel config and FFmpeg capabilities
 cargo run --bin ersatztv-channel -- debug <path/to/channel.json>
 
-# Generate test playout from video files
+# Generate test playout from video files (explicit output folder)
 cargo run --bin ersatztv-playout-generator -- --content-folder <dir> --output-folder <dir>
 
-# Sync playout from legacy ErsatzTV SQLite DB
-cargo run --bin ersatztv-playout-generator -- sync-channel --db <path> --channel-number <N> --output-folder <dir>
+# Generate test playout for a channel in a lineup (resolves the playout folder from channel.json)
+cargo run --bin ersatztv-playout-generator -- --content-folder <dir> --lineup <path/to/lineup.json> --channel <N>
 
 # Lint
 cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all

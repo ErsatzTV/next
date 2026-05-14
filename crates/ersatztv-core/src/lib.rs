@@ -2,6 +2,12 @@ use std::time::{Duration, Instant};
 
 use tokio::fs::{create_dir_all, read_dir, remove_dir, remove_file};
 
+mod merge;
+mod path_resolve;
+
+pub use merge::deep_merge;
+pub use path_resolve::resolve_relative_paths;
+
 pub const READY_FILE_NAME: &str = ".ready";
 pub const READY_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 

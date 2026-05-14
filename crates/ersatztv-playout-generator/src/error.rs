@@ -16,4 +16,22 @@ pub enum PlayoutGeneratorError {
 
     #[error("no source content was found")]
     NoSourceContent,
+
+    #[error("unable to locate parent of lineup.json")]
+    LineupNoParent,
+
+    #[error("unable to locate channel in lineup.json")]
+    LineupNoChannel,
+
+    #[error("lineup error: {0}")]
+    LineupError(#[from] ersatztv::error::LineupError),
+
+    #[error("failed to load channel JSON file: {0}")]
+    ChannelJsonLoadError(String),
+
+    #[error("output folder is required")]
+    NoOutputFolder,
+
+    #[error("unable to locate parent of channel config {0}")]
+    ChannelNoParent(String),
 }

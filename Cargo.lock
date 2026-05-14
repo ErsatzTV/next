@@ -343,6 +343,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "simple-expand-tilde",
  "thiserror",
  "tokio",
  "tower",
@@ -375,6 +376,8 @@ dependencies = [
 name = "ersatztv-core"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "simple-expand-tilde",
  "tokio",
 ]
 
@@ -395,12 +398,15 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "env_logger",
+ "ersatztv",
  "ersatztv-core",
  "ersatztv-playout",
  "ffpipeline",
  "log",
  "rand",
+ "serde",
  "serde_json",
+ "simple-expand-tilde",
  "thiserror",
  "time",
  "tokio",

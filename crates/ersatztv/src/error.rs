@@ -21,6 +21,18 @@ pub enum LineupError {
 
     #[error("channel is not yet ready")]
     ChannelNotReady,
+
+    #[error("unable to locate parent of lineup.json")]
+    ScaffoldNoParent,
+
+    #[error("the following paths already exist: {0}")]
+    ScaffoldPathsExist(String),
+
+    #[error("failed to serialize JSON")]
+    ScaffoldSerializeError(#[from] serde_json::Error),
+
+    #[error("channel already exists")]
+    ScaffoldChannelExists,
 }
 
 impl IntoResponse for LineupError {

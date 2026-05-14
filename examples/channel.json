@@ -1,6 +1,6 @@
 {
   "playout": {
-    "folder": "~/Playouts"
+    "folder": "./playout"
   },
   "ffmpeg": {
     "ffmpeg_path": "",
@@ -22,8 +22,8 @@
       }
     },
     "video": {
-      "format": "hevc",
-      "bit_depth": 10,
+      "format": "h264",
+      "bit_depth": 8,
       "width": 1920,
       "height": 1080,
       "bitrate_kbps": 2000,
