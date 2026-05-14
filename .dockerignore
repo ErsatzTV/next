@@ -2,7 +2,6 @@
 .github/
 .idea/
 docker/
-examples/
 target/
 README.md
 LICENSE
