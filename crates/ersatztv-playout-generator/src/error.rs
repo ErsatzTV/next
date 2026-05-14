@@ -14,9 +14,6 @@ pub enum PlayoutGeneratorError {
     #[error("serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
-    #[error("sqlite error: {0}")]
-    SqliteError(#[from] sqlx::Error),
-
     #[error("no source content was found")]
     NoSourceContent,
 }

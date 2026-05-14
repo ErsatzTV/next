@@ -12,7 +12,6 @@ ffpipeline = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
