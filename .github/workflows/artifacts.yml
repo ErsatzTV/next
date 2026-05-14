@@ -127,6 +127,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-ubuntu22
+          # Workaround for https://github.com/Swatinem/rust-cache/issues/341:
+          # on the updated macOS runner image, cache-bin's restored cargo/rustc
+          # dispatches as rustup-init and fails with "unexpected argument".
+          cache-bin: ${{ runner.os == 'macOS' && 'false' || 'true' }}
 
       - name: Install Cross-Compilation Tools
         if: runner.os == 'Linux'
