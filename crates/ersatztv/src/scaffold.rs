@@ -5,7 +5,10 @@ use ersatztv::config::{ChannelConfig, LineupConfig, OutputConfig, ServerConfig};
 use ersatztv::error::LineupError;
 
 pub async fn add_lineup(lineup_path: &Path, channels: u32, force: bool) -> Result<(), LineupError> {
-    let root = lineup_path.parent().unwrap_or(Path::new("."));
+    let root = lineup_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
 
     let channel_numbers: Vec<_> = (0..channels).map(|i| format!("{}", i + 1)).collect();
 
@@ -82,7 +85,10 @@ pub async fn add_lineup(lineup_path: &Path, channels: u32, force: bool) -> Resul
 }
 
 pub async fn add_channel(lineup_path: &Path, number: &str, force: bool) -> Result<(), LineupError> {
-    let root = lineup_path.parent().ok_or(LineupError::ScaffoldNoParent)?;
+    let root = lineup_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
 
     let channel_folder = root.join("channels").join(number);
     let channel_file = channel_folder.join("channel.json");

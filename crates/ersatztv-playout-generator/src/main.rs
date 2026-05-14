@@ -116,7 +116,7 @@ async fn resolve_output_folder(args: &Args) -> Result<PathBuf, PlayoutGeneratorE
                 Ok(channel_config_folder
                     .join(&expanded_playout_folder)
                     .canonicalize()
-                    .unwrap_or_else(|_| channel_config_file.join(&expanded_playout_folder)))
+                    .unwrap_or_else(|_| channel_config_folder.join(&expanded_playout_folder)))
             } else {
                 Ok(expanded_playout_folder)
             };
