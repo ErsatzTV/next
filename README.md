@@ -12,7 +12,11 @@ This rewrite focuses on a "one thing well" philosophy: **reliable transcoding an
 > [!IMPORTANT]
 > Library and metadata management, scheduling and playout creation **are not in scope for this project**.
 
-Unlike [the legacy version](https://github.com/ErsatzTV/ErsatzTV-legacy), this version is decoupled from library management and scheduling. It consumes **playouts** (JSON documents describing what to play and when) and handles the heavy lifting of keeping a stream alive and consistent, regardless of source media variations.
+Unlike [the legacy version](https://github.com/ErsatzTV/legacy), this version is decoupled from library management and scheduling. It consumes **playouts** (JSON documents describing what to play and when) and handles the heavy lifting of keeping a stream alive and consistent, regardless of source media variations.
+
+## Documentation
+
+Platform-specific quickstart guides and reference documentation live at **<https://ersatztv.org/next-docs/>**.
 
 ## Contents
 
@@ -22,7 +26,7 @@ This project contains the following crates:
 - [ersatztv-playout](crates/ersatztv-playout): Rust models for the playout JSON schema
 - [ersatztv-channel](crates/ersatztv-channel): generates a normalized IPTV stream for a single channel from playout JSON
 - [ersatztv](crates/ersatztv): serves IPTV over HTTP (M3U, M3U8, etc.) and manages channel processes
-- [ersatztv-playout-generator](crates/ersatztv-playout-generator): generates playout JSON from a folder of video files. *This is provided for development and testing only.*
+- [ersatztv-playout-generator](crates/ersatztv-playout-generator): generates playout JSON from a folder of video files. *Provided for demonstration and reference purposes; scheduling is not in scope and feature requests will not be accepted.*
 
 Finally, there are configuration examples under [examples](examples):
 
@@ -34,36 +38,33 @@ Finally, there are configuration examples under [examples](examples):
 
 ### Prerequisites
 
-- `ffmpeg` and `ffprobe` must be in your `PATH`.
-- Rust toolchain (if building from source).
+- `ffmpeg` and `ffprobe` must be in your `PATH` (or referenced by absolute path in `channel.json`).
+
+### Install
+
+Grab a pre-built binary from the [develop release](https://github.com/ErsatzTV/next/releases/tag/develop), or build from source with `cargo build --release --workspace`.
+
+For platform-specific walkthroughs, see the [docs site](https://ersatztv.org/next-docs/).
 
 ### Quick Start
 
-1. **Clone the repo:**
+1. **Scaffold a lineup with one channel:**
    ```bash
-   git clone https://github.com/ErsatzTV/next.git
-   cd next
+   ersatztv add-lineup config/lineup.json --channels 1
+   ```
+   This creates `config/lineup.json`, `config/channels/1/channel.json`, and `config/channels/1/playout/`.
+
+2. **Generate a test playout** from a folder of video files:
+   ```bash
+   ersatztv-playout-generator --lineup config/lineup.json --channel 1 --content-folder /path/to/videos
    ```
 
-2. **Generate a test playout:**
-   Point this at a folder with some video files.
+3. **Run the server:**
    ```bash
-   cargo run --bin ersatztv-playout-generator -- --content-folder "/path/to/videos" --output-folder "config/channels/1/playout"
+   ersatztv config/lineup.json
    ```
 
-3. **Configure your Channel:**
-   Copy [channel.json](examples/channel.json) to `config/channels/1/channel.json`. Update the playout folder to point to the folder created in step 2.
-
-4. **Configure your Lineup:**
-   Copy [lineup.json](examples/lineup.json) to `config/lineup.json`. Update the channel path to point to your `config/channels/1/channel.json`.
-
-5. **Run the server:**
-   ```bash
-   cargo run --bin ersatztv -- config/lineup.json
-   ```
-
-6. **Watch:**
-   Open `http://localhost:8409/channel/1.m3u8` in VLC, mpv, or any HLS player.
+4. **Watch** at `http://localhost:8409/channel/1.m3u8` in VLC, mpv, or any HLS player. For a no-install check, open the [hls.js demo](https://hlsjs.video-dev.org/demo/?src=http%3A%2F%2Flocalhost%3A8409%2Fchannel%2F1.m3u8).
 
 ## Contributing
 
