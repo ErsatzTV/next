@@ -3,7 +3,7 @@ use std::path::Path;
 
 use ersatztv::error::LineupError;
 use quick_xml::Reader;
-use quick_xml::events::{BytesText, Event};
+use quick_xml::events::{BytesDecl, BytesText, Event};
 use quick_xml::writer::Writer;
 
 use crate::LineupState;
@@ -37,6 +37,7 @@ fn generate_blocking(
     channels: &[ChannelMeta],
 ) -> Result<Vec<u8>, LineupError> {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     writer
         .create_element("tv")
         .with_attribute(("generator-info-name", "ErsatzTV"))
@@ -91,11 +92,9 @@ fn copy_programmes<R: BufRead, W: Write>(
     let mut depth = 0u32;
     loop {
         match reader.read_event_into(buf).map_err(std::io::Error::other)? {
-            Event::Start(e) => {
-                if e.name().as_ref() == b"programme" || depth > 0 {
-                    depth += 1;
-                    writer.write_event(Event::Start(e))?;
-                }
+            Event::Start(e) if e.name().as_ref() == b"programme" || depth > 0 => {
+                depth += 1;
+                writer.write_event(Event::Start(e))?;
             }
             Event::End(e) if depth > 0 => {
                 depth -= 1;
