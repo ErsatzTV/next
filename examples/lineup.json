@@ -6,6 +6,9 @@
   "output": {
     "folder": "/tmp/hls"
   },
+  "xmltv": {
+    "folder": "./xmltv"
+  },
   "channels": [
     {
       "number": "1",

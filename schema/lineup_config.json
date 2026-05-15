@@ -13,7 +13,21 @@
       "$ref": "#/$defs/OutputConfig"
     },
     "server": {
-      "$ref": "#/$defs/ServerConfig"
+      "$ref": "#/$defs/ServerConfig",
+      "default": {
+        "bind_address": "0.0.0.0",
+        "port": 8409
+      }
+    },
+    "xmltv": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/XmltvConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -49,7 +63,6 @@
         "overlays": {
           "description": "Optional configuration overlay paths; values will be merged with base config, nulls will remove keys from base config",
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
           }
@@ -93,6 +106,17 @@
           "minimum": 0
         }
       }
+    },
+    "XmltvConfig": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "folder"
+      ]
     }
   }
 }
