@@ -11,10 +11,10 @@ ersatztv-core = { workspace = true }
 ersatztv-playout = { workspace = true }
 ffpipeline = { workspace = true }
 log = { workspace = true }
+quick-xml = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-simple-expand-tilde = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

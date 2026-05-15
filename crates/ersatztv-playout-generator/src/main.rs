@@ -1,5 +1,6 @@
 mod error;
 mod generate;
+mod xmltv;
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +9,6 @@ use ffpipeline::input::{InputSource, LocalInputSource};
 use ffpipeline::probe;
 use ffpipeline::probe::{ProbeResult, Probeable};
 use serde::Deserialize;
-use simple_expand_tilde::expand_tilde;
 use walkdir::DirEntry;
 
 use crate::error::PlayoutGeneratorError;
@@ -40,6 +40,12 @@ struct Args {
     output_folder: Option<PathBuf>,
 }
 
+struct GeneratorConfig {
+    pub output_folder: PathBuf,
+    pub xmltv_folder: Option<PathBuf>,
+    pub channel_tvg_id: Option<String>,
+}
+
 #[tokio::main]
 pub async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -55,11 +61,17 @@ pub async fn main() {
 async fn run() -> Result<(), PlayoutGeneratorError> {
     let args = Args::parse();
     let content_folder = args.content_folder.as_ref().unwrap();
-    let output_folder = resolve_output_folder(&args).await?;
-    generate::generate_playout(content_folder, &output_folder).await
+    let generator_config = resolve_output_folder(&args).await?;
+    generate::generate_playout(
+        content_folder,
+        &generator_config.output_folder,
+        generator_config.xmltv_folder.as_deref(),
+        generator_config.channel_tvg_id.as_deref(),
+    )
+    .await
 }
 
-async fn resolve_output_folder(args: &Args) -> Result<PathBuf, PlayoutGeneratorError> {
+async fn resolve_output_folder(args: &Args) -> Result<GeneratorConfig, PlayoutGeneratorError> {
     if let Some(lineup) = args.lineup.as_ref()
         && let Some(number) = args.channel.as_ref()
     {
@@ -102,31 +114,29 @@ async fn resolve_output_folder(args: &Args) -> Result<PathBuf, PlayoutGeneratorE
             let channel_config: MinimalChannelConfig = serde_json::from_value(merged)
                 .map_err(|e| PlayoutGeneratorError::ChannelJsonLoadError(e.to_string()))?;
 
-            let channel_config_folder = channel_config_file
-                .parent()
-                .ok_or(PlayoutGeneratorError::LineupNoParent)?;
-
-            let expanded_playout_folder = expand_tilde(&channel_config.playout.folder).ok_or(
-                PlayoutGeneratorError::ChannelJsonLoadError(
-                    channel_config_file.to_string_lossy().to_string(),
+            return Ok(GeneratorConfig {
+                output_folder: PathBuf::from(channel_config.playout.folder),
+                xmltv_folder: lineup_config.xmltv.map(|x| PathBuf::from(x.folder)),
+                channel_tvg_id: Some(
+                    channel
+                        .tvg_id
+                        .as_ref()
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| format!("ersatztv.{}", channel.number)),
                 ),
-            )?;
-
-            return if expanded_playout_folder.is_relative() {
-                Ok(channel_config_folder
-                    .join(&expanded_playout_folder)
-                    .canonicalize()
-                    .unwrap_or_else(|_| channel_config_folder.join(&expanded_playout_folder)))
-            } else {
-                Ok(expanded_playout_folder)
-            };
+            });
         }
 
         return Err(PlayoutGeneratorError::LineupNoChannel);
     }
 
     args.output_folder
-        .clone()
+        .as_ref()
+        .map(|p| GeneratorConfig {
+            output_folder: p.clone(),
+            xmltv_folder: None,
+            channel_tvg_id: None,
+        })
         .ok_or(PlayoutGeneratorError::NoOutputFolder)
 }
 

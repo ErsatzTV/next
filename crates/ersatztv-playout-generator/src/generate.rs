@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 use walkdir::WalkDir;
 
 use crate::error::PlayoutGeneratorError;
+use crate::xmltv::XmltvProgramme;
 use crate::{IMAGE_EXTENSIONS, is_image_extension, is_video_extension, to_probe_result};
 
 const BUILD_UNDER: time::Duration = time::Duration::hours(36);
@@ -21,6 +22,8 @@ const TO_RETAIN: time::Duration = time::Duration::days(1);
 pub async fn generate_playout(
     content_folder: &Path,
     output_folder: &PathBuf,
+    xmltv_folder: Option<&Path>,
+    channel_tvg_id: Option<&str>,
 ) -> Result<(), PlayoutGeneratorError> {
     let video_list = probe_content(content_folder).await?;
     if video_list.is_empty() {
@@ -34,23 +37,33 @@ pub async fn generate_playout(
     let now = OffsetDateTime::now_local()?;
     let threshold = now + BUILD_UNDER;
     let target = now + TO_BUILD;
+    let retain_after = now - TO_RETAIN;
     let horizon = scan_horizon(output_folder).await?;
 
-    if let Some(h) = horizon
+    let new_items = if let Some(h) = horizon
         && h >= threshold
     {
         log::info!("nothing to add before {target}");
-        return Ok(());
+        Vec::new()
+    } else {
+        let gen_start = horizon.filter(|h| *h > now).unwrap_or(now);
+
+        let mut rng = rand::rng();
+        let playout_items = build_items(gen_start, target, &video_list, &mut rng).await;
+        let xmltv_items = playout_items.iter().map(XmltvProgramme::from).collect();
+
+        write_playout_file(output_folder, playout_items).await?;
+        xmltv_items
+    };
+
+    if let (Some(xmltv_folder), Some(channel_tvg_id)) = (xmltv_folder, channel_tvg_id) {
+        crate::xmltv::write_xmltv_file(xmltv_folder, channel_tvg_id, &new_items, retain_after)
+            .await?;
+    } else {
+        log::warn!("xmltv cannot be generated without lineup.json with defined xmltv folder");
     }
 
-    let gen_start = horizon.filter(|h| *h > now).unwrap_or(now);
-
-    let mut rng = rand::rng();
-    let playout_items = build_items(gen_start, target, &video_list, &mut rng).await;
-
-    write_playout_file(output_folder, playout_items).await?;
-
-    gc_old_playouts(output_folder, now - TO_RETAIN).await?;
+    gc_old_playouts(output_folder, retain_after).await?;
 
     Ok(())
 }

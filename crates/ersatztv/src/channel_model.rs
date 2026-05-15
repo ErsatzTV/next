@@ -40,7 +40,9 @@ impl ChannelModel {
             config_path: channel_config,
             overlay_paths,
             output_folder: output_folder.join(&channel.number),
-            tvg_id: channel.tvg_id.unwrap_or_else(|| channel.number.clone()),
+            tvg_id: channel
+                .tvg_id
+                .unwrap_or_else(|| format!("ersatztv.{}", channel.number)),
             logo: channel.logo.clone(),
             group: channel.group.clone(),
         })

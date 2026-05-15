@@ -34,4 +34,7 @@ pub enum PlayoutGeneratorError {
 
     #[error("unable to locate parent of channel config {0}")]
     ChannelNoParent(String),
+
+    #[error("error parsing date in xmltv: {0}")]
+    FailedToParseXmltv(#[from] time::error::Parse),
 }
