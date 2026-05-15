@@ -6,11 +6,14 @@ use simple_expand_tilde::expand_tilde;
 
 use crate::error::LineupError;
 
+const PATH_FIELDS: &[&str] = &["/output/folder", "/xmltv/folder"];
+
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct LineupConfig {
     #[serde(default = "server_config_default")]
     pub server: ServerConfig,
     pub output: OutputConfig,
+    pub xmltv: Option<XmltvConfig>,
     pub channels: Vec<ChannelConfig>,
 }
 
@@ -24,6 +27,11 @@ pub struct ServerConfig {
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct OutputConfig {
+    pub folder: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, JsonSchema)]
+pub struct XmltvConfig {
     pub folder: String,
 }
 
@@ -83,7 +91,11 @@ pub async fn from_file(path: &PathBuf) -> Result<LineupConfig, LineupError> {
     let config_string = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| LineupError::LineupConfigFailure(e.to_string()))?;
-    let lineup_config: LineupConfig = serde_json::from_str(&config_string)
+    let mut lineup_value: serde_json::Value = serde_json::from_str(&config_string)
+        .map_err(|e| LineupError::LineupConfigFailure(e.to_string()))?;
+    let lineup_parent = path.parent().ok_or(LineupError::LineupConfigNoParent)?;
+    ersatztv_core::resolve_relative_paths(&mut lineup_value, lineup_parent, PATH_FIELDS);
+    let lineup_config: LineupConfig = serde_json::from_value(lineup_value)
         .map_err(|e| LineupError::LineupConfigFailure(e.to_string()))?;
     Ok(lineup_config)
 }

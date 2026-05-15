@@ -10,6 +10,9 @@ pub enum LineupError {
     #[error("unable to load lineup config: {0}")]
     LineupConfigFailure(String),
 
+    #[error("unable to locate parent of lineup.json")]
+    LineupConfigNoParent,
+
     #[error("channel config does not exist at path: {0}")]
     ChannelConfigDoesNotExist(String),
 
@@ -33,6 +36,12 @@ pub enum LineupError {
 
     #[error("channel already exists")]
     ScaffoldChannelExists,
+
+    #[error("error generating xmltv {0}")]
+    XmltvError(String),
+
+    #[error("error joining task")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 impl IntoResponse for LineupError {

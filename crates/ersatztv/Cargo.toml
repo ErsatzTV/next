@@ -10,6 +10,7 @@ env_logger = { workspace = true }
 ersatztv-core = { workspace = true }
 filetime = { workspace = true }
 log = { workspace = true }
+quick-xml = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

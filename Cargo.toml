@@ -37,6 +37,7 @@ libvpl-sys = { path = "crates/libvpl-sys" }
 libvt-sys = { path = "crates/libvt-sys" }
 libvulkan-sys = { path = "crates/libvulkan-sys" }
 log = "0.4"
+quick-xml = "0.40.0"
 rand = { version = "0.10", features = ["thread_rng"] }
 rstest = "0.26.1"
 schemars = "1.2"

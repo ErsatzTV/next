@@ -1,6 +1,7 @@
 mod channel_model;
 mod channel_session;
 mod scaffold;
+mod xmltv;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -108,8 +109,7 @@ async fn run() -> Result<(), LineupError> {
 
             // load lineup config
             let lineup_config = ersatztv::config::from_file(&lineup_path).await?;
-            let output_folder =
-                ersatztv::config::resolve_output_folder(&lineup_path, &lineup_config.output.folder);
+            let output_folder = PathBuf::from(&lineup_config.output.folder);
 
             let mut channels: Vec<ChannelModel> = Vec::with_capacity(lineup_config.channels.len());
             for channel in lineup_config.channels {
@@ -133,6 +133,7 @@ async fn run() -> Result<(), LineupError> {
 
             let state = Arc::new(LineupState {
                 channels,
+                xmltv_folder: lineup_config.xmltv.map(|c| c.folder),
                 active: Arc::new(Mutex::new(HashMap::new())),
             });
 
@@ -146,6 +147,7 @@ async fn run() -> Result<(), LineupError> {
             let app = Router::new()
                 .route("/channel/{filename}", get(stream))
                 .route("/channels.m3u", get(channel_playlist))
+                .route("/xmltv.xml", get(xmltv))
                 .nest_service(
                     "/session",
                     ServiceBuilder::new()
@@ -216,6 +218,7 @@ async fn stream(
 
 struct LineupState {
     channels: Vec<ChannelModel>,
+    xmltv_folder: Option<String>,
     active: Arc<Mutex<HashMap<String, ChannelSession>>>,
 }
 
@@ -257,7 +260,10 @@ async fn channel_playlist(
     request: axum::extract::Request,
 ) -> Result<impl IntoResponse, LineupError> {
     let mut content = String::new();
-    content.push_str("#EXTM3U\n");
+    let xmltv_url = format!("{}/xmltv.xml", get_scheme_host(&request));
+    content.push_str(&format!(
+        "#EXTM3U url-tvg=\"{xmltv_url}\" x-tvg-url=\"{xmltv_url}\"\n"
+    ));
     for channel in &state.channels {
         let logo = channel
             .logo()
@@ -287,6 +293,17 @@ async fn channel_playlist(
 
     Ok((
         [(axum::http::header::CONTENT_TYPE, "application/x-mpegurl")],
+        content,
+    ))
+}
+
+async fn xmltv(
+    State(state): State<Arc<LineupState>>,
+    _request: axum::extract::Request,
+) -> Result<impl IntoResponse, LineupError> {
+    let content = xmltv::generate(&state).await?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "text/xml; charset=utf-8")],
         content,
     ))
 }

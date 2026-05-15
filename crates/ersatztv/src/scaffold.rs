@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use ersatztv::config;
-use ersatztv::config::{ChannelConfig, LineupConfig, OutputConfig, ServerConfig};
+use ersatztv::config::{ChannelConfig, LineupConfig, OutputConfig, ServerConfig, XmltvConfig};
 use ersatztv::error::LineupError;
 
 pub async fn add_lineup(lineup_path: &Path, channels: u32, force: bool) -> Result<(), LineupError> {
@@ -73,6 +73,9 @@ pub async fn add_lineup(lineup_path: &Path, channels: u32, force: bool) -> Resul
         output: OutputConfig {
             folder: String::from("./hls"),
         },
+        xmltv: Some(XmltvConfig {
+            folder: String::from("./xmltv"),
+        }),
         channels: channels_config,
     };
 
