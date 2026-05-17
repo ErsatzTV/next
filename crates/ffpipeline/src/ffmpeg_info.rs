@@ -145,7 +145,7 @@ impl FfmpegInfo {
 
     pub fn escape_path(path: &str) -> String {
         #[cfg(target_os = "windows")]
-        let normalized = Cow::Owned(path.replace('\\', "/"));
+        let normalized: Cow<'_, str> = Cow::Owned(path.replace('\\', "/"));
         #[cfg(not(target_os = "windows"))]
         let normalized = Cow::Borrowed(path);
 
