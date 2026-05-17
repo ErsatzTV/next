@@ -87,16 +87,20 @@ impl Stream for ProcStream {
 }
 
 async fn handle(State(st): State<ServerState>, Path(token): Path<String>) -> Response {
-    let registry = match st.registry.lock() {
-        Ok(r) => r,
-        Err(e) => {
-            log::error!("script registry lock is poisoned: {e}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
+    let cmd = {
+        let registry = match st.registry.lock() {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("script registry lock is poisoned: {e}");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
 
-    let Some(cmd) = registry.get(&token).cloned() else {
-        return StatusCode::NOT_FOUND.into_response();
+        let Some(cmd) = registry.get(&token).cloned() else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+
+        cmd
     };
 
     let mut child = match Command::new(&cmd.command)
