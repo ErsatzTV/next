@@ -145,9 +145,9 @@ impl FfmpegInfo {
 
     pub fn escape_path(path: &str) -> String {
         #[cfg(target_os = "windows")]
-        let normalized = path.replace('\\', "/");
+        let normalized = Cow::Owned(path.replace('\\', "/"));
         #[cfg(not(target_os = "windows"))]
-        let normalized = path.to_owned();
+        let normalized = Cow::Borrowed(path);
 
         let mut out = String::with_capacity(normalized.len() + 8);
         for ch in normalized.chars() {
@@ -307,7 +307,7 @@ mod tests {
     fn test_windows_escape_path() {
         let input = r"C:\Movies\foo[1].srt";
         let result = FfmpegInfo::escape_path(input);
-        assert_eq!(result, r"C:/Movies/foo[1].srt");
+        assert_eq!(result, r"C\\:/Movies/foo\[1\].srt");
     }
 
     #[test]
