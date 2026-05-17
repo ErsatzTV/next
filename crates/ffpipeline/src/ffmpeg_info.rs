@@ -143,14 +143,32 @@ impl FfmpegInfo {
             .min_by_key(|f| self.preference_position(f))
     }
 
-    #[cfg(target_os = "windows")]
     pub fn escape_path(path: &str) -> String {
-        path.replace(r"\", r"/\").replace(r":/", r"\\:/").to_owned()
-    }
+        #[cfg(target_os = "windows")]
+        let normalized = path.replace('\\', "/");
+        #[cfg(not(target_os = "windows"))]
+        let normalized = path.to_owned();
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn escape_path(path: &str) -> String {
-        path.to_owned()
+        let mut out = String::with_capacity(normalized.len() + 8);
+        for ch in normalized.chars() {
+            match ch {
+                // filtergraph delimeters get one backslash
+                '[' | ']' | ',' | ';' => {
+                    out.push('\\');
+                    out.push(ch);
+                }
+                // filter args are double escaped
+                ':' | '\'' => {
+                    out.push_str("\\\\");
+                    out.push(ch);
+                }
+                // literal backslash needs to be four
+                '\\' => out.push_str("\\\\\\\\"),
+                _ => out.push(ch),
+            }
+        }
+
+        out
     }
 
     /// Returns the preference index for the video filter. If the filter is not known, or does not
@@ -282,5 +300,24 @@ mod tests {
         );
 
         assert_eq!(best_fit, Some(&KnownVideoFilter::TonemapVaapi));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_windows_escape_path() {
+        let input = r"C:\Movies\foo[1].srt";
+        let result = FfmpegInfo::escape_path(input);
+        assert_eq!(result, r"C:/Movies/foo[1].srt");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_linux_escape_path() {
+        let input = r"/movies/Big Buck Bunny [2008]/Big Buck Bunny [2008].en.srt";
+        let result = FfmpegInfo::escape_path(input);
+        assert_eq!(
+            result,
+            r"/movies/Big Buck Bunny \[2008\]/Big Buck Bunny \[2008\].en.srt"
+        );
     }
 }
