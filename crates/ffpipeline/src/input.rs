@@ -209,7 +209,7 @@ impl InputSettings {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct HttpInputOptions {
     pub headers: Vec<String>,
     pub user_agent: Option<String>,

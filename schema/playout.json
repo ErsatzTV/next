@@ -326,6 +326,9 @@
         },
         {
           "$ref": "#/definitions/HttpSource"
+        },
+        {
+          "$ref": "#/definitions/ScriptSource"
         }
       ]
     },
@@ -459,6 +462,38 @@
             "null"
           ],
           "description": "Enable persistent connections in ffmpeg. Default: false."
+        }
+      }
+    },
+    "ScriptSource": {
+      "type": "object",
+      "description": "An external command whose stdout is an MPEG-TS stream, proxied to ffmpeg over loopback HTTP.",
+      "required": [
+        "source_type",
+        "command"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "const": "script"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command that writes an MPEG-TS stream to its stdout. Supports {{TEMPLATE}} expansion."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional arguments for the command. Supports {{TEMPLATE}} expansion. Defaults to []."
+        },
+        "is_live": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether the content is live and therefore cannot work ahead. Default: false."
         }
       }
     }

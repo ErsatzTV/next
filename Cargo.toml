@@ -28,6 +28,7 @@ ersatztv-core = { path = "crates/ersatztv-core" }
 ersatztv-playout = { path = "crates/ersatztv-playout" }
 ffpipeline = { path = "crates/ffpipeline" }
 filetime = "0.2"
+futures-core = "0.3.32"
 libloading = "0.9"
 libcl-sys = { path = "crates/libcl-sys" }
 libmpp-sys = { path = "crates/libmpp-sys" }
@@ -49,6 +50,7 @@ tempfile = "3"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing", "serde"] }
 tokio = { version = "1.50", features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = {  version = "0.7.18", features = ["io-util"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 uuid = { version = "1.23", features = ["v4"] }

@@ -422,7 +422,7 @@ impl Pipeline {
                 index: video_stream.stream_index,
                 path: input_settings.video_input.probe_result.path.to_owned(),
                 seek: input_settings.video_input.in_point,
-                realtime: final_output_settings.realtime,
+                realtime: final_output_settings.realtime && !final_output_settings.is_live,
                 decoder: video_decoder,
             },
         ];

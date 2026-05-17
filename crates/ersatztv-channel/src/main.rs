@@ -1,4 +1,5 @@
 mod channel_session;
+mod local_proxy;
 mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
@@ -64,7 +65,7 @@ async fn run() -> Result<(), ChannelError> {
                 ChannelConfig::from_sources(&config_paths, &output_folder, &number).await?;
 
             // start channel session
-            let mut channel_session = ChannelSession::new(channel_config)?;
+            let mut channel_session = ChannelSession::new(channel_config).await?;
             channel_session.run().await
         }
         Commands::Debug { config_paths } => {

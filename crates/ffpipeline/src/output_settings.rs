@@ -19,6 +19,7 @@ pub struct OutputSettings {
     pub format: OutputFormat,
     pub pts_offset: Option<PtsOffset>,
     pub realtime: bool,
+    pub is_live: bool,
     pub frame_rate: Option<FrameRate>,
     pub subtitle_mode: SubtitleMode,
 }

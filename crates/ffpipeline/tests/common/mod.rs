@@ -225,6 +225,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         },
         pts_offset: None,
         realtime: false,
+        is_live: false,
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
     }

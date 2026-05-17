@@ -204,6 +204,16 @@ pub enum PlayoutItemSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         keep_alive: Option<bool>,
     },
+    Script {
+        /// Command that writes an MPEG-TS stream to its stdout
+        command: String,
+        /// Optional arguments for the command
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        /// Whether the content is live and therefore cannot work ahead (default: false)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_live: Option<bool>,
+    },
 }
 
 pub struct PlayoutLoadResult {

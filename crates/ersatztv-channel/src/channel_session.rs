@@ -27,6 +27,7 @@ use ffpipeline::{pipeline, probe};
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
+use crate::local_proxy::{LocalProxyServer, ScriptCommand};
 use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
 use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};
@@ -62,6 +63,7 @@ pub struct ChannelSession {
     playout_loader: PlayoutLoader,
     pts_scanner: PtsScanner,
     playlist_manager: Arc<Mutex<PlaylistManager>>,
+    local_proxy_server: LocalProxyServer,
 
     ffmpeg_path: PathBuf,
     ffprobe_path: PathBuf,
@@ -83,7 +85,7 @@ pub struct ChannelSession {
 }
 
 impl ChannelSession {
-    pub fn new(channel_config: ChannelConfig) -> Result<ChannelSession, ChannelError> {
+    pub async fn new(channel_config: ChannelConfig) -> Result<ChannelSession, ChannelError> {
         let now = OffsetDateTime::now_local()?;
 
         let start_time_offset = if let Some(virtual_start) = channel_config.playout.virtual_start {
@@ -149,11 +151,14 @@ impl ChannelSession {
             .clone()
             .unwrap_or(default_ffmpeg_path);
 
+        let local_proxy_server = LocalProxyServer::start().await?;
+
         Ok(ChannelSession {
             channel_config,
             playout_loader,
             pts_scanner,
             playlist_manager,
+            local_proxy_server,
             ffmpeg_path: ffmpeg_path.to_owned(),
             ffprobe_path: ffprobe_path.to_owned(),
             ffmpeg_info: FfmpegInfo::default(),
@@ -372,18 +377,18 @@ impl ChannelSession {
         let subtitle_source_is_video_source =
             subtitle_source.as_ref().is_some_and(|s| s == &video_source);
 
-        let audio_input_source = Self::playout_source_to_input_source(audio_source.clone())?;
+        let audio_input_source = self.playout_source_to_input_source(audio_source.clone())?;
         let video_input_source = if audio_source_is_video_source {
             audio_input_source.clone()
         } else {
-            Self::playout_source_to_input_source(video_source.clone())?
+            self.playout_source_to_input_source(video_source.clone())?
         };
         let subtitle_input_source = if subtitle_source_is_video_source {
             Some(video_input_source.clone())
         } else {
             subtitle_source
                 .clone()
-                .and_then(|s| Self::playout_source_to_input_source(s.clone()).ok())
+                .and_then(|s| self.playout_source_to_input_source(s.clone()).ok())
         };
 
         let audio_fut = self.probe_source(&audio_input_source);
@@ -406,7 +411,7 @@ impl ChannelSession {
 
         let watermark_fut = async {
             if let Some(w) = current_item.watermark.as_ref() {
-                let input_source = Self::playout_source_to_input_source(w.source.clone())?;
+                let input_source = self.playout_source_to_input_source(w.source.clone())?;
                 let location = playout_location_to_pipeline(&w.location);
                 let timing = playout_timing_to_pipeline(w.timing.as_ref());
 
@@ -446,6 +451,10 @@ impl ChannelSession {
             _ => None,
         };
 
+        // consider an item to be live if any of its sources are live;
+        // live sources can never seek or work ahead
+        let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
+
         // generate pipeline
         let output_settings = OutputSettings {
             audio: AudioOutputSettings {
@@ -481,6 +490,7 @@ impl ChannelSession {
             },
             pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
             realtime,
+            is_live,
             frame_rate: if video_probe_result.is_still_image() {
                 Some(FrameRate::default())
             } else {
@@ -494,11 +504,23 @@ impl ChannelSession {
             ChannelSessionState::ZeroAndWorkAhead | ChannelSessionState::ZeroAndRealtime
         );
 
-        let audio_timing = self.input_timing(current_item, &audio_source, start_at_zero, realtime);
-        let video_timing = self.input_timing(current_item, &video_source, start_at_zero, realtime);
+        let audio_timing = self.input_timing(
+            current_item,
+            &audio_source,
+            start_at_zero,
+            realtime,
+            is_live,
+        );
+        let video_timing = self.input_timing(
+            current_item,
+            &video_source,
+            start_at_zero,
+            realtime,
+            is_live,
+        );
         let subtitle_timing = subtitle_source
             .as_ref()
-            .map(|s| self.input_timing(current_item, s, start_at_zero, realtime));
+            .map(|s| self.input_timing(current_item, s, start_at_zero, realtime, is_live));
 
         let video_index = current_item
             .tracks
@@ -617,7 +639,7 @@ impl ChannelSession {
         }
 
         let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
-        let is_complete = audio_timing.is_complete && video_timing.is_complete;
+        let is_complete = is_live || (audio_timing.is_complete && video_timing.is_complete);
 
         Ok((finish, is_complete))
     }
@@ -662,6 +684,7 @@ impl ChannelSession {
     }
 
     fn playout_source_to_input_source(
+        &self,
         source: PlayoutItemSource,
     ) -> Result<InputSource, ChannelError> {
         match source {
@@ -701,6 +724,22 @@ impl ChannelSession {
                     },
                 }))
             }
+            PlayoutItemSource::Script { command, args, .. } => {
+                let url = self.local_proxy_server.register_script(ScriptCommand {
+                    command: expand_template(&command)?,
+                    args: args
+                        .iter()
+                        .map(|a| expand_template(a))
+                        .collect::<Result<_, _>>()?,
+                })?;
+                Ok(InputSource::Http(HttpInputSource {
+                    uri: url,
+                    options: HttpInputOptions {
+                        reconnect: false,
+                        ..Default::default()
+                    },
+                }))
+            }
         }
     }
 
@@ -710,6 +749,7 @@ impl ChannelSession {
         source: &PlayoutItemSource,
         start_at_zero: bool,
         realtime: bool,
+        is_live: bool,
     ) -> TimingResult {
         let mut is_complete = true;
 
@@ -727,6 +767,16 @@ impl ChannelSession {
                 .unwrap_or(item_in_point_base_ms + item_duration.whole_milliseconds() as u64),
             _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
         };
+
+        // live content never seeks and is always a complete transcode
+        if is_live {
+            return TimingResult {
+                in_point: Duration::ZERO,
+                out_point: Duration::from_millis(item_duration.whole_milliseconds() as u64),
+                finish: item_finish,
+                is_complete: true,
+            };
+        }
 
         let effective_now = if start_at_zero {
             item_start
@@ -888,4 +938,14 @@ fn playout_timing_to_pipeline(
 
         ffpipeline::input::WatermarkTiming::Periodic(periodic_timing)
     })
+}
+
+fn source_is_live(source: &PlayoutItemSource) -> bool {
+    matches!(
+        source,
+        PlayoutItemSource::Script {
+            is_live: Some(true),
+            ..
+        }
+    )
 }
