@@ -157,9 +157,14 @@ impl FfmpegInfo {
                     out.push('\\');
                     out.push(ch);
                 }
-                // filter args are double escaped
-                ':' | '\'' => {
+                // colon only needs two backslashes
+                ':' => {
                     out.push_str("\\\\");
+                    out.push(ch);
+                }
+                // apostrophe needs three backslashes
+                '\'' => {
+                    out.push_str("\\\\\\");
                     out.push(ch);
                 }
                 // literal backslash needs to be four
@@ -319,5 +324,13 @@ mod tests {
             result,
             r"/movies/Big Buck Bunny \[2008\]/Big Buck Bunny \[2008\].en.srt"
         );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_linux_escape_path_apostrophe() {
+        let input = r"/media/World's [2019]/ep's.mkv";
+        let result = FfmpegInfo::escape_path(input);
+        assert_eq!(result, r"/media/World\\\'s \[2019\]/ep\\\'s.mkv");
     }
 }
