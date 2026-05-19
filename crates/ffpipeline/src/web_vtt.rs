@@ -25,7 +25,7 @@ pub async fn convert_to_vtt(
     let input_path = match &input.input_source {
         InputSource::Local(local) => Ok(local.path.clone()),
         InputSource::Http(http) => Ok(http.uri.clone()),
-        InputSource::Rtsp(rtsp) => Ok(rtsp.uri.clone()),
+        InputSource::Rtsp(_) => Err(FFPipelineError::FailedToConvertSubtitle),
         InputSource::Lavfi(_) => Err(FFPipelineError::FailedToConvertSubtitle),
     }?;
 
