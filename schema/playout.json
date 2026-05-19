@@ -328,6 +328,9 @@
           "$ref": "#/definitions/HttpSource"
         },
         {
+          "$ref": "#/definitions/RtspSource"
+        },
+        {
           "$ref": "#/definitions/ScriptSource"
         }
       ]
@@ -462,6 +465,32 @@
             "null"
           ],
           "description": "Enable persistent connections in ffmpeg. Default: false."
+        }
+      }
+    },
+    "RtspSource": {
+      "type": "object",
+      "description": "A live stream pulled from an RTSP server (e.g. an IP camera). Always treated as live: it is never seeked and cannot work ahead.",
+      "required": [
+        "source_type",
+        "uri"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "const": "rtsp"
+        },
+        "uri": {
+          "type": "string",
+          "description": "RTSP URI template, e.g. \"rtsp://user:{{PASSWORD}}@camera.lan:554/stream\"."
+        },
+        "timeout_us": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Socket timeout in microseconds."
         }
       }
     },

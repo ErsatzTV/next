@@ -13,10 +13,10 @@ use crate::ArgVec;
 use crate::error::FFPipelineError;
 use crate::error::FFPipelineError::ProbeFailed;
 use crate::frame_rate::FrameRate;
-use crate::input::InputSource;
 use crate::input::LavfiInputSource;
 use crate::input::LocalInputSource;
 use crate::input::{FfmpegInputArgs, HttpInputSource};
+use crate::input::{InputSource, RtspInputSource};
 
 static SUBTITLE_IMAGE_CODECS: &[&str] = &[
     "hdmv_pgs_subtitle",
@@ -309,6 +309,23 @@ impl Probeable for LavfiInputSource {
 }
 
 impl Probeable for HttpInputSource {
+    async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
+        let mut args: ArgVec = args![
+            "-hide_banner",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            "-show_chapters",
+        ];
+        args.extend(self.args_for_input());
+        args.extend(args!["-i", self.uri.clone()]);
+
+        probe_with_args(probe_deps.ffprobe_path, &self.uri, &args).await
+    }
+}
+
+impl Probeable for RtspInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
         let mut args: ArgVec = args![
             "-hide_banner",

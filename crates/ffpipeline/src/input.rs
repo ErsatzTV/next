@@ -219,6 +219,11 @@ pub struct HttpInputOptions {
     pub keep_alive: Option<bool>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RtspInputOptions {
+    pub timeout_us: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalInputSource {
     pub path: String,
@@ -245,12 +250,19 @@ pub struct HttpInputSource {
 }
 
 #[derive(Debug, Clone)]
+pub struct RtspInputSource {
+    pub uri: String,
+    pub options: RtspInputOptions,
+}
+
+#[derive(Debug, Clone)]
 #[enum_dispatch(Probeable)]
 #[enum_dispatch(FfmpegInputArgs)]
 pub enum InputSource {
     Local(LocalInputSource),
     Lavfi(LavfiInputSource),
     Http(HttpInputSource),
+    Rtsp(RtspInputSource),
 }
 
 #[enum_dispatch]
@@ -313,6 +325,23 @@ impl FfmpegInputArgs for HttpInputSource {
         args.extend(args![
             "-protocol_whitelist",
             "file,http,https,tcp,tls,crypto",
+        ]);
+
+        args
+    }
+}
+
+impl FfmpegInputArgs for RtspInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        let mut args: ArgVec = Vec::new();
+
+        if let Some(timeout) = self.options.timeout_us {
+            args.extend(args!["-timeout", timeout.to_string()]);
+        }
+
+        args.extend(args![
+            "-protocol_whitelist",
+            "file,rtp,rtsp,udp,tcp,tls,crypto"
         ]);
 
         args

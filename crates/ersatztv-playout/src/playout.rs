@@ -204,6 +204,11 @@ pub enum PlayoutItemSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         keep_alive: Option<bool>,
     },
+    Rtsp {
+        uri: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeout_us: Option<u64>,
+    },
     Script {
         /// Command that writes an MPEG-TS stream to its stdout
         command: String,

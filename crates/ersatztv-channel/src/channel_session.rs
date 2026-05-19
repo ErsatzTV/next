@@ -17,7 +17,7 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{
     HttpInputOptions, HttpInputSource, InputSettings, InputSource, LavfiInputSource,
-    LocalInputSource, ProbedInput, WatermarkInput,
+    LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource, WatermarkInput,
 };
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
@@ -729,6 +729,14 @@ impl ChannelSession {
                     },
                 }))
             }
+            PlayoutItemSource::Rtsp { uri, timeout_us } => {
+                let expanded_uri = expand_template(&uri)?;
+
+                Ok(InputSource::Rtsp(RtspInputSource {
+                    uri: expanded_uri,
+                    options: RtspInputOptions { timeout_us },
+                }))
+            }
             PlayoutItemSource::Script { command, args, .. } => {
                 let url = self.local_proxy_server.register_script(ScriptCommand {
                     command: expand_template(&command)?,
@@ -951,6 +959,6 @@ fn source_is_live(source: &PlayoutItemSource) -> bool {
         PlayoutItemSource::Script {
             is_live: Some(true),
             ..
-        }
+        } | PlayoutItemSource::Rtsp { .. }
     )
 }
