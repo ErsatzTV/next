@@ -595,7 +595,11 @@ impl Pipeline {
         let mut env_vars = Vec::new();
 
         if final_output_settings.save_reports {
-            if let Some(reports_folder) = final_output_settings.reports_folder {
+            if let Some(reports_folder) = final_output_settings
+                .reports_folder
+                .as_deref()
+                .filter(|s| !s.is_empty())
+            {
                 let folder = PathBuf::from(reports_folder.replace(r"%", r"%%"));
                 if let Err(err) = std::fs::create_dir_all(&folder) {
                     log::warn!(
