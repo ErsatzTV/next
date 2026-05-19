@@ -50,6 +50,10 @@ pub struct FfmpegConfig {
     pub disabled_filters: Vec<String>,
     #[serde(default)]
     pub preferred_filters: Vec<String>,
+    #[serde(default)]
+    pub save_reports: bool,
+    #[serde(default)]
+    pub reports_folder: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]

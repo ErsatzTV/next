@@ -191,6 +191,17 @@
           "items": {
             "type": "string"
           }
+        },
+        "reports_folder": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "save_reports": {
+          "type": "boolean",
+          "default": false
         }
       }
     },

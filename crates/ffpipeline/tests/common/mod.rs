@@ -228,6 +228,8 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         is_live: false,
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
+        save_reports: false,
+        reports_folder: None,
     }
 }
 
@@ -240,7 +242,10 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
         Duration::from_secs(30),
         tokio::process::Command::new(ffmpeg)
             .args(args.iter().map(Cow::as_ref))
-            .envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .envs(
+                envs.iter()
+                    .map(|env| (env.key.as_str(), env.value.as_str())),
+            )
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)

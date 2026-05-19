@@ -8,7 +8,8 @@ use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
-    FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+    EnvironmentVariable, FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet,
+    VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -214,8 +215,11 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn envs(&self) -> Vec<(String, String)> {
-        vec![(String::from("LIBVA_DRIVER_NAME"), self.driver.to_string())]
+    fn envs(&self) -> Vec<EnvironmentVariable> {
+        vec![EnvironmentVariable {
+            key: String::from("LIBVA_DRIVER_NAME"),
+            value: self.driver.to_string(),
+        }]
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {

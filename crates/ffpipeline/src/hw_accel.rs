@@ -6,7 +6,8 @@ use crate::frame_size::FrameSize;
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::OverlayFilter;
 use crate::pipeline::{
-    FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+    EnvironmentVariable, FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet,
+    VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -51,7 +52,7 @@ pub trait HwAccel {
         format: &VideoFormat,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec>;
-    fn envs(&self) -> Vec<(String, String)> {
+    fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
     fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {

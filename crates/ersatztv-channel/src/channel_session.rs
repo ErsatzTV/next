@@ -497,6 +497,8 @@ impl ChannelSession {
                 None
             },
             subtitle_mode: self.channel_config.normalization.subtitle.mode.into(),
+            save_reports: self.channel_config.ffmpeg.save_reports,
+            reports_folder: self.channel_config.ffmpeg.reports_folder.clone(),
         };
 
         let start_at_zero = matches!(
@@ -616,7 +618,10 @@ impl ChannelSession {
         // stream current item
         let mut ffmpeg_child = tokio::process::Command::new(&self.ffmpeg_path)
             .args(args.iter().map(Cow::as_ref))
-            .envs(envs)
+            .envs(
+                envs.iter()
+                    .map(|env| (env.key.as_str(), env.value.as_str())),
+            )
             .stdout(std::process::Stdio::null())
             .spawn()
             .map_err(|_| ChannelError::StreamFailure(String::from("failed to spawn ffmpeg")))?;

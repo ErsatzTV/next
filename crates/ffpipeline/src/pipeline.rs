@@ -1,4 +1,5 @@
 use std::fmt::Formatter;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use strum::{Display, EnumString};
@@ -233,6 +234,12 @@ impl PipelineInput {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EnvironmentVariable {
+    pub key: String,
+    pub value: String,
+}
+
 pub struct Pipeline {
     ffmpeg_info: FfmpegInfo,
     accel: Option<HardwareAccel>,
@@ -243,6 +250,7 @@ pub struct Pipeline {
     inputs: Vec<PipelineInput>,
     filter_chain: FilterChain,
     output_options: Vec<OutputOption>,
+    env_vars: Vec<EnvironmentVariable>,
 
     output_context: OutputContext,
 }
@@ -584,6 +592,39 @@ impl Pipeline {
             }));
         }
 
+        let mut env_vars = Vec::new();
+
+        if final_output_settings.save_reports {
+            if let Some(reports_folder) = final_output_settings.reports_folder {
+                let folder = PathBuf::from(reports_folder.replace(r"%", r"%%"));
+                if let Err(err) = std::fs::create_dir_all(&folder) {
+                    log::warn!(
+                        "failed to create ffmpeg reports folder: {err}; will not save report"
+                    );
+                } else {
+                    let file = folder
+                        .join("ffmpeg-%t-transcode.log")
+                        .to_string_lossy()
+                        .to_string();
+
+                    #[cfg(target_os = "windows")]
+                    let mut file = file;
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        file = file.replace(r"\", r"/").replace(r":/", r"\:/");
+                    }
+
+                    env_vars = vec![EnvironmentVariable {
+                        key: String::from("FFREPORT"),
+                        value: format!("file={file}:level=32"),
+                    }]
+                }
+            } else {
+                log::warn!("unable to save ffmpeg reports without reports folder")
+            }
+        }
+
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
             accel: final_output_settings.accel.clone(),
@@ -622,6 +663,7 @@ impl Pipeline {
                 OutputOption::Format(final_output_settings.format),
             ],
             output_context,
+            env_vars,
         })
     }
 
@@ -821,8 +863,8 @@ impl Pipeline {
         result
     }
 
-    pub fn envs(&self) -> Vec<(String, String)> {
-        let mut result: Vec<(String, String)> = Vec::new();
+    pub fn envs(&self) -> Vec<EnvironmentVariable> {
+        let mut result = self.env_vars.clone();
 
         if let Some(a) = &self.accel {
             result.extend(a.envs())
