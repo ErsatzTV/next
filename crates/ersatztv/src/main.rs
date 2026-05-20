@@ -245,7 +245,10 @@ fn get_multi_variant(channel: &ChannelModel, request: axum::extract::Request) ->
         get_scheme_host(&request),
         channel.number()
     ));
-    result.push_str("#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES=\"subs\"\n");
+    result.push_str(&format!(
+        "#EXT-X-STREAM-INF:BANDWIDTH={},SUBTITLES=\"subs\"\n",
+        channel.bandwidth_bps()
+    ));
     result.push_str(&format!(
         "{}/session/{}/live.m3u8",
         get_scheme_host(&request),
