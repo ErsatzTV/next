@@ -13,6 +13,7 @@ pub const PATH_FIELDS: &[&str] = &[
     "/playout/folder",
     "/ffmpeg/ffmpeg_path",
     "/ffmpeg/ffprobe_path",
+    "/ffmpeg/reports_folder",
 ];
 
 #[derive(Deserialize, Clone, Debug, JsonSchema)]
