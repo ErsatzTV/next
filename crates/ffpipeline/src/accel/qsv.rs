@@ -71,14 +71,23 @@ impl HwAccel for Qsv {
         match format {
             VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_qsv",
-                options: &["-low_power", "0", "-look_ahead", "0"],
+                options: &["-low_power", "0", "-look_ahead", "0", "-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
             }),
             VideoFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_qsv",
-                options: &["-low_power", "0", "-look_ahead", "0", "-tag:v", "hvc1"],
+                options: &[
+                    "-low_power",
+                    "0",
+                    "-look_ahead",
+                    "0",
+                    "-forced_idr",
+                    "1",
+                    "-tag:v",
+                    "hvc1",
+                ],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
