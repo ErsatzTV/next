@@ -278,45 +278,43 @@ impl FilterChain {
         // first check if the current pixel formats are compatiable, otherwise
         // we will need explicit converesion
         if current_state.surface == FrameSurface::System {
-            let is_format_supported = match accel {
-                Some(a) => a.supports_pixel_format(&current_state.pixel_format),
-                None => true,
-            };
+            let accel_supports =
+                |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.supports_pixel_format(pf));
 
-            if is_format_supported {
-                let upload: VideoFilter = HwUploadFilter {
-                    target_surface: required,
-                    source_format: current_state.pixel_format,
-                }
-                .into();
-                upload.apply_to(current_state);
-                surfaces.insert(current_state.surface);
-                resolved.push(PipelineFilter::Video(upload));
-                return true;
-            } else if current_state.pixel_format.bit_depth() == 10
-                && encoder_pixel_format
+            // current format isn't supported, so pick a conversion target
+            if !accel_supports(&current_state.pixel_format) {
+                let target = if current_state.pixel_format.bit_depth() == 10
+                    && encoder_pixel_format
+                        .as_ref()
+                        .is_some_and(|pf| pf.bit_depth() == 8)
+                {
+                    // eager 10-bit to 8-bit conversion when encoder wants 8-bit
+                    PixelFormat::Nv12
+                } else if let Some(target) = encoder_pixel_format
                     .as_ref()
-                    .is_some_and(|pf| pf.bit_depth() == 8)
-            {
-                let format: VideoFilter = FormatFilter {
-                    format: PixelFormat::Nv12,
-                }
-                .into();
+                    .copied()
+                    .filter(|pf| accel_supports(pf))
+                {
+                    // accel supports the encoder's desired format, so convert to that
+                    target
+                } else {
+                    return false;
+                };
+
+                let format: VideoFilter = FormatFilter { format: target }.into();
                 format.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(format));
-
-                let upload: VideoFilter = HwUploadFilter {
-                    target_surface: required,
-                    source_format: current_state.pixel_format,
-                }
-                .into();
-                upload.apply_to(current_state);
-                surfaces.insert(current_state.surface);
-                resolved.push(PipelineFilter::Video(upload));
-                return true;
-            } else {
-                return false;
             }
+
+            let upload: VideoFilter = HwUploadFilter {
+                target_surface: required,
+                source_format: current_state.pixel_format,
+            }
+            .into();
+            upload.apply_to(current_state);
+            surfaces.insert(current_state.surface);
+            resolved.push(PipelineFilter::Video(upload));
+            return true;
         }
 
         // Lastly, if we're doing a hw -> hw transition, see if we can do so
