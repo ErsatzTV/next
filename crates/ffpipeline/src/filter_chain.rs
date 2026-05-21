@@ -300,9 +300,7 @@ impl FilterChain {
 
             let convert_in_sw = !accepts_upload(&current_state.pixel_format)
                 || (needs_format_change
-                    && !encoder_pixel_format
-                        .as_ref()
-                        .is_some_and(|pf| hw_can_convert(pf)));
+                    && !encoder_pixel_format.as_ref().is_some_and(hw_can_convert));
 
             if convert_in_sw {
                 let target = if let Some(pf) = encoder_pixel_format
