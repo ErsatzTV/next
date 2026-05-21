@@ -74,7 +74,7 @@ pub trait HwAccel {
             _ => HwPixelFormat::Nv12,
         }
     }
-    fn supports_pixel_format(&self, _pixel_format: &PixelFormat) -> bool {
+    fn supports_upload_format(&self, _pixel_format: &PixelFormat) -> bool {
         true
     }
 }

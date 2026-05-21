@@ -133,7 +133,7 @@ impl HwAccel for Qsv {
         }
     }
 
-    fn supports_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
+    fn supports_upload_format(&self, pixel_format: &PixelFormat) -> bool {
         self.capabilities.vpp_supports_format(pixel_format)
     }
 }

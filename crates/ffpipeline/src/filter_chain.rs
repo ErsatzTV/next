@@ -279,7 +279,7 @@ impl FilterChain {
         // we will need explicit converesion
         if current_state.surface == FrameSurface::System {
             let accel_supports =
-                |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.supports_pixel_format(pf));
+                |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.supports_upload_format(pf));
 
             // current format isn't supported, so pick a conversion target
             if !accel_supports(&current_state.pixel_format) {
@@ -1026,7 +1026,7 @@ mod tests {
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
-                vpp_pixel_formats: HashSet::new(),
+                vpp_pixel_formats: HashSet::from([libva_sys::VA_FOURCC_NV12]),
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
