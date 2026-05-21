@@ -303,17 +303,21 @@ impl FilterChain {
                     && !encoder_pixel_format.as_ref().is_some_and(hw_can_convert));
 
             if convert_in_sw {
-                let target = if let Some(pf) = encoder_pixel_format
+                let canonical = match current_state.pixel_format.bit_depth() {
+                    10 => PixelFormat::P010le,
+                    _ => PixelFormat::Nv12,
+                };
+
+                let target = encoder_pixel_format
                     .as_ref()
                     .copied()
                     .filter(|pf| accepts_upload(pf))
-                {
-                    pf
-                } else if current_state.pixel_format.bit_depth() == 10 {
-                    // eager 10-bit to 8-bit conversion when encoder wants 8-bit
-                    PixelFormat::Nv12
-                } else {
-                    return false;
+                    .or_else(|| accepts_upload(&canonical).then_some(canonical))
+                    .ok_or(());
+
+                let target = match target {
+                    Ok(pf) => pf,
+                    Err(()) => return false,
                 };
 
                 let format: VideoFilter = FormatFilter { format: target }.into();
@@ -1527,5 +1531,192 @@ mod tests {
                 source_format: PixelFormat::Nv12,
             })
         ),);
+    }
+
+    #[test]
+    fn resolve_falls_back_to_nv12_when_yuv420p_not_accepted_for_upload() {
+        // System/Yuv420p with no encoder hint and an accel that doesn't
+        // accept Yuv420p directly on upload (free-driver VAAPI). Previously the
+        // ladder gave up and returned false. Should now pick the canonical 8-bit
+        // surface format (NV12) and succeed.
+        let accel = vaapi_accel();
+        let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
+
+        let initial_state = FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            is_hdr: false,
+        };
+
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &filter_options,
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &None, // no encoder pixel format hint
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(video_filters.len(), 2, "expected [format=nv12, hwupload]",);
+
+        assert!(
+            matches!(
+                video_filters[0],
+                VideoFilter::Format(FormatFilter {
+                    format: PixelFormat::Nv12
+                })
+            ),
+            "first filter should be software format=nv12",
+        );
+
+        assert!(
+            matches!(
+                video_filters[1],
+                VideoFilter::HwUpload(HwUploadFilter {
+                    target_surface: FrameSurface::Vaapi,
+                    source_format: PixelFormat::Nv12,
+                })
+            ),
+            "second filter should be hwupload to Vaapi with NV12 source",
+        );
+    }
+
+    #[test]
+    fn resolve_preserves_bit_depth_when_10bit_input_has_no_encoder_hint() {
+        // System/Yuv420p10le with no encoder hint. Previously this fell
+        // into the eager 10 -> 8 branch and converted to NV12, throwing away two
+        // bits per channel. Should now convert to P010le instead - the canonical
+        // 10-bit surface format, which is accepted on upload.
+        let accel = vaapi_accel();
+        let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
+
+        let initial_state = FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p10le,
+            is_hdr: false,
+        };
+
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &filter_options,
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &None, // no encoder pixel format hint
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(video_filters.len(), 2, "expected [format=p010le, hwupload]",);
+
+        assert!(
+            matches!(
+                video_filters[0],
+                VideoFilter::Format(FormatFilter {
+                    format: PixelFormat::P010le
+                })
+            ),
+            "first filter should be software format=p010le (no bit-depth loss)",
+        );
+
+        assert!(
+            matches!(
+                video_filters[1],
+                VideoFilter::HwUpload(HwUploadFilter {
+                    target_surface: FrameSurface::Vaapi,
+                    source_format: PixelFormat::P010le,
+                })
+            ),
+            "second filter should be hwupload to Vaapi with P010le source",
+        );
+    }
+
+    #[test]
+    fn resolve_uses_encoder_format_when_present_over_bit_depth_canonical() {
+        // 10-bit input but encoder explicitly wants 8-bit NV12: the encoder
+        // hint must take precedence over the bit-depth-preserving fallback,
+        // because the encoder is what actually defines what's downstream.
+        let accel = vaapi_accel();
+        let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
+
+        let initial_state = FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p10le,
+            is_hdr: false,
+        };
+
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &filter_options,
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            matches!(
+                video_filters[0],
+                VideoFilter::Format(FormatFilter {
+                    format: PixelFormat::Nv12
+                })
+            ),
+            "encoder format hint (NV12) should win over bit-depth canonical (P010le)",
+        );
     }
 }
