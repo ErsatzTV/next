@@ -162,6 +162,7 @@ impl FilterChain {
                             &mut current_state,
                             &main_req.pixel_format,
                             accel,
+                            &mut surfaces,
                         );
                     }
 
@@ -232,7 +233,13 @@ impl FilterChain {
         if let Some(pixel_format) = encoder_pixel_format
             && current_state.pixel_format != *pixel_format
         {
-            Self::convert_pixel_format(&mut resolved, &mut current_state, pixel_format, accel);
+            Self::convert_pixel_format(
+                &mut resolved,
+                &mut current_state,
+                pixel_format,
+                accel,
+                &mut surfaces,
+            );
         }
 
         self.filters = resolved;
@@ -278,25 +285,35 @@ impl FilterChain {
         // first check if the current pixel formats are compatiable, otherwise
         // we will need explicit converesion
         if current_state.surface == FrameSurface::System {
-            let accel_supports =
-                |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.supports_upload_format(pf));
+            let accepts_upload =
+                |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.accepts_upload_format(pf));
 
-            // current format isn't supported, so pick a conversion target
-            if !accel_supports(&current_state.pixel_format) {
-                let target = if current_state.pixel_format.bit_depth() == 10
-                    && encoder_pixel_format
+            let hw_can_convert = |pf: &PixelFormat| {
+                accel
+                    .as_ref()
+                    .is_none_or(|a| a.can_convert_pixel_format(pf))
+            };
+
+            let needs_format_change = encoder_pixel_format
+                .as_ref()
+                .is_some_and(|pf| *pf != current_state.pixel_format);
+
+            let convert_in_sw = !accepts_upload(&current_state.pixel_format)
+                || (needs_format_change
+                    && !encoder_pixel_format
                         .as_ref()
-                        .is_some_and(|pf| pf.bit_depth() == 8)
-                {
-                    // eager 10-bit to 8-bit conversion when encoder wants 8-bit
-                    PixelFormat::Nv12
-                } else if let Some(target) = encoder_pixel_format
+                        .is_some_and(|pf| hw_can_convert(pf)));
+
+            if convert_in_sw {
+                let target = if let Some(pf) = encoder_pixel_format
                     .as_ref()
                     .copied()
-                    .filter(|pf| accel_supports(pf))
+                    .filter(|pf| accepts_upload(pf))
                 {
-                    // accel supports the encoder's desired format, so convert to that
-                    target
+                    pf
+                } else if current_state.pixel_format.bit_depth() == 10 {
+                    // eager 10-bit to 8-bit conversion when encoder wants 8-bit
+                    PixelFormat::Nv12
                 } else {
                     return false;
                 };
@@ -337,6 +354,7 @@ impl FilterChain {
         current_state: &mut FrameState,
         pixel_format: &PixelFormat,
         accel: &Option<HardwareAccel>,
+        surfaces: &mut SurfaceSet,
     ) {
         log::debug!(
             "current pixel format {:?} doesn't match required {:?}",
@@ -353,11 +371,39 @@ impl FilterChain {
                 format.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(format))
             }
-            (_, Some(a)) => {
+            (_, Some(a)) if a.can_convert_pixel_format(pixel_format) => {
                 if let Some(f) = a.format_filter(pixel_format) {
                     f.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(f));
                 }
+            }
+            (_, Some(_)) => {
+                let original_surface = current_state.surface;
+
+                // hw can't do the format change, so use sw
+                // hwdownload -> format -> hwupload
+                Self::transfer_surface(
+                    accel,
+                    resolved,
+                    current_state,
+                    FrameSurface::System,
+                    &Some(*pixel_format),
+                    surfaces,
+                );
+                let format: VideoFilter = FormatFilter {
+                    format: *pixel_format,
+                }
+                .into();
+                format.apply_to(current_state);
+                resolved.push(PipelineFilter::Video(format));
+                Self::transfer_surface(
+                    accel,
+                    resolved,
+                    current_state,
+                    original_surface,
+                    &Some(*pixel_format),
+                    surfaces,
+                );
             }
             _ => {}
         }
@@ -534,7 +580,9 @@ mod tests {
     use crate::hw_accel::HardwareAccel;
     use crate::output_settings::ScalingMode;
     use crate::pipeline::HwPixelFormat;
-    use crate::video_filter::{HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter};
+    use crate::video_filter::{
+        FormatFilter, HwMapFilter, HwUploadFilter, PadFilter, ScaleFilter, ToneMapFilter,
+    };
 
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
@@ -1352,5 +1400,134 @@ mod tests {
             args.is_empty(),
             "no filter_complex should be emitted: {args:?}"
         );
+    }
+
+    #[test]
+    fn resolve_converts_in_software_before_upload_when_vpp_unavailable() {
+        // 10-bit source lands us at System/p010le, encoder wants Vaapi/nv12,
+        // but the driver has no VPP so scale_vaapi=format=nv12 would fail.
+        // The chain must convert in software before hwupload and not emit any VPP filter.
+        let accel = vaapi_accel(); // vpp_pixel_formats is empty
+        let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
+
+        let initial_state = FrameState {
+            size: FrameSize {
+                width: 1280,
+                height: 720,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::P010le,
+            is_hdr: false,
+        };
+
+        let mut chain = FilterChain::new(Vec::new());
+
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &filter_options,
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            video_filters.len(),
+            2,
+            "expected exactly [format, hwupload]",
+        );
+
+        assert!(
+            matches!(
+                video_filters[0],
+                VideoFilter::Format(FormatFilter {
+                    format: PixelFormat::Nv12
+                })
+            ),
+            "first filter should be a software format=nv12",
+        );
+
+        assert!(
+            matches!(
+                video_filters[1],
+                VideoFilter::HwUpload(HwUploadFilter {
+                    target_surface: FrameSurface::Vaapi,
+                    source_format: PixelFormat::Nv12,
+                })
+            ),
+            "second filter should be hwupload to Vaapi with NV12 source",
+        );
+
+        assert!(
+            !video_filters
+                .iter()
+                .any(|f| matches!(f, VideoFilter::FormatVaapi(_) | VideoFilter::ScaleVaapi(_))),
+            "must not emit any VPP filter when vpp_pixel_formats is empty",
+        );
+    }
+
+    #[test]
+    fn resolve_uploads_without_format_change_when_encoder_format_matches() {
+        // sw already at NV12 — upload should be a single hwupload
+        // with no format= prefix and no VPP filter inserted.
+        let accel = vaapi_accel();
+        let ffmpeg_info = FfmpegInfo::default();
+        let filter_options = VideoFilterOptions::default();
+
+        let initial_state = FrameState {
+            size: FrameSize {
+                width: 1280,
+                height: 720,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Nv12,
+            is_hdr: false,
+        };
+
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &filter_options,
+            &initial_state,
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let video_filters: Vec<&VideoFilter> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(vf) => Some(vf),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(video_filters.len(), 1, "expected exactly [hwupload]");
+        assert!(matches!(
+            video_filters[0],
+            VideoFilter::HwUpload(HwUploadFilter {
+                target_surface: FrameSurface::Vaapi,
+                source_format: PixelFormat::Nv12,
+            })
+        ),);
     }
 }

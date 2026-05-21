@@ -326,13 +326,17 @@ impl HwAccel for Vaapi {
         }
     }
 
-    fn supports_upload_format(&self, pixel_format: &PixelFormat) -> bool {
+    fn accepts_upload_format(&self, pixel_format: &PixelFormat) -> bool {
         // upload works even when vpp is unsupported for a format, so match
         // the canonical VA surface formats first.
         // it is safe to allow 10 bit here because encoder is already checked,
         // e.g. 10-bit software encoder will never try to upload
         matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::P010le)
             || self.capabilities.vpp_supports_format(pixel_format)
+    }
+
+    fn can_convert_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
+        self.capabilities.vpp_supports_format(pixel_format)
     }
 }
 

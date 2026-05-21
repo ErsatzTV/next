@@ -75,7 +75,14 @@ pub trait HwAccel {
             _ => HwPixelFormat::Nv12,
         }
     }
-    fn supports_upload_format(&self, _pixel_format: &PixelFormat) -> bool {
+
+    /// Can hwupload be used for this pixel format on the accel's surface
+    fn accepts_upload_format(&self, _pixel_format: &PixelFormat) -> bool {
+        true
+    }
+
+    /// Can the accel's format filter (scale_vaapi, vpp_qsv, etc.) use this pixel format
+    fn can_convert_pixel_format(&self, _pixel_format: &PixelFormat) -> bool {
         true
     }
 }
