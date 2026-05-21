@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use libva_sys::*;
 
@@ -22,6 +22,13 @@ pub struct VaapiCapabilities {
     /// FourCC of supported HDR->HDR tonemap formats.   
     pub(crate) can_hdr_to_hdr_tonemap: HashSet<FourCC>,
     pub(crate) can_overlay: bool,
+    /// Bitmask of VA_RC_* per (profile, entrypoint). Absent = unknown / not queried.
+    pub(crate) rate_control: HashMap<(i32, i32), u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateControlMode {
+    Cqp,
 }
 
 impl VaapiCapabilities {
@@ -109,5 +116,28 @@ impl VaapiCapabilities {
 
     pub fn can_overlay(&self) -> bool {
         self.can_overlay
+    }
+
+    /// Returns Some(Cqp) when the only available RC mode is CQP and we must force it.
+    /// Returns None when VBR/CBR is available (driver default is fine) or nothing is known.
+    pub fn rate_control_mode_for(
+        &self,
+        format: &VideoFormat,
+        bit_depth: u8,
+    ) -> Option<RateControlMode> {
+        let profile = Self::encode_profile_for(format, bit_depth)?;
+        // try ENC_SLICE then ENC_SLICE_LP
+        for ep in [VA_ENTRYPOINT_ENC_SLICE, VA_ENTRYPOINT_ENC_SLICE_LP] {
+            if let Some(&mask) = self.rate_control.get(&(profile, ep)) {
+                if mask & (VA_RC_VBR | VA_RC_CBR) != 0 {
+                    return None; // default RC is fine
+                }
+                if mask & VA_RC_CQP != 0 {
+                    return Some(RateControlMode::Cqp);
+                }
+            }
+        }
+
+        None
     }
 }

@@ -6,6 +6,7 @@ pub type VADisplay = *mut c_void;
 pub type VAStatus = c_int;
 pub type VAProfile = c_int;
 pub type VAEntrypoint = c_int;
+pub type VAConfigAttribType = c_int;
 pub type VAConfigID = c_uint;
 pub type VAGenericValueType = c_int;
 pub type VASurfaceID = c_uint;
@@ -13,6 +14,22 @@ pub type VAContextID = c_uint;
 // https://intel.github.io/libva/group__api__vpp.html#ga3614dbee76b8ac89dd5a3dc8b1a12bb7
 pub type VAProcFilterType = c_int;
 pub type VAProcColorStandardType = c_int;
+
+pub const VA_CONFIG_ATTRIB_RATE_CONTROL: VAConfigAttribType = 5;
+
+pub const VA_RC_NONE: c_uint = 0x00000000;
+pub const VA_RC_CBR: c_uint = 0x00000002;
+pub const VA_RC_VBR: c_uint = 0x00000004;
+pub const VA_RC_CQP: c_uint = 0x00000010;
+
+pub const VA_ATTRIB_NOT_SUPPORTED: c_uint = 0x80000000;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VAConfigAttrib {
+    pub type_: VAConfigAttribType,
+    pub value: c_uint,
+}
 
 pub const VA_PROFILE_NONE: VAProfile = -1;
 pub const VA_PROFILE_MPEG2_SIMPLE: VAProfile = 0;

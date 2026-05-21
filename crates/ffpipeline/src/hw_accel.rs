@@ -50,6 +50,7 @@ pub trait HwAccel {
     fn codec_for_format(
         &self,
         format: &VideoFormat,
+        bit_depth: u8,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec>;
     fn envs(&self) -> Vec<EnvironmentVariable> {

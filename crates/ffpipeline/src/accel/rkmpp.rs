@@ -31,19 +31,20 @@ impl HwAccel for Rkmpp {
     fn codec_for_format(
         &self,
         format: &VideoFormat,
+        _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_rkmpp",
-                options: &[],
+                options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
             }),
             VideoFormat::Hevc if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_rkmpp",
-                options: &[],
+                options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,

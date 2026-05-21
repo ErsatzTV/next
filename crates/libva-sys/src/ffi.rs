@@ -5,8 +5,9 @@ use std::ffi::{c_char, c_int, c_uint, c_void};
 use libloading::Library;
 
 use crate::{
-    VAConfigID, VAContextID, VADisplay, VAEntrypoint, VAProcFilterCapHighDynamicRange,
-    VAProcFilterType, VAProcPipelineCaps, VAProfile, VAStatus, VASurfaceAttrib, VASurfaceID,
+    VAConfigAttrib, VAConfigID, VAContextID, VADisplay, VAEntrypoint,
+    VAProcFilterCapHighDynamicRange, VAProcFilterType, VAProcPipelineCaps, VAProfile, VAStatus,
+    VASurfaceAttrib, VASurfaceID,
 };
 
 pub struct VaLib {
@@ -74,6 +75,13 @@ pub struct VaLib {
         num_surfaces: c_uint,
     ) -> VAStatus,
     pub vaErrorStr: unsafe extern "C" fn(VAStatus) -> *const c_char,
+    pub vaGetConfigAttributes: unsafe extern "C" fn(
+        VADisplay,
+        VAProfile,
+        VAEntrypoint,
+        *mut VAConfigAttrib,
+        c_int,
+    ) -> VAStatus,
 }
 
 impl VaLib {
@@ -99,6 +107,7 @@ impl VaLib {
             let vaDestroySurfaces = *lib.get(b"vaDestroySurfaces\0")?;
             let vaErrorStr = *lib.get(b"vaErrorStr\0")?;
             let vaGetDisplayDRM = *lib_drm.get(b"vaGetDisplayDRM\0")?;
+            let vaGetConfigAttributes = *lib.get(b"vaGetConfigAttributes\0")?;
             Ok(Self {
                 _libva: lib,
                 _libva_drm: lib_drm,
@@ -120,6 +129,7 @@ impl VaLib {
                 vaCreateSurfaces,
                 vaDestroySurfaces,
                 vaErrorStr,
+                vaGetConfigAttributes,
             })
         }
     }

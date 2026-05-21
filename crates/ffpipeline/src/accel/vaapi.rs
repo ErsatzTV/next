@@ -1,7 +1,7 @@
 use crate::ArgVec;
 use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
-use crate::capabilities::vaapi::VaapiCapabilities;
+use crate::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
@@ -194,25 +194,40 @@ impl HwAccel for Vaapi {
     fn codec_for_format(
         &self,
         format: &VideoFormat,
+        bit_depth: u8,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
+        let force_cqp = self.capabilities.rate_control_mode_for(format, bit_depth)
+            == Some(RateControlMode::Cqp);
+
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
-                codec_name: "h264_vaapi",
-                options: &[],
-                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                preferred_surface: FrameSurface::Vaapi,
-            }),
+            VideoFormat::H264 => {
+                let options = if force_cqp {
+                    args!["-rc_mode", "1"]
+                } else {
+                    Vec::new()
+                };
+
+                Some(VideoCodec {
+                    codec_name: "h264_vaapi",
+                    options,
+                    preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                    preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                    preferred_surface: FrameSurface::Vaapi,
+                })
+            }
             VideoFormat::Hevc => {
-                let mut options: &'static [&'static str] = &[];
+                let mut options = Vec::new();
+                if force_cqp {
+                    options.extend(args!["-rc_mode", "1"]);
+                }
 
                 // WORKAROUND: RadeonSI doesn't always output appropriate crop
                 // metadata with HEVC encoder; it doesn't hurt anything to always specify
                 if self.driver == VaapiDriver::RadeonSI
                     && video_size.map(|s| s.height) == Some(1080)
                 {
-                    options = &["-bsf:v", "hevc_metadata=crop_bottom=8"];
+                    options.extend(args!["-bsf:v", "hevc_metadata=crop_bottom=8"]);
                 }
 
                 Some(VideoCodec {
@@ -544,6 +559,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: 0,

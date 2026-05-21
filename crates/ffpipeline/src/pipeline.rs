@@ -295,16 +295,20 @@ impl Pipeline {
             final_output_settings.video_format,
         ) {
             (Some(a), Some(format)) => a
-                .codec_for_format(&format, final_output_settings.video_size)
+                .codec_for_format(
+                    &format,
+                    final_output_settings.bit_depth.unwrap_or(8),
+                    final_output_settings.video_size,
+                )
                 .filter(|_| a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)))
                 .unwrap_or(match format {
-                    VideoFormat::Hevc => VideoCodec::LIBX265,
-                    VideoFormat::H264 => VideoCodec::LIBX264,
-                    _ => VideoCodec::COPY,
+                    VideoFormat::Hevc => VideoCodec::libx265(),
+                    VideoFormat::H264 => VideoCodec::libx264(),
+                    _ => VideoCodec::copy(),
                 }),
-            (_, Some(VideoFormat::H264)) => VideoCodec::LIBX264,
-            (_, Some(VideoFormat::Hevc)) => VideoCodec::LIBX265,
-            _ => VideoCodec::COPY,
+            (_, Some(VideoFormat::H264)) => VideoCodec::libx264(),
+            (_, Some(VideoFormat::Hevc)) => VideoCodec::libx265(),
+            _ => VideoCodec::copy(),
         };
 
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
@@ -698,7 +702,7 @@ impl Pipeline {
         }
 
         // video copy shouldn't have bitrate, etc
-        if self.output_context.video_codec == VideoCodec::COPY {
+        if self.output_context.video_codec.codec_name == VideoCodec::COPY {
             self.output_options.retain(|o| {
                 !matches!(
                     o,

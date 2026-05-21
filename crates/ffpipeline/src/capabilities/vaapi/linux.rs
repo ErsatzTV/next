@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, c_uint};
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
@@ -92,6 +92,7 @@ impl VaapiCapabilities {
 
         let max_entrypoints = unsafe { (va.vaMaxNumEntrypoints)(display) } as usize;
         let mut supported = HashSet::new();
+        let mut rate_control = HashMap::new();
 
         for &profile in &profiles {
             let mut entrypoints = vec![0i32; max_entrypoints];
@@ -107,6 +108,16 @@ impl VaapiCapabilities {
             if status == VA_STATUS_SUCCESS {
                 for &ep in &entrypoints[..num_entrypoints as usize] {
                     supported.insert((profile, ep));
+
+                    let mut attr = VAConfigAttrib {
+                        type_: VA_CONFIG_ATTRIB_RATE_CONTROL,
+                        value: 0,
+                    };
+                    let status =
+                        unsafe { (va.vaGetConfigAttributes)(display, profile, ep, &mut attr, 1) };
+                    if status == VA_STATUS_SUCCESS && attr.value != VA_ATTRIB_NOT_SUPPORTED {
+                        rate_control.insert((profile, ep), attr.value);
+                    }
                 }
             }
         }
@@ -318,6 +329,7 @@ impl VaapiCapabilities {
             can_hdr_to_hdr_tonemap,
             can_hdr_to_sdr_tonemap,
             can_overlay: can_overlay.unwrap_or_default(),
+            rate_control,
         })
     }
 

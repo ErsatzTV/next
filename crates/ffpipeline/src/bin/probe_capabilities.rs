@@ -3,7 +3,7 @@ use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::qsv::QsvCapabilities;
 use ffpipeline::capabilities::rkmpp::RkmppCapabilities;
-use ffpipeline::capabilities::vaapi::VaapiCapabilities;
+use ffpipeline::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
 use ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities;
 use ffpipeline::capabilities::vulkan::VulkanCapabilities;
 use ffpipeline::pipeline::{PixelFormat, VideoFormat};
@@ -224,6 +224,23 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
         }
     }
     println!("  Overlay:     {}", yn(caps.can_overlay()));
+
+    println!();
+    println!("Rate Control:");
+    println!("  {:<12} {:<8} {:<14}", "Codec", "Bits", "Forced Mode");
+    println!("  {:<12} {:<8} {:<14}", "-----", "----", "-----------");
+    for f in ALL_FORMATS {
+        for bd in [8u8, 10] {
+            let forced = caps.rate_control_mode_for(f, bd);
+            if caps.can_encode(f, bd) || caps.can_encode_low_power(f, bd) {
+                let label = match forced {
+                    Some(RateControlMode::Cqp) => "CQP (forced)",
+                    None => "(default)",
+                };
+                println!("  {:<12} {:<8} {:<14}", format_name(f), bd, label);
+            }
+        }
+    }
 
     Ok(())
 }

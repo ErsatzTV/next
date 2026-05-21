@@ -126,21 +126,22 @@ impl HwAccel for Cuda {
     fn codec_for_format(
         &self,
         format: &VideoFormat,
+        _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_nvenc",
-                options: &[],
+                options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Cuda,
             }),
             VideoFormat::Hevc => {
                 let options = if self.capabilities.b_frame_ref_mode(format) {
-                    &["-tag:v", "hvc1", "-b_ref_mode", "1"]
+                    args!["-tag:v", "hvc1", "-b_ref_mode", "1"]
                 } else {
-                    &["-tag:v", "hvc1", "-b_ref_mode", "0"]
+                    args!["-tag:v", "hvc1", "-b_ref_mode", "0"]
                 };
 
                 Some(VideoCodec {

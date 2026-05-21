@@ -32,7 +32,7 @@ impl OutputFormat {
                 playlist,
                 segment_template,
             } => {
-                if output_context.video_codec != VideoCodec::COPY {
+                if output_context.video_codec.codec_name != VideoCodec::COPY {
                     args.extend(args![
                         "-g",
                         gop,
