@@ -22,8 +22,8 @@ pub struct OutputSettings {
     pub is_live: bool,
     pub frame_rate: Option<FrameRate>,
     pub subtitle_mode: SubtitleMode,
-    pub save_reports: bool,
     pub reports_folder: Option<String>,
+    pub report_id: Option<String>,
 }
 
 #[derive(Debug, Default)]

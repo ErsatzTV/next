@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::fmt::Formatter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,12 +26,16 @@ use ffpipeline::probe::{ProbeResult, ProbeResultVideoStream, Probeable};
 use ffpipeline::web_vtt::Cue;
 use ffpipeline::{pipeline, probe};
 use time::OffsetDateTime;
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 
+use crate::dossier::Dossier;
 use crate::local_proxy::{LocalProxyServer, ScriptCommand};
 use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
 use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};
+
+const STDERR_RING_LINES: usize = 2_000;
 
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
@@ -497,8 +502,8 @@ impl ChannelSession {
                 None
             },
             subtitle_mode: self.channel_config.normalization.subtitle.mode.into(),
-            save_reports: self.channel_config.ffmpeg.save_reports,
             reports_folder: self.channel_config.ffmpeg.reports_folder.clone(),
+            report_id: Some(self.channel_config.number().to_owned()),
         };
 
         let start_at_zero = matches!(
@@ -623,8 +628,31 @@ impl ChannelSession {
                     .map(|env| (env.key.as_str(), env.value.as_str())),
             )
             .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|_| ChannelError::StreamFailure(String::from("failed to spawn ffmpeg")))?;
+
+        let stderr = ffmpeg_child
+            .stderr
+            .take()
+            .ok_or(ChannelError::CaptureFFmpegStderrFailure)?;
+        let ring = Arc::new(std::sync::Mutex::new(VecDeque::<String>::with_capacity(
+            STDERR_RING_LINES,
+        )));
+
+        let reader_ring = Arc::clone(&ring);
+        let reader_handle = tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("{line}");
+                if let Ok(mut buf) = reader_ring.lock() {
+                    if buf.len() == STDERR_RING_LINES {
+                        buf.pop_front();
+                    }
+                    buf.push_back(line);
+                }
+            }
+        });
 
         log::debug!("waiting for ffmpeg to terminate...");
 
@@ -632,13 +660,38 @@ impl ChannelSession {
             status = ffmpeg_child.wait() => {
                 let status = status.map_err(|e| ChannelError::StreamFailure(e.to_string()))?;
                 if !status.success() {
+                    let _ = reader_handle.await;
+                    let stderr_tail = ring
+                        .lock()
+                        .map(|r| r.iter().cloned().collect())
+                        .unwrap_or_default();
+                    let report_source_file = self.channel_config.ffmpeg.reports_folder.as_ref().map(|folder| {
+                        PathBuf::from(folder).join(format!(".in-flight-{}.log", self.channel_config.number()))
+                    });
+                    let dossier = Dossier::new(&self.channel_config, current_item, stderr_tail, report_source_file);
+                    if let Err(err) = dossier.write().await {
+                        log::error!("failed to save dossier: {err}");
+                    }
                     return Err(ChannelError::StreamFailure(format!(
                         "ffmpeg exited {status}"
                     )));
+                } else {
+                    if let Some(reports_folder) = &self.channel_config.ffmpeg.reports_folder {
+                        let report_file = PathBuf::from(reports_folder).join(format!(".in-flight-{}.log", self.channel_config.number()));
+                        if report_file.exists() {
+                            let _ = tokio::fs::remove_file(report_file).await;
+                        }
+                    }
                 }
             }
             _ = self.timeout_notify.notified() => {
                 ffmpeg_child.kill().await.ok();
+                if let Some(reports_folder) = &self.channel_config.ffmpeg.reports_folder {
+                    let report_file = PathBuf::from(reports_folder).join(format!(".in-flight-{}.log", self.channel_config.number()));
+                    if report_file.exists() {
+                        let _ = tokio::fs::remove_file(report_file).await;
+                    }
+                }
                 return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
             }
         }

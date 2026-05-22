@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
@@ -16,7 +16,7 @@ pub const PATH_FIELDS: &[&str] = &[
     "/ffmpeg/reports_folder",
 ];
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
     pub playout: PlayoutConfig,
     pub ffmpeg: FfmpegConfig,
@@ -32,7 +32,7 @@ pub struct ChannelConfig {
     number: String,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct PlayoutConfig {
     pub folder: String,
     /// RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00
@@ -41,7 +41,7 @@ pub struct PlayoutConfig {
     pub virtual_start: Option<OffsetDateTime>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct FfmpegConfig {
     #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub ffmpeg_path: Option<PathBuf>,
@@ -52,12 +52,10 @@ pub struct FfmpegConfig {
     #[serde(default)]
     pub preferred_filters: Vec<String>,
     #[serde(default)]
-    pub save_reports: bool,
-    #[serde(default)]
     pub reports_folder: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct NormalizationConfig {
     pub audio: AudioNormalizationConfig,
     pub video: VideoNormalizationConfig,
@@ -65,7 +63,7 @@ pub struct NormalizationConfig {
     pub subtitle: SubtitleNormalizationConfig,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct AudioNormalizationConfig {
     pub format: Option<AudioFormat>,
     pub bitrate_kbps: Option<u32>,
@@ -77,7 +75,7 @@ pub struct AudioNormalizationConfig {
     pub loudness: Option<AudioLoudnessConfig>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     Aac,
@@ -93,7 +91,7 @@ impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
     }
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct AudioLoudnessConfig {
     pub integrated_target: Option<f64>,
     pub range_target: Option<f64>,
@@ -114,7 +112,7 @@ impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSe
     }
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct VideoNormalizationConfig {
     pub format: Option<VideoFormat>,
     #[serde(default, deserialize_with = "deserialize_bit_depth")]
@@ -135,7 +133,7 @@ pub struct VideoNormalizationConfig {
     pub filters: VideoFilterOptionsConfig,
 }
 
-#[derive(Deserialize, Clone, Debug, Default, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct VideoFilterOptionsConfig {
     pub bwdif: Option<BwdifOptions>,
@@ -150,61 +148,61 @@ pub struct VideoFilterOptionsConfig {
     pub yadif_cuda: Option<YadifCudaOptions>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BwdifOptions {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BwdifCudaOptions {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeinterlaceQsvOptions {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeinterlaceVaapiOptions {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LibplaceboOptions {
     pub tonemapping: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TonemapOptions {
     pub tonemap: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TonemapOpenclOptions {
     pub tonemap: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct W3fdifOptions {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct YadifOptions {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct YadifCudaOptions {
     pub mode: Option<String>,
@@ -247,7 +245,7 @@ impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilter
     }
 }
 
-#[derive(Deserialize, Clone, Copy, Debug, JsonSchema, Default)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ScalingMode {
     #[default]
@@ -269,7 +267,7 @@ impl From<ScalingMode> for ffpipeline::output_settings::ScalingMode {
     }
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VaapiDriver {
     #[serde(alias = "ihd", alias = "iHD")]
@@ -290,14 +288,14 @@ impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
     }
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VideoFormat {
     H264,
     Hevc,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HardwareAccel {
     Amf,
@@ -458,13 +456,13 @@ impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
     }
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema, Default)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
 pub struct SubtitleNormalizationConfig {
     #[serde(default)]
     pub mode: SubtitleMode,
 }
 
-#[derive(Deserialize, Clone, Debug, JsonSchema, Default, Copy)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum SubtitleMode {
     #[default]

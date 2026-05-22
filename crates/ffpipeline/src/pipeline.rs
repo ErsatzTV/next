@@ -598,38 +598,36 @@ impl Pipeline {
 
         let mut env_vars = Vec::new();
 
-        if final_output_settings.save_reports {
-            if let Some(reports_folder) = final_output_settings
-                .reports_folder
+        if let Some(reports_folder) = final_output_settings
+            .reports_folder
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            && let Some(report_id) = final_output_settings
+                .report_id
                 .as_deref()
                 .filter(|s| !s.is_empty())
-            {
-                let folder = PathBuf::from(reports_folder.replace(r"%", r"%%"));
-                if let Err(err) = std::fs::create_dir_all(&folder) {
-                    log::warn!(
-                        "failed to create ffmpeg reports folder: {err}; will not save report"
-                    );
-                } else {
-                    let file = folder
-                        .join("ffmpeg-%t-transcode.log")
-                        .to_string_lossy()
-                        .to_string();
-
-                    #[cfg(target_os = "windows")]
-                    let mut file = file;
-
-                    #[cfg(target_os = "windows")]
-                    {
-                        file = file.replace(r"\", r"/").replace(r":/", r"\:/");
-                    }
-
-                    env_vars = vec![EnvironmentVariable {
-                        key: String::from("FFREPORT"),
-                        value: format!("file={file}:level=32"),
-                    }]
-                }
+        {
+            let folder = PathBuf::from(reports_folder.replace(r"%", r"%%"));
+            if let Err(err) = std::fs::create_dir_all(&folder) {
+                log::warn!("failed to create ffmpeg reports folder: {err}; will not save report");
             } else {
-                log::warn!("unable to save ffmpeg reports without reports folder")
+                let file = folder
+                    .join(format!(".in-flight-{}.log", report_id))
+                    .to_string_lossy()
+                    .to_string();
+
+                #[cfg(target_os = "windows")]
+                let mut file = file;
+
+                #[cfg(target_os = "windows")]
+                {
+                    file = file.replace(r"\", r"/").replace(r":/", r"\:/");
+                }
+
+                env_vars = vec![EnvironmentVariable {
+                    key: String::from("FFREPORT"),
+                    value: format!("file={file}:level=32"),
+                }]
             }
         }
 

@@ -198,10 +198,6 @@
             "null"
           ],
           "default": null
-        },
-        "save_reports": {
-          "type": "boolean",
-          "default": false
         }
       }
     },
@@ -236,7 +232,10 @@
           "$ref": "#/$defs/AudioNormalizationConfig"
         },
         "subtitle": {
-          "$ref": "#/$defs/SubtitleNormalizationConfig"
+          "$ref": "#/$defs/SubtitleNormalizationConfig",
+          "default": {
+            "mode": "burn"
+          }
         },
         "video": {
           "$ref": "#/$defs/VideoNormalizationConfig"
@@ -285,7 +284,8 @@
       "type": "object",
       "properties": {
         "mode": {
-          "$ref": "#/$defs/SubtitleMode"
+          "$ref": "#/$defs/SubtitleMode",
+          "default": "burn"
         }
       }
     },
@@ -332,7 +332,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "bwdif_cuda": {
           "anyOf": [
@@ -342,7 +343,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "deinterlace_qsv": {
           "anyOf": [
@@ -352,7 +354,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "deinterlace_vaapi": {
           "anyOf": [
@@ -362,7 +365,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "libplacebo": {
           "anyOf": [
@@ -372,7 +376,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "tonemap": {
           "anyOf": [
@@ -382,7 +387,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "tonemap_opencl": {
           "anyOf": [
@@ -392,7 +398,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "w3fdif": {
           "anyOf": [
@@ -402,7 +409,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "yadif": {
           "anyOf": [
@@ -412,7 +420,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "yadif_cuda": {
           "anyOf": [
@@ -422,7 +431,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         }
       },
       "additionalProperties": false
@@ -445,7 +455,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "bit_depth": {
           "type": [
@@ -478,7 +489,19 @@
           "default": false
         },
         "filters": {
-          "$ref": "#/$defs/VideoFilterOptionsConfig"
+          "$ref": "#/$defs/VideoFilterOptionsConfig",
+          "default": {
+            "bwdif": null,
+            "bwdif_cuda": null,
+            "deinterlace_qsv": null,
+            "deinterlace_vaapi": null,
+            "libplacebo": null,
+            "tonemap": null,
+            "tonemap_opencl": null,
+            "w3fdif": null,
+            "yadif": null,
+            "yadif_cuda": null
+          }
         },
         "format": {
           "anyOf": [
@@ -499,7 +522,8 @@
           "minimum": 0
         },
         "scaling_mode": {
-          "$ref": "#/$defs/ScalingMode"
+          "$ref": "#/$defs/ScalingMode",
+          "default": "scale_and_pad"
         },
         "vaapi_device": {
           "type": [
