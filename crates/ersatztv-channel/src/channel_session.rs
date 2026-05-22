@@ -659,8 +659,8 @@ impl ChannelSession {
         tokio::select! {
             status = ffmpeg_child.wait() => {
                 let status = status.map_err(|e| ChannelError::StreamFailure(e.to_string()))?;
+                let _ = reader_handle.await;
                 if !status.success() {
-                    let _ = reader_handle.await;
                     let stderr_tail = ring
                         .lock()
                         .map(|r| r.iter().cloned().collect())
@@ -676,22 +676,13 @@ impl ChannelSession {
                         "ffmpeg exited {status}"
                     )));
                 } else {
-                    if let Some(reports_folder) = &self.channel_config.ffmpeg.reports_folder {
-                        let report_file = PathBuf::from(reports_folder).join(format!(".in-flight-{}.log", self.channel_config.number()));
-                        if report_file.exists() {
-                            let _ = tokio::fs::remove_file(report_file).await;
-                        }
-                    }
+                    self.cleanup_old_report().await;
                 }
             }
             _ = self.timeout_notify.notified() => {
                 ffmpeg_child.kill().await.ok();
-                if let Some(reports_folder) = &self.channel_config.ffmpeg.reports_folder {
-                    let report_file = PathBuf::from(reports_folder).join(format!(".in-flight-{}.log", self.channel_config.number()));
-                    if report_file.exists() {
-                        let _ = tokio::fs::remove_file(report_file).await;
-                    }
-                }
+                let _ = reader_handle.await;
+                self.cleanup_old_report().await;
                 return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
             }
         }
@@ -956,6 +947,16 @@ impl ChannelSession {
                     log::warn!("error converting subtitle to vtt: {err}");
                     None
                 }
+            }
+        }
+    }
+
+    async fn cleanup_old_report(&self) {
+        if let Some(reports_folder) = &self.channel_config.ffmpeg.reports_folder {
+            let report_file = PathBuf::from(reports_folder)
+                .join(format!(".in-flight-{}.log", self.channel_config.number()));
+            if report_file.exists() {
+                let _ = tokio::fs::remove_file(report_file).await;
             }
         }
     }

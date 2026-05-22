@@ -607,14 +607,15 @@ impl Pipeline {
                 .as_deref()
                 .filter(|s| !s.is_empty())
         {
-            let folder = PathBuf::from(reports_folder.replace(r"%", r"%%"));
+            let folder = PathBuf::from(reports_folder);
             if let Err(err) = std::fs::create_dir_all(&folder) {
                 log::warn!("failed to create ffmpeg reports folder: {err}; will not save report");
             } else {
                 let file = folder
                     .join(format!(".in-flight-{}.log", report_id))
                     .to_string_lossy()
-                    .to_string();
+                    .to_string()
+                    .replace(r"%", r"%%");
 
                 #[cfg(target_os = "windows")]
                 let mut file = file;
