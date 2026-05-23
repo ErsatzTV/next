@@ -55,27 +55,37 @@ impl VaapiCapabilities {
             .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_ENC_SLICE_LP)))
     }
 
-    fn decode_profile_for(codec: &str, profile: &str, _bit_depth: u8) -> Option<VAProfile> {
-        match (codec, profile) {
-            ("h264", "main" | "77") => Some(VA_PROFILE_H264_MAIN),
-            ("h264", "high" | "100" | "high 10" | "110") => Some(VA_PROFILE_H264_HIGH),
+    fn decode_profile_for(codec: &str, profile: &str, bit_depth: u8) -> Option<VAProfile> {
+        // each entry pairs a VA profile with the maximum bit depth that profile
+        // accepts. a bit depth above the max means the (profile, bit_depth)
+        // combination is not representable, so we treat it as unsupported.
+        let (va_profile, max_bit_depth) = match (codec, profile) {
+            ("h264", "main" | "77") => (VA_PROFILE_H264_MAIN, 8),
+            ("h264", "high" | "100") => (VA_PROFILE_H264_HIGH, 8),
+            ("h264", "high 10" | "110") => (VA_PROFILE_H264_HIGH10, 10),
             ("h264", "baseline constrained" | "constrained baseline" | "578") => {
-                Some(VA_PROFILE_H264_CONSTRAINED_BASELINE)
+                (VA_PROFILE_H264_CONSTRAINED_BASELINE, 8)
             }
-            ("mpeg2video", "main" | "4") => Some(VA_PROFILE_MPEG2_MAIN),
-            ("mpeg2video", "simple" | "5") => Some(VA_PROFILE_MPEG2_SIMPLE),
-            ("vc1", "simple" | "0") => Some(VA_PROFILE_VC1_SIMPLE),
-            ("vc1", "main" | "1") => Some(VA_PROFILE_VC1_MAIN),
-            ("vc1", "advanced" | "3") => Some(VA_PROFILE_VC1_ADVANCED),
-            ("hevc", "main" | "1") => Some(VA_PROFILE_HEVC_MAIN),
-            ("hevc", "main 10" | "2") => Some(VA_PROFILE_HEVC_MAIN10),
-            ("vp9", "profile 0" | "0") => Some(VA_PROFILE_VP9_PROFILE0),
-            ("vp9", "profile 1" | "1") => Some(VA_PROFILE_VP9_PROFILE1),
-            ("vp9", "profile 2" | "2") => Some(VA_PROFILE_VP9_PROFILE2),
-            ("vp9", "profile 3" | "3") => Some(VA_PROFILE_VP9_PROFILE3),
-            ("av1", "main" | "0") => Some(VA_PROFILE_AV1_PROFILE0),
-            _ => None,
+            ("mpeg2video", "main" | "4") => (VA_PROFILE_MPEG2_MAIN, 8),
+            ("mpeg2video", "simple" | "5") => (VA_PROFILE_MPEG2_SIMPLE, 8),
+            ("vc1", "simple" | "0") => (VA_PROFILE_VC1_SIMPLE, 8),
+            ("vc1", "main" | "1") => (VA_PROFILE_VC1_MAIN, 8),
+            ("vc1", "advanced" | "3") => (VA_PROFILE_VC1_ADVANCED, 8),
+            ("hevc", "main" | "1") => (VA_PROFILE_HEVC_MAIN, 8),
+            ("hevc", "main 10" | "2") => (VA_PROFILE_HEVC_MAIN10, 10),
+            ("vp9", "profile 0" | "0") => (VA_PROFILE_VP9_PROFILE0, 8),
+            ("vp9", "profile 1" | "1") => (VA_PROFILE_VP9_PROFILE1, 8),
+            ("vp9", "profile 2" | "2") => (VA_PROFILE_VP9_PROFILE2, 10),
+            ("vp9", "profile 3" | "3") => (VA_PROFILE_VP9_PROFILE3, 10),
+            ("av1", "main" | "0") => (VA_PROFILE_AV1_PROFILE0, 10),
+            _ => return None,
+        };
+
+        if bit_depth > max_bit_depth {
+            return None;
         }
+
+        Some(va_profile)
     }
 
     fn encode_profile_for(format: &VideoFormat, bit_depth: u8) -> Option<VAProfile> {

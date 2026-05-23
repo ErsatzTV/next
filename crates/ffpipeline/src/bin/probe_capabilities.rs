@@ -323,6 +323,7 @@ fn print_vpp_table(supports: impl Fn(&PixelFormat) -> bool) {
 
 fn default_profile(format: &VideoFormat, bit_depth: u8) -> (&'static str, &'static str) {
     match (format, bit_depth) {
+        (VideoFormat::H264, 10) => ("h264", "high 10"),
         (VideoFormat::H264, _) => ("h264", "main"),
         (VideoFormat::Hevc, 10) => ("hevc", "main 10"),
         (VideoFormat::Hevc, _) => ("hevc", "main"),
