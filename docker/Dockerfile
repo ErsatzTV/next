@@ -7,10 +7,10 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
-ARG INFO_VERSION
-ENV ETV_VERSION=${INFO_VERSION}
 COPY --from=planner /build/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
+ARG INFO_VERSION
+ENV ETV_VERSION=${INFO_VERSION}
 COPY . .
 RUN cargo build --release
 
