@@ -506,12 +506,24 @@ impl Pipeline {
                     "-loop",
                     "1",
                     "-framerate",
-                    output_context.media_frame_rate.r_frame_rate.clone()
+                    output_context.media_frame_rate.r_frame_rate.clone(),
+                    "-t",
+                    format!("{}ms", duration.as_millis())
                 ]
             } else if watermark_stream.codec == "gif" || watermark_stream.codec == "apng" {
-                args!["-ignore_loop", "0"]
+                args![
+                    "-ignore_loop",
+                    "0",
+                    "-t",
+                    format!("{}ms", duration.as_millis())
+                ]
             } else {
-                args!["-stream_loop", "-1"]
+                args![
+                    "-stream_loop",
+                    "-1",
+                    "-t",
+                    format!("{}ms", duration.as_millis())
+                ]
             };
 
             inputs.push(PipelineInput::Watermark {

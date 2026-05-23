@@ -33,7 +33,7 @@
           "phase_offset_ms": 0,
           "disable_after_ms": 3000000,
           "fade_ms": 1000,
-          "hold_ms": 8000,
+          "hold_ms": 8000
         }
       }
     },
