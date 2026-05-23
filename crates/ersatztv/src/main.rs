@@ -22,7 +22,7 @@ use crate::channel_model::ChannelModel;
 use crate::channel_session::ChannelSession;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None, subcommand_negates_reqs = true)]
+#[command(version = ersatztv_core::VERSION, about, long_about = None, subcommand_negates_reqs = true)]
 struct Args {
     /// Path to lineup.json (server mode)
     #[arg(required = true)]

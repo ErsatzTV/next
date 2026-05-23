@@ -151,6 +151,8 @@ jobs:
 
       - name: Build
         shell: bash
+        env:
+          ETV_VERSION: ${{ inputs.release_version }}
         run: |
           # Define some variables for things we need
           release_name="ersatztv-next-${{ inputs.release_version }}-${{ matrix.target }}"

@@ -23,7 +23,7 @@ static IMAGE_EXTENSIONS: &[&str] = &["png"];
 const PATH_FIELDS: &[&str] = &["/playout/folder"];
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version = ersatztv_core::VERSION, about, long_about = None)]
 #[command(group(ArgGroup::new("target").required(true).args(["lineup", "output_folder"])))]
 struct Args {
     #[arg(short, long, required = true)]

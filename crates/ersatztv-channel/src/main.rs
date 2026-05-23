@@ -15,7 +15,7 @@ use ffpipeline::ffmpeg_info::FfmpegInfo;
 use crate::channel_session::ChannelSession;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version = ersatztv_core::VERSION, about, long_about = None)]
 struct Args {
     #[command(subcommand)]
     command: Commands,
