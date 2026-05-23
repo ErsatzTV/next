@@ -56,10 +56,13 @@ impl VaapiCapabilities {
     }
 
     fn decode_profile_for(codec: &str, profile: &str, bit_depth: u8) -> Option<VAProfile> {
+        let codec = codec.to_lowercase();
+        let profile = profile.to_lowercase();
+
         // each entry pairs a VA profile with the maximum bit depth that profile
         // accepts. a bit depth above the max means the (profile, bit_depth)
         // combination is not representable, so we treat it as unsupported.
-        let (va_profile, max_bit_depth) = match (codec, profile) {
+        let (va_profile, max_bit_depth) = match (codec.as_str(), profile.as_str()) {
             ("h264", "main" | "77") => (VA_PROFILE_H264_MAIN, 8),
             ("h264", "high" | "100") => (VA_PROFILE_H264_HIGH, 8),
             ("h264", "high 10" | "110") => (VA_PROFILE_H264_HIGH10, 10),
@@ -73,6 +76,7 @@ impl VaapiCapabilities {
             ("vc1", "advanced" | "3") => (VA_PROFILE_VC1_ADVANCED, 8),
             ("hevc", "main" | "1") => (VA_PROFILE_HEVC_MAIN, 8),
             ("hevc", "main 10" | "2") => (VA_PROFILE_HEVC_MAIN10, 10),
+            ("vp8", "0") => (VA_PROFILE_VP8_VERSION0_3, 8),
             ("vp9", "profile 0" | "0") => (VA_PROFILE_VP9_PROFILE0, 8),
             ("vp9", "profile 1" | "1") => (VA_PROFILE_VP9_PROFILE1, 8),
             ("vp9", "profile 2" | "2") => (VA_PROFILE_VP9_PROFILE2, 10),

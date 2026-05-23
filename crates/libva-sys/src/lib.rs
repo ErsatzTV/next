@@ -43,6 +43,7 @@ pub const VA_PROFILE_VC1_SIMPLE: VAProfile = 8;
 pub const VA_PROFILE_VC1_MAIN: VAProfile = 9;
 pub const VA_PROFILE_VC1_ADVANCED: VAProfile = 10;
 pub const VA_PROFILE_H264_CONSTRAINED_BASELINE: VAProfile = 13;
+pub const VA_PROFILE_VP8_VERSION0_3: VAProfile = 14;
 pub const VA_PROFILE_HEVC_MAIN: VAProfile = 17;
 pub const VA_PROFILE_HEVC_MAIN10: VAProfile = 18;
 pub const VA_PROFILE_VP9_PROFILE0: VAProfile = 19;
