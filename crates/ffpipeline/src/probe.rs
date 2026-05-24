@@ -164,6 +164,7 @@ pub struct ProbeResult {
     pub path: String,
     pub streams: Vec<ProbeResultStream>,
     pub duration: Option<Duration>,
+    pub format_name: Option<String>,
 }
 
 impl std::fmt::Display for ProbeResult {
@@ -187,8 +188,14 @@ impl std::fmt::Display for ProbeResult {
 
 impl ProbeResult {
     pub fn is_still_image(&self) -> bool {
+        let is_image_container = self
+            .format_name
+            .as_deref()
+            .is_some_and(|f| f == "image2" || f.ends_with("_pipe"));
+
         self.streams.len() == 1
             && matches!(self.streams.first(), Some(ProbeResultStream::Video(v)) if v.is_still_image())
+            && is_image_container
     }
 }
 
@@ -215,6 +222,7 @@ struct ProbeOutputStream {
 #[derive(Deserialize)]
 struct ProbeOutputFormat {
     duration: Option<String>,
+    format_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -391,6 +399,7 @@ fn parse_ffprobe_stdout(path: String, stdout: Vec<u8>) -> Result<ProbeResult, FF
                 path: path.to_owned(),
                 streams,
                 duration,
+                format_name: output.format.format_name,
             })
         }
     }
