@@ -9,7 +9,7 @@ use ffpipeline::probe::ProbeResult;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 struct MediaInfo {
     video: serde_json::Value,
     audio: serde_json::Value,
@@ -148,39 +148,21 @@ impl DossierBuilder {
 
     pub fn video(mut self, video_probe_result: &ProbeResult) -> DossierBuilder {
         let value = serde_json::to_value(video_probe_result).unwrap_or(serde_json::Value::Null);
-        let mut media_info = self.media_info.unwrap_or(MediaInfo {
-            video: serde_json::Value::Null,
-            audio: serde_json::Value::Null,
-            subtitle: serde_json::Value::Null,
-        });
-        media_info.video = value;
-        self.media_info = Some(media_info);
+        self.media_info.get_or_insert_with(MediaInfo::default).video = value;
         self
     }
 
     pub fn audio(mut self, audio_probe_result: &ProbeResult) -> DossierBuilder {
         let value = serde_json::to_value(audio_probe_result).unwrap_or(serde_json::Value::Null);
-        let mut media_info = self.media_info.unwrap_or(MediaInfo {
-            video: serde_json::Value::Null,
-            audio: serde_json::Value::Null,
-            subtitle: serde_json::Value::Null,
-        });
-        media_info.audio = value;
-        self.media_info = Some(media_info);
-
+        self.media_info.get_or_insert_with(MediaInfo::default).audio = value;
         self
     }
 
     pub fn subtitle(mut self, subtitle_probe_result: &ProbeResult) -> DossierBuilder {
         let value = serde_json::to_value(subtitle_probe_result).unwrap_or(serde_json::Value::Null);
-        let mut media_info = self.media_info.unwrap_or(MediaInfo {
-            video: serde_json::Value::Null,
-            audio: serde_json::Value::Null,
-            subtitle: serde_json::Value::Null,
-        });
-        media_info.subtitle = value;
-        self.media_info = Some(media_info);
-
+        self.media_info
+            .get_or_insert_with(MediaInfo::default)
+            .subtitle = value;
         self
     }
 
