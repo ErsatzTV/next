@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::ArgVec;
 use crate::capabilities::vulkan::VulkanCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
@@ -9,7 +11,7 @@ use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Vulkan {
     pub capabilities: VulkanCapabilities,
 }

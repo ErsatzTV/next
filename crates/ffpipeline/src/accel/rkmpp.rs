@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::ArgVec;
 use crate::capabilities::rkmpp::RkmppCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
@@ -7,7 +9,7 @@ use crate::pipeline::{FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Rkmpp {
     pub capabilities: RkmppCapabilities,
 }

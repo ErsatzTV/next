@@ -1,4 +1,5 @@
 use enum_dispatch::enum_dispatch;
+use serde::Serialize;
 
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use crate::filter_chain::PipelineFilter;
@@ -87,9 +88,10 @@ pub trait HwAccel {
     }
 }
 
-#[derive(Debug, Clone, strum::Display)]
+#[derive(Debug, Clone, strum::Display, Serialize)]
 #[enum_dispatch(HwAccel)]
 #[strum(serialize_all = "lowercase")]
+#[serde(tag = "type")]
 pub enum HardwareAccel {
     Amf(accel::amf::Amf),
     Cuda(accel::cuda::Cuda),

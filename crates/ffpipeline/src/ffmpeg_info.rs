@@ -5,6 +5,7 @@ use std::iter::Iterator;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use serde::Serialize;
 use strum::{Display, EnumIter, IntoEnumIterator, IntoStaticStr};
 use tokio::process::Command;
 
@@ -88,7 +89,7 @@ pub enum KnownVideoFilter {
     YadifCuda,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FfmpegInfo {
     pub(crate) hwaccels: HashSet<String>,
     pub(crate) video_filters: HashSet<String>,

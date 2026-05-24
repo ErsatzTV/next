@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 
 use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010};
+use serde::Serialize;
 
 use crate::pipeline::{PixelFormat, VideoFormat};
 
@@ -17,14 +18,14 @@ pub(crate) mod vpl;
 )))]
 pub(crate) mod stub;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QsvCapabilities {
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) supported_encoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) vpp_pixel_formats: HashSet<QsvPixelFormat>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct QsvPixelFormat(u32);
 
 impl Debug for QsvPixelFormat {

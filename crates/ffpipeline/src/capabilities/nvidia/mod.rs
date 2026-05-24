@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::pipeline::{PixelFormat, VideoFormat};
 
 #[cfg(all(
@@ -14,13 +16,13 @@ pub(crate) mod probe;
 )))]
 pub(crate) mod stub;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EncoderCapability {
     pub bit_depths: Vec<u8>,
     pub b_frame_ref_mode: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NvidiaCapabilities {
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) supported_encoders: HashMap<VideoFormat, EncoderCapability>,

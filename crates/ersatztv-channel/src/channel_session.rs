@@ -29,7 +29,7 @@ use time::OffsetDateTime;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 
-use crate::dossier::Dossier;
+use crate::dossier::DossierBuilder;
 use crate::local_proxy::{LocalProxyServer, ScriptCommand};
 use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
 use crate::playout_loader::PlayoutLoader;
@@ -548,7 +548,7 @@ impl ChannelSession {
             .and_then(|s| s.stream_index);
 
         let subtitle_input = match (
-            subtitle_probe_result,
+            subtitle_probe_result.clone(),
             subtitle_input_source,
             subtitle_timing,
         ) {
@@ -568,7 +568,7 @@ impl ChannelSession {
                 input_source: audio_input_source,
                 in_point: audio_timing.in_point,
                 out_point: audio_timing.out_point,
-                probe_result: audio_probe_result,
+                probe_result: audio_probe_result.clone(),
                 stream_index: audio_index,
             },
             video_input: ProbedInput {
@@ -579,7 +579,7 @@ impl ChannelSession {
                     video_timing.in_point
                 },
                 out_point: video_timing.out_point,
-                probe_result: video_probe_result,
+                probe_result: video_probe_result.clone(),
                 stream_index: video_index,
             },
             subtitle_input,
@@ -661,14 +661,32 @@ impl ChannelSession {
                 let status = status.map_err(|e| ChannelError::StreamFailure(e.to_string()))?;
                 let _ = reader_handle.await;
                 if !status.success() {
-                    let stderr_tail = ring
+                    let stderr_tail: Vec<_> = ring
                         .lock()
                         .map(|r| r.iter().cloned().collect())
                         .unwrap_or_default();
-                    let report_source_file = self.channel_config.ffmpeg.reports_folder.as_ref().map(|folder| {
+
+                    let mut builder = DossierBuilder::new(&self.channel_config, &self.ffmpeg_info)
+                        .item(current_item)
+                        .stderr(stderr_tail)
+                        .video(&video_probe_result)
+                        .audio(&audio_probe_result);
+
+                    if let Some(accel) = &self.hw_accel {
+                        builder = builder.accel(accel);
+                    }
+
+                    if let Some(subtitle_probe_result) = &subtitle_probe_result {
+                        builder = builder.subtitle(subtitle_probe_result);
+                    }
+
+                    if let Some(report_source_file) = self.channel_config.ffmpeg.reports_folder.as_ref().map(|folder| {
                         PathBuf::from(folder).join(format!(".in-flight-{}.log", self.channel_config.number()))
-                    });
-                    let dossier = Dossier::new(&self.channel_config, current_item, stderr_tail, report_source_file);
+                    }) {
+                        builder = builder.report_source(report_source_file);
+                    }
+
+                    let dossier = builder.build();
                     if let Err(err) = dossier.write().await {
                         log::error!("failed to save dossier: {err}");
                     }

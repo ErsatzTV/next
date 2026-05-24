@@ -2,6 +2,7 @@ use std::fmt::Formatter;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use serde::Serialize;
 use strum::{Display, EnumString};
 
 use crate::ArgVec;
@@ -45,7 +46,7 @@ pub struct Kbps(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hz(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize)]
 #[strum(serialize_all = "lowercase")]
 pub enum VideoFormat {
     Av1,

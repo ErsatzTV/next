@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::pipeline::VideoFormat;
 
 #[cfg(all(
@@ -14,7 +16,7 @@ pub(crate) mod probe;
 )))]
 pub(crate) mod stub;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VulkanCapabilities {
     pub(crate) device_index: u32,
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,

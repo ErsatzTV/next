@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::ArgVec;
 use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
@@ -18,7 +20,7 @@ use crate::video_filter::{
     ToneMapFilter, VideoFilter, VideoFilterOp,
 };
 
-#[derive(Debug, Clone, PartialEq, strum::Display)]
+#[derive(Debug, Clone, PartialEq, strum::Display, Serialize)]
 pub enum VaapiDriver {
     #[strum(serialize = "iHD")]
     Ihd,
@@ -28,7 +30,7 @@ pub enum VaapiDriver {
     RadeonSI,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Vaapi {
     pub device: String,
     pub driver: VaapiDriver,

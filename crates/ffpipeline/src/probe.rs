@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use enum_dispatch::enum_dispatch;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use tokio::process::Command;
 
@@ -29,7 +29,7 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
 
 static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProbeResultColorParams {
     pub color_range: Option<String>,
     pub color_space: Option<String>,
@@ -45,7 +45,7 @@ impl ProbeResultColorParams {
     }
 }
 
-#[derive(Debug, Clone, EnumString, PartialEq)]
+#[derive(Debug, Clone, EnumString, PartialEq, Serialize)]
 #[strum(serialize_all = "lowercase")]
 pub enum CodecType {
     Audio,
@@ -53,7 +53,7 @@ pub enum CodecType {
     Subtitle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProbeResultVideoStream {
     pub stream_index: u32,
     pub codec: String,
@@ -121,14 +121,14 @@ impl ProbeResultVideoStream {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProbeResultAudioStream {
     pub stream_index: u32,
     pub codec: String,
     pub channels: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum ProbeResultStream {
     Video(Box<ProbeResultVideoStream>),
     Audio(ProbeResultAudioStream),
@@ -159,7 +159,7 @@ impl std::fmt::Display for ProbeResultStream {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProbeResult {
     pub path: String,
     pub streams: Vec<ProbeResultStream>,

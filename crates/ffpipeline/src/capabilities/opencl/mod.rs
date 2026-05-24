@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 #[cfg(all(
     any(target_os = "linux", target_os = "windows"),
     any(target_arch = "x86", target_arch = "x86_64")
@@ -10,7 +12,7 @@ pub(crate) mod cl;
 )))]
 pub(crate) mod stub;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct OpenCLCapabilities {
     pub(crate) platform_count: u32,
     pub(crate) gpu_device_count: u32,

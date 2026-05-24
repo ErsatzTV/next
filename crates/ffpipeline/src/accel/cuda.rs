@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::ArgVec;
 use crate::capabilities::nvidia::NvidiaCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
@@ -14,7 +16,7 @@ use crate::video_filter::{
     VideoFilter, VideoFilterOp,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Cuda {
     pub capabilities: NvidiaCapabilities,
 }

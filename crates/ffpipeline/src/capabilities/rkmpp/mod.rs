@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde::Serialize;
+
 use crate::pipeline::VideoFormat;
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -8,7 +10,7 @@ pub(crate) mod probe;
 #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub(crate) mod stub;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RkmppCapabilities {
     pub(crate) supported_decoders: HashSet<(VideoFormat, u8)>,
     pub(crate) supported_encoders: HashSet<(VideoFormat, u8)>,

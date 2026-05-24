@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
 pub struct FrameRate {
     pub r_frame_rate: String,
     pub parsed_frame_rate: f64,

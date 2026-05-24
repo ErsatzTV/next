@@ -1,6 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use libva_sys::*;
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 
 use crate::pipeline::{PixelFormat, VideoFormat};
 
@@ -11,18 +13,23 @@ mod stub;
 
 type FourCC = u32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VaapiCapabilities {
     pub(crate) vendor: String,
+    #[serde(serialize_with = "serialize_profile_entrypoint_set")]
     pub(crate) supported: HashSet<(i32, i32)>,
     /// FourCC of supported pixel formats.
+    #[serde(serialize_with = "serialize_fourcc_set")]
     pub(crate) vpp_pixel_formats: HashSet<FourCC>,
     /// FourCC of supported HDR->SDR tonemap formats.
+    #[serde(serialize_with = "serialize_fourcc_set")]
     pub(crate) can_hdr_to_sdr_tonemap: HashSet<FourCC>,
     /// FourCC of supported HDR->HDR tonemap formats.   
+    #[serde(serialize_with = "serialize_fourcc_set")]
     pub(crate) can_hdr_to_hdr_tonemap: HashSet<FourCC>,
     pub(crate) can_overlay: bool,
     /// Bitmask of VA_RC_* per (profile, entrypoint). Absent = unknown / not queried.
+    #[serde(serialize_with = "serialize_rate_control")]
     pub(crate) rate_control: HashMap<(i32, i32), u32>,
 }
 
@@ -154,4 +161,93 @@ impl VaapiCapabilities {
 
         None
     }
+}
+
+fn fourcc_str(fourcc: u32) -> String {
+    String::from_utf8_lossy(&fourcc.to_le_bytes())
+        .trim_end_matches('\0')
+        .to_owned()
+}
+
+fn profile_name(p: i32) -> String {
+    match p {
+        VA_PROFILE_NONE => "None".into(),
+        VA_PROFILE_MPEG2_SIMPLE => "MPEG2Simple".into(),
+        VA_PROFILE_MPEG2_MAIN => "MPEG2Main".into(),
+        VA_PROFILE_MPEG4_SIMPLE => "MPEG4Simple".into(),
+        VA_PROFILE_MPEG4_ADVANCED_SIMPLE => "MPEG4AdvancedSimple".into(),
+        VA_PROFILE_MPEG4_MAIN => "MPEG4Main".into(),
+        VA_PROFILE_H264_MAIN => "H264Main".into(),
+        VA_PROFILE_H264_HIGH => "H264High".into(),
+        VA_PROFILE_VC1_SIMPLE => "VC1Simple".into(),
+        VA_PROFILE_VC1_MAIN => "VC1Main".into(),
+        VA_PROFILE_VC1_ADVANCED => "VC1Advanced".into(),
+        VA_PROFILE_H264_CONSTRAINED_BASELINE => "H264ConstrainedBaseline".into(),
+        VA_PROFILE_VP8_VERSION0_3 => "VP8Version0_3".into(),
+        VA_PROFILE_HEVC_MAIN => "HEVCMain".into(),
+        VA_PROFILE_HEVC_MAIN10 => "HEVCMain10".into(),
+        VA_PROFILE_VP9_PROFILE0 => "VP9Profile0".into(),
+        VA_PROFILE_VP9_PROFILE1 => "VP9Profile1".into(),
+        VA_PROFILE_VP9_PROFILE2 => "VP9Profile2".into(),
+        VA_PROFILE_VP9_PROFILE3 => "VP9Profile3".into(),
+        VA_PROFILE_AV1_PROFILE0 => "AV1Profile0".into(),
+        VA_PROFILE_AV1_PROFILE1 => "AV1Profile1".into(),
+        VA_PROFILE_H264_HIGH10 => "H264High10".into(),
+        _ => format!("Profile({p})"),
+    }
+}
+
+fn entrypoint_name(e: i32) -> String {
+    match e {
+        VA_ENTRYPOINT_VLD => "VLD".into(),
+        VA_ENTRYPOINT_ENC_SLICE => "EncSlice".into(),
+        VA_ENTRYPOINT_ENC_SLICE_LP => "EncSliceLP".into(),
+        VA_ENTRYPOINT_VIDEO_PROC => "VideoProc".into(),
+        _ => format!("Entrypoint({e})"),
+    }
+}
+
+fn rc_modes(mask: u32) -> Vec<&'static str> {
+    [(VA_RC_CQP, "CQP"), (VA_RC_CBR, "CBR"), (VA_RC_VBR, "VBR")]
+        .iter()
+        .filter_map(|(bit, name)| (mask & bit != 0).then_some(*name))
+        .collect()
+}
+
+fn serialize_fourcc_set<S: Serializer>(set: &HashSet<FourCC>, s: S) -> Result<S::Ok, S::Error> {
+    let mut v: Vec<String> = set.iter().copied().map(fourcc_str).collect();
+    v.sort();
+    v.serialize(s)
+}
+
+fn serialize_profile_entrypoint_set<S: Serializer>(
+    set: &HashSet<(i32, i32)>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for &(p, e) in set {
+        grouped
+            .entry(profile_name(p))
+            .or_default()
+            .push(entrypoint_name(e));
+    }
+    for v in grouped.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+    grouped.serialize(s)
+}
+
+fn serialize_rate_control<S: Serializer>(
+    map: &HashMap<(i32, i32), u32>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    let mut sorted: Vec<_> = map.iter().collect();
+    sorted.sort_by_key(|((p, e), _)| (*p, *e));
+    let mut m = s.serialize_map(Some(sorted.len()))?;
+    for ((p, e), &mask) in sorted {
+        let key = format!("{}/{}", profile_name(*p), entrypoint_name(*e));
+        m.serialize_entry(&key, &rc_modes(mask))?;
+    }
+    m.end()
 }
