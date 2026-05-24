@@ -297,12 +297,12 @@ impl VideoFilterOp for PadFilter {
 
 #[derive(Clone)]
 pub struct LoopFilter {
-    pub codec: String,
+    pub is_still_image: bool,
 }
 
 impl VideoFilterOp for LoopFilter {
     fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        if self.codec == "png" {
+        if self.is_still_image {
             Some(self.clone().into())
         } else {
             None

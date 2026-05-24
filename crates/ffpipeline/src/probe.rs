@@ -187,8 +187,8 @@ impl std::fmt::Display for ProbeResult {
 
 impl ProbeResult {
     pub fn is_still_image(&self) -> bool {
-        // TODO: better check
-        self.duration.is_none() && self.streams.len() == 1
+        self.streams.len() == 1
+            && matches!(self.streams.first(), Some(ProbeResultStream::Video(v)) if v.is_still_image())
     }
 }
 
