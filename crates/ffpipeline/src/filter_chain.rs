@@ -3,7 +3,7 @@ use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::output_settings::VideoFilterOptions;
-use crate::overlay_filter::{OverlayFilter, OverlayKindOp, OverlaySource};
+use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp, OverlaySource};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
@@ -101,6 +101,42 @@ impl FilterChain {
         let mut resolved = Vec::new();
         let mut current_state = initial_state.clone();
         let mut surfaces = SurfaceSet::new();
+
+        // eagerly convert to 8-bit if it allows us to use a hardware overlay
+        if let Some(a) = accel.as_ref()
+            && let Some(pf) = encoder_pixel_format
+            && pf.bit_depth() == 8
+        {
+            let initial_state_8bit = FrameState {
+                pixel_format: *pf,
+                ..initial_state.clone()
+            };
+
+            let eager_unlocks_hw_overlay = self.filters.iter().any(|f| {
+                let PipelineFilter::Overlay(o) = f else {
+                    return false;
+                };
+                let at_input = a.best_overlay(o, ffmpeg_info, initial_state);
+                let at_8bit = a.best_overlay(o, ffmpeg_info, &initial_state_8bit);
+                matches!(at_input.kind, OverlayKind::Software(_))
+                    && !matches!(at_8bit.kind, OverlayKind::Software(_))
+            });
+
+            if eager_unlocks_hw_overlay {
+                let fmt: Option<VideoFilter> = if initial_state.surface == FrameSurface::System {
+                    Some(FormatFilter { format: *pf }.into())
+                } else if a.can_convert_pixel_format(pf) {
+                    a.format_filter(pf)
+                } else {
+                    None
+                };
+
+                if let Some(fmt) = fmt {
+                    fmt.apply_to(&mut current_state);
+                    resolved.push(PipelineFilter::Video(fmt));
+                }
+            }
+        }
 
         for filter in &self.filters {
             match filter {
@@ -248,6 +284,12 @@ impl FilterChain {
 
     pub(crate) fn surfaces(&self) -> &SurfaceSet {
         &self.surfaces
+    }
+
+    pub(crate) fn prepend(&mut self, filters: Vec<PipelineFilter>) {
+        let mut new_filters = filters;
+        new_filters.append(&mut self.filters);
+        self.filters = new_filters;
     }
 
     fn transfer_surface(

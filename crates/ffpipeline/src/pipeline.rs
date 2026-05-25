@@ -365,8 +365,6 @@ impl Pipeline {
             PipelineFilter::Audio(AudioFilter::Pad),
         ];
 
-        filters.extend(video_decoder.filters());
-
         filters.extend([
             PipelineFilter::Video(LoopFilter { is_still_image }.into()),
             PipelineFilter::Video(
@@ -734,6 +732,16 @@ impl Pipeline {
             &self.output_context.preferred_surface,
             &self.output_context.preferred_pixel_format,
         );
+
+        // prepend decoder filters;
+        // this is a special case that's only really needed for CUDA's hwupload workaround
+        if let Some(video_decoder) = self.inputs.iter().find_map(|s| match s {
+            PipelineInput::Video { decoder, .. } => Some(decoder),
+            _ => None,
+        }) {
+            self.filter_chain.prepend(video_decoder.filters());
+        }
+
         self.filter_chain.optimize();
 
         if let Some(accel) = &self.accel {
