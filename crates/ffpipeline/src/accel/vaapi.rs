@@ -252,12 +252,12 @@ impl HwAccel for Vaapi {
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        let canonical = match pixel_format {
-            PixelFormat::Yuv420p10le => PixelFormat::P010le,
-            PixelFormat::Yuv420p => PixelFormat::Nv12,
-            other => *other,
-        };
-        Some(FormatVaapi { format: canonical }.into())
+        Some(
+            FormatVaapi {
+                format: to_canonical(*pixel_format),
+            }
+            .into(),
+        )
     }
 
     fn hw_map_filter(&self, from: &FrameSurface, to: &FrameSurface) -> Option<VideoFilter> {
@@ -483,12 +483,7 @@ impl OverlayKindOp for VaapiOverlay {
     fn main_input_state(&self, current_state: &FrameState) -> FrameState {
         FrameState {
             surface: FrameSurface::Vaapi,
-            // require canonical hardware formats
-            pixel_format: match current_state.pixel_format {
-                PixelFormat::Yuv420p10le => PixelFormat::P010le,
-                PixelFormat::Yuv420p => PixelFormat::Nv12,
-                other => other,
-            },
+            pixel_format: to_canonical(current_state.pixel_format),
             ..current_state.clone()
         }
     }
@@ -532,6 +527,14 @@ impl VideoFilterOp for DeinterlaceVaapi {
     fn as_arg(&self) -> Option<String> {
         let mode = self.mode.as_deref().unwrap_or("0");
         Some(format!("deinterlace_vaapi=mode={mode}"))
+    }
+}
+
+fn to_canonical(format: PixelFormat) -> PixelFormat {
+    match format {
+        PixelFormat::Yuv420p10le => PixelFormat::P010le,
+        PixelFormat::Yuv420p => PixelFormat::Nv12,
+        other => other,
     }
 }
 
