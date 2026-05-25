@@ -252,12 +252,12 @@ impl HwAccel for Vaapi {
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(
-            FormatVaapi {
-                format: *pixel_format,
-            }
-            .into(),
-        )
+        let canonical = match pixel_format {
+            PixelFormat::Yuv420p10le => PixelFormat::P010le,
+            PixelFormat::Yuv420p => PixelFormat::Nv12,
+            other => *other,
+        };
+        Some(FormatVaapi { format: canonical }.into())
     }
 
     fn hw_map_filter(&self, from: &FrameSurface, to: &FrameSurface) -> Option<VideoFilter> {
@@ -483,6 +483,12 @@ impl OverlayKindOp for VaapiOverlay {
     fn main_input_state(&self, current_state: &FrameState) -> FrameState {
         FrameState {
             surface: FrameSurface::Vaapi,
+            // require canonical hardware formats
+            pixel_format: match current_state.pixel_format {
+                PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                PixelFormat::Yuv420p => PixelFormat::Nv12,
+                other => other,
+            },
             ..current_state.clone()
         }
     }
