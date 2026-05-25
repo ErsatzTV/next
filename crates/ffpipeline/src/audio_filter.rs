@@ -1,7 +1,7 @@
 use crate::output_settings::AudioLoudnessSettings;
 use crate::pipeline::{FrameState, Hz};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum AudioFilter {
     Resample,
     Pad,

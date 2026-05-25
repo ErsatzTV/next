@@ -9,14 +9,14 @@ use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PipelineFilter {
     Audio(AudioFilter),
     Video(VideoFilter),
     Overlay(OverlayFilter),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct FilterChain {
     pub(crate) filters: Vec<PipelineFilter>,
     surfaces: SurfaceSet,
@@ -106,6 +106,7 @@ impl FilterChain {
         if let Some(a) = accel.as_ref()
             && let Some(pf) = encoder_pixel_format
             && pf.bit_depth() == 8
+            && initial_state.pixel_format.bit_depth() > 8
         {
             let initial_state_8bit = FrameState {
                 pixel_format: *pf,
@@ -465,6 +466,66 @@ impl FilterChain {
         {
             log::debug!("swapping software scale filter before software tonemap filter");
             self.filters.swap(tonemap_index, tonemap_index + 1);
+        }
+
+        loop {
+            let mut changed = false;
+
+            let mut i = 0;
+            while i + 1 < self.filters.len() {
+                // skip non-video filters
+                if !matches!(self.filters[i], PipelineFilter::Video(_)) {
+                    i += 1;
+                    continue;
+                }
+
+                // find the next video filter (before overlay)
+                let mut j = i + 1;
+                while j < self.filters.len() && matches!(self.filters[j], PipelineFilter::Audio(_))
+                {
+                    j += 1;
+                }
+                if j >= self.filters.len() || !matches!(self.filters[j], PipelineFilter::Video(_)) {
+                    i += 1;
+                    continue;
+                }
+
+                if let Some(fused) = Self::try_fuse_cuda(&self.filters[i], &self.filters[j]) {
+                    self.filters[i] = fused;
+                    self.filters.remove(j);
+                    changed = true;
+                } else {
+                    i += 1;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// try to fuse consecutive scale_cuda (format, resize) into a single scale_cuda kernel
+    fn try_fuse_cuda(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
+        use VideoFilter::{FormatCuda, ScaleCuda};
+        let (PipelineFilter::Video(va), PipelineFilter::Video(vb)) = (a, b) else {
+            return None;
+        };
+        match (va, vb) {
+            (FormatCuda(_), FormatCuda(f)) => Some(PipelineFilter::Video(FormatCuda(f.clone()))),
+            (FormatCuda(f), ScaleCuda(s)) if s.size.is_some() => Some(PipelineFilter::Video(
+                ScaleCuda(crate::accel::cuda::ScaleCuda {
+                    format: Some(s.format.unwrap_or(f.format)),
+                    ..s.clone()
+                }),
+            )),
+            (ScaleCuda(s), FormatCuda(f)) if s.size.is_some() => Some(PipelineFilter::Video(
+                ScaleCuda(crate::accel::cuda::ScaleCuda {
+                    format: Some(f.format),
+                    ..s.clone()
+                }),
+            )),
+            _ => None,
         }
     }
 

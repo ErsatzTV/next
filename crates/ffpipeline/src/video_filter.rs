@@ -10,7 +10,7 @@ use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ForceOriginalAspectRatio {
     Increase,
     Decrease,
@@ -29,14 +29,14 @@ impl ForceOriginalAspectRatio {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SoftwareDeinterlaceOptions {
     pub bwdif: BwdifOptions,
     pub w3fdif: W3fdifOptions,
     pub yadif: YadifOptions,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum SoftwareDeinterlaceFilter {
     Bwdif(BwdifOptions),
     Yadif(YadifOptions),
@@ -51,7 +51,7 @@ pub trait VideoFilterOp {
     fn as_arg(&self) -> Option<String>;
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[enum_dispatch(VideoFilterOp)]
 pub enum VideoFilter {
     HwUpload(HwUploadFilter),
@@ -97,7 +97,7 @@ pub enum VideoFilter {
 
 // --- Software filter structs ---
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HwUploadFilter {
     pub target_surface: FrameSurface,
     pub source_format: PixelFormat,
@@ -151,7 +151,7 @@ impl VideoFilterOp for HwUploadFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HwDownloadFilter {
     pub target_pixel_format: PixelFormat,
 }
@@ -178,7 +178,7 @@ impl VideoFilterOp for HwDownloadFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScaleFilter {
     pub size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,
@@ -259,7 +259,7 @@ impl VideoFilterOp for ScaleFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PadFilter {
     pub size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,
@@ -295,7 +295,7 @@ impl VideoFilterOp for PadFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LoopFilter {
     pub is_still_image: bool,
 }
@@ -320,7 +320,7 @@ impl VideoFilterOp for LoopFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatFilter {
     pub format: PixelFormat,
 }
@@ -347,7 +347,7 @@ impl VideoFilterOp for FormatFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ToneMapFilter {
     pub algorithm: Option<String>,
     pub output_format: PixelFormat,
@@ -380,7 +380,7 @@ impl VideoFilterOp for ToneMapFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DeinterlaceFilter {
     pub filter: SoftwareDeinterlaceFilter,
     pub options: SoftwareDeinterlaceOptions,
@@ -454,7 +454,7 @@ impl VideoFilterOp for DeinterlaceFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HwMapFilter {
     pub from_surface: FrameSurface,
     pub to_surface: FrameSurface,
@@ -482,7 +482,7 @@ impl VideoFilterOp for HwMapFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SubtitlesFilter {
     pub path: String,
     pub seek: Duration,
@@ -520,7 +520,7 @@ impl VideoFilterOp for SubtitlesFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ColorChannelMixerFilter {
     pub alpha: f32,
 }
@@ -547,7 +547,7 @@ impl VideoFilterOp for ColorChannelMixerFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FadeFilter {
     point: FadePoint,
     duration: Duration,
@@ -605,13 +605,13 @@ impl VideoFilterOp for FadeFilter {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum FadeMode {
     In,
     Out,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct FadePoint {
     mode: FadeMode,
     time: Duration,
@@ -731,7 +731,7 @@ impl FadePoint {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CropFilter {
     pub size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,

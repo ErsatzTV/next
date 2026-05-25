@@ -342,7 +342,7 @@ impl HwAccel for Vaapi {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScaleVaapi {
     pub(crate) size: Option<FrameSize>,
     pub(crate) input_is_anamorphic: bool,
@@ -392,7 +392,7 @@ impl VideoFilterOp for ScaleVaapi {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PadVaapi {
     pub(crate) size: Option<FrameSize>,
 }
@@ -420,7 +420,7 @@ impl VideoFilterOp for PadVaapi {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatVaapi {
     pub(crate) format: PixelFormat,
 }
@@ -443,7 +443,7 @@ impl VideoFilterOp for FormatVaapi {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TonemapVaapi {
     pub(crate) output_format: HwPixelFormat,
 }
@@ -472,7 +472,7 @@ impl VideoFilterOp for TonemapVaapi {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct VaapiOverlay;
 
 impl OverlayKindOp for VaapiOverlay {
@@ -505,7 +505,7 @@ impl OverlayKindOp for VaapiOverlay {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DeinterlaceVaapi {
     pub mode: Option<String>,
 }

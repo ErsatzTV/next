@@ -140,7 +140,7 @@ impl HwAccel for Vulkan {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatVulkan {
     pub(crate) format: PixelFormat,
 }
@@ -163,7 +163,7 @@ impl VideoFilterOp for FormatVulkan {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LibplaceboVulkan {
     pub(crate) algorithm: Option<String>,
     pub(crate) format: PixelFormat,
@@ -192,7 +192,7 @@ impl VideoFilterOp for LibplaceboVulkan {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScaleVulkan {
     pub(crate) size: Option<FrameSize>,
     pub(crate) input_is_anamorphic: bool,

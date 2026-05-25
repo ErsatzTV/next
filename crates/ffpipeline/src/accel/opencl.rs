@@ -3,7 +3,7 @@ use crate::frame_size::FrameSize;
 use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat};
 use crate::video_filter::{VideoFilter, VideoFilterOp};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TonemapOpencl {
     /// The algorithm to use for tonemapping.
     /// See: https://ffmpeg.org/ffmpeg-filters.html#tonemap
@@ -39,7 +39,7 @@ impl VideoFilterOp for TonemapOpencl {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PadOpencl {
     pub(crate) size: Option<FrameSize>,
 }

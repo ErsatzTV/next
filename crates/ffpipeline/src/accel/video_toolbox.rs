@@ -118,7 +118,7 @@ impl HwAccel for VideoToolbox {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScaleVt {
     pub(crate) size: Option<FrameSize>,
     pub(crate) input_is_anamorphic: bool,

@@ -5,7 +5,7 @@ use crate::accel::vaapi::VaapiOverlay;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
 use crate::video_filter::VideoFilter;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct OverlayFilter {
     pub kind: OverlayKind,
     pub secondary: Vec<VideoFilter>,
@@ -23,19 +23,19 @@ impl OverlayFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FramePoint {
     pub x: u32,
     pub y: u32,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum OverlaySource {
     Subtitle,
     Watermark,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[enum_dispatch(OverlayKindOp)]
 pub enum OverlayKind {
     Software(SoftwareOverlay),
@@ -43,7 +43,7 @@ pub enum OverlayKind {
     Vaapi(VaapiOverlay),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SoftwareOverlay {
     pub bit_depth: u8,
 }

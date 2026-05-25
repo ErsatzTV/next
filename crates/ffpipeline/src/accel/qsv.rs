@@ -141,7 +141,7 @@ impl HwAccel for Qsv {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScaleQsv {
     pub(crate) size: Option<FrameSize>,
     pub(crate) input_is_anamorphic: bool,
@@ -185,7 +185,7 @@ impl VideoFilterOp for ScaleQsv {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatQsv {
     pub(crate) format: PixelFormat,
 }
@@ -209,7 +209,7 @@ impl VideoFilterOp for FormatQsv {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DeinterlaceQsv {
     pub mode: Option<String>,
 }
