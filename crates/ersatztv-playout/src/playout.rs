@@ -8,7 +8,32 @@ use crate::error::PlayoutError;
 
 const DATE_CONFIG: iso8601::EncodedConfig =
     iso8601::Config::DEFAULT.set_use_separators(false).encode();
+
 pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
+
+pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
+    breaking: 0,
+    compatible: 1,
+};
+const VERSION_URI_PREFIX: &str = "https://ersatztv.org/playout/version/0.";
+
+// TODO: support major version post-1.0
+#[derive(Debug, Clone, Copy)]
+pub struct SchemaVersion {
+    pub breaking: u32,
+    pub compatible: u32,
+}
+
+impl SchemaVersion {
+    pub fn parse(uri: &str) -> Option<SchemaVersion> {
+        let rest = uri.strip_prefix(VERSION_URI_PREFIX)?;
+        let (b, a) = rest.split_once('.')?;
+        Some(SchemaVersion {
+            breaking: b.parse().ok()?,
+            compatible: a.parse().ok()?,
+        })
+    }
+}
 
 /// A playout schedule for a single time window.
 ///
@@ -25,7 +50,10 @@ pub struct Playout {
 impl Playout {
     pub fn new(items: Vec<PlayoutItem>) -> Self {
         Playout {
-            version: String::from("https://ersatztv.org/playout/version/0.0.1"),
+            version: format!(
+                "{}{}.{}",
+                VERSION_URI_PREFIX, SUPPORTED_SCHEMA.breaking, SUPPORTED_SCHEMA.compatible
+            ),
             items,
         }
     }
@@ -227,9 +255,35 @@ pub struct PlayoutLoadResult {
 }
 
 pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
-    let contents = tokio::fs::read_to_string(path)
-        .await
+    #[derive(Deserialize)]
+    struct PlayoutVersion {
+        version: String,
+    }
+
+    let contents = tokio::fs::read_to_string(path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            PlayoutError::PlayoutJsonDoesNotExist
+        } else {
+            PlayoutError::PlayoutJsonLoadError(e.to_string())
+        }
+    })?;
+
+    let version_only: PlayoutVersion = serde_json::from_str(&contents)
         .map_err(|e| PlayoutError::PlayoutJsonLoadError(e.to_string()))?;
+
+    let found = SchemaVersion::parse(&version_only.version)
+        .ok_or_else(|| PlayoutError::UnrecognizedSchemaVersion(version_only.version.clone()))?;
+
+    if found.breaking != SUPPORTED_SCHEMA.breaking || found.compatible > SUPPORTED_SCHEMA.compatible
+    {
+        return Err(PlayoutError::UnsupportedSchemaVersion(
+            version_only.version,
+            format!(
+                "0.{}.{}",
+                SUPPORTED_SCHEMA.breaking, SUPPORTED_SCHEMA.compatible
+            ),
+        ));
+    }
 
     let playout: Playout = serde_json::from_str(&contents)
         .map_err(|e| PlayoutError::PlayoutJsonLoadError(e.to_string()))?;

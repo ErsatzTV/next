@@ -16,4 +16,10 @@ pub enum PlayoutError {
 
     #[error("environment variable '{0}' contains invalid characters (control chars not allowed)")]
     TemplateInvalidEnvVarValue(String),
+
+    #[error("unrecognized schema version '{0}'")]
+    UnrecognizedSchemaVersion(String),
+
+    #[error("found unsupported schema version {0}, expected {1}")]
+    UnsupportedSchemaVersion(String, String),
 }
