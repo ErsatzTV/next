@@ -279,8 +279,8 @@ pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
         return Err(PlayoutError::UnsupportedSchemaVersion(
             version_only.version,
             format!(
-                "0.{}.{}",
-                SUPPORTED_SCHEMA.breaking, SUPPORTED_SCHEMA.compatible
+                "{}{}.{}",
+                VERSION_URI_PREFIX, SUPPORTED_SCHEMA.breaking, SUPPORTED_SCHEMA.compatible
             ),
         ));
     }
