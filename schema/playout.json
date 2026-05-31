@@ -332,6 +332,9 @@
         },
         {
           "$ref": "#/definitions/ScriptSource"
+        },
+        {
+          "$ref": "#/definitions/DynamicSource"
         }
       ]
     },
@@ -523,6 +526,49 @@
             "null"
           ],
           "description": "Whether the content is live and therefore cannot work ahead. Default: false."
+        }
+      }
+    },
+    "DynamicSource": {
+      "type": "object",
+      "description": "A placeholder source resolved at playback time by fetching a `PlayoutItem` JSON document over HTTP(S). The returned item replaces this one; its `start` is forced to the current transcode position and its `finish` is clamped to the placeholder's `finish`. Because `start` advances each tick, the resolver is re-hit while the transcode position remains inside the placeholder window, allowing a sequence of distinct items to be returned for a single placeholder. The resolved item's `source` may not itself be `dynamic`.\n\nThe channel automatically injects the following request headers (in addition to any configured via `headers`), all formatted per RFC 3339 for timestamps:\n\n- `x-etv-channel` — the channel number this request is for.\n- `x-etv-dynamic-id` — a stable identifier for the placeholder; resolvers can use it to coalesce or cache decisions across the multiple calls that occur while transcoding stays inside one placeholder window.\n- `x-etv-now` — the current transcode position; this is the `start` that will be forced onto the resolved item.\n- `x-etv-until` — the placeholder's `finish`; the resolver should not return an item that extends beyond this (it will be clamped if it does).",
+      "required": [
+        "source_type",
+        "uri"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "const": "dynamic"
+        },
+        "uri": {
+          "type": "string",
+          "description": "URI template for the resolver endpoint, e.g. \"http://localhost:8409/fallback?channel=5&token={{MY_SECRET}}\". Must respond with a JSON `PlayoutItem`."
+        },
+        "headers": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Custom HTTP headers, e.g. [\"Authorization: Bearer {{TOKEN}}\"]. Supports {{TEMPLATE}} expansion."
+        },
+        "user_agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Custom User-Agent string. Supports {{TEMPLATE}} expansion."
+        },
+        "timeout_us": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Request timeout in microseconds. Defaults to 10 seconds."
         }
       }
     }

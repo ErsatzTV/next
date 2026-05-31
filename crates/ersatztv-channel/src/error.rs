@@ -20,6 +20,9 @@ pub enum ChannelError {
     #[error("channel config output folder is required")]
     ChannelConfigOutputFolderRequired,
 
+    #[error("channel startup error: {0}")]
+    ChannelStartup(String),
+
     #[error("date formatting error: {0}")]
     ChannelDateFormatError(#[from] time::error::Format),
 
@@ -59,6 +62,9 @@ pub enum ChannelError {
 
     #[error("failed to capture ffmpeg stderr")]
     CaptureFFmpegStderrFailure,
+
+    #[error("dynamic source is required")]
+    DynamicSourceRequired,
 
     #[error("dynamic source cannot be played directly")]
     DynamicSourceCannotBePlayedDirectly,

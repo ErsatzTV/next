@@ -88,6 +88,7 @@ pub struct ChannelSession {
     timeout_notify: Arc<tokio::sync::Notify>,
 
     cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
+    dynamic_http_client: reqwest::Client,
 }
 
 impl ChannelSession {
@@ -159,6 +160,10 @@ impl ChannelSession {
 
         let local_proxy_server = LocalProxyServer::start().await?;
 
+        let dynamic_http_client = reqwest::Client::builder()
+            .build()
+            .map_err(|e| ChannelError::ChannelStartup(format!("http client: {e}")))?;
+
         Ok(ChannelSession {
             channel_config,
             playout_loader,
@@ -177,6 +182,7 @@ impl ChannelSession {
             state: ChannelSessionState::SeekAndWorkAhead,
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
             cached_subtitles: None,
+            dynamic_http_client,
         })
     }
 
@@ -326,27 +332,15 @@ impl ChannelSession {
             .get_current_item(&self.transcoded_until)
             .await;
 
-        if let Ok(PlayoutItem {
-            source:
-                Some(PlayoutItemSource::Dynamic {
-                    uri,
-                    headers,
-                    user_agent,
-                    timeout_us,
-                }),
-            finish,
-            ..
-        }) = current_item_result
+        if let Ok(
+            item @ PlayoutItem {
+                source: Some(PlayoutItemSource::Dynamic { .. }),
+                ..
+            },
+        ) = current_item_result
         {
             current_item_result = self
-                .resolve_dynamic_item(
-                    &self.transcoded_until,
-                    &finish,
-                    uri,
-                    headers,
-                    user_agent,
-                    timeout_us,
-                )
+                .resolve_dynamic_item(&self.transcoded_until, &item)
                 .await;
         }
 
@@ -960,16 +954,22 @@ impl ChannelSession {
     async fn resolve_dynamic_item(
         &self,
         start: &OffsetDateTime,
-        finish: &OffsetDateTime,
-        uri: String,
-        headers: Option<Vec<String>>,
-        user_agent: Option<String>,
-        timeout_us: Option<u64>,
+        dynamic_item: &PlayoutItem,
     ) -> Result<PlayoutItem, ChannelError> {
-        let expanded_uri = expand_template(&uri)?;
+        let Some(PlayoutItemSource::Dynamic {
+            uri,
+            headers,
+            user_agent,
+            timeout_us,
+        }) = &dynamic_item.source
+        else {
+            return Err(ChannelError::DynamicSourceRequired);
+        };
+
+        let expanded_uri = expand_template(uri)?;
         let expanded_headers: Vec<String> = headers
-            .unwrap_or_default()
             .iter()
+            .flatten()
             .map(|h| expand_template(h))
             .collect::<Result<Vec<_>, _>>()?;
         let expanded_ua = user_agent.as_deref().map(expand_template).transpose()?;
@@ -995,18 +995,45 @@ impl ChannelSession {
             );
         }
 
+        header_map.insert(
+            HeaderName::from_static("x-etv-dynamic-id"),
+            HeaderValue::from_str(&dynamic_item.id).map_err(|e| {
+                ChannelError::DynamicSourceFailure(format!("bad dynamic source id {e}"))
+            })?,
+        );
+
+        header_map.insert(
+            HeaderName::from_static("x-etv-channel"),
+            HeaderValue::from_str(self.channel_config.number()).map_err(|e| {
+                ChannelError::DynamicSourceFailure(format!("bad channel number {e}"))
+            })?,
+        );
+
+        header_map.insert(
+            HeaderName::from_static("x-etv-now"),
+            HeaderValue::from_str(&start.format(&time::format_description::well_known::Rfc3339)?)
+                .map_err(|e| ChannelError::DynamicSourceFailure(format!("bad time value: {e}")))?,
+        );
+
+        header_map.insert(
+            HeaderName::from_static("x-etv-until"),
+            HeaderValue::from_str(
+                &dynamic_item
+                    .finish
+                    .format(&time::format_description::well_known::Rfc3339)?,
+            )
+            .map_err(|e| ChannelError::DynamicSourceFailure(format!("bad time value: {e}")))?,
+        );
+
         let timeout = timeout_us
             .map(Duration::from_micros)
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .default_headers(header_map)
-            .build()
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?;
-
-        let mut item: PlayoutItem = client
+        let mut item: PlayoutItem = self
+            .dynamic_http_client
             .get(&expanded_uri)
+            .headers(header_map)
+            .timeout(timeout)
             .send()
             .await
             .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?
@@ -1024,8 +1051,8 @@ impl ChannelSession {
         }
 
         // always clamp the finish time
-        if item.finish > *finish {
-            item.finish = *finish;
+        if item.finish > dynamic_item.finish {
+            item.finish = dynamic_item.finish;
         }
 
         if item.finish <= item.start {
