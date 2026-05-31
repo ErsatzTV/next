@@ -40,6 +40,7 @@ libvulkan-sys = { path = "crates/libvulkan-sys" }
 log = "0.4"
 quick-xml = "0.40.0"
 rand = { version = "0.10", features = ["thread_rng"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
 rstest = "0.26.1"
 schemars = "1.2"
 serde = { version = "1", features = ["derive"] }

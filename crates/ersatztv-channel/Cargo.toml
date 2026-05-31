@@ -12,6 +12,7 @@ ersatztv-playout = { workspace = true }
 ffpipeline = { workspace = true }
 futures-core = { workspace = true }
 log = { workspace = true }
+reqwest = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

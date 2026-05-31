@@ -247,6 +247,19 @@ pub enum PlayoutItemSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_live: Option<bool>,
     },
+    Dynamic {
+        /// URI template, e.g. "https://example.com/file.mkv?token={{MY_SECRET}}"
+        uri: String,
+        /// Custom HTTP headers, e.g. ["Authorization: Bearer {{TOKEN}}"]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        headers: Option<Vec<String>>,
+        /// Custom user-agent string
+        #[serde(skip_serializing_if = "Option::is_none")]
+        user_agent: Option<String>,
+        /// Socket timeout in microseconds
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeout_us: Option<u64>,
+    },
 }
 
 pub struct PlayoutLoadResult {

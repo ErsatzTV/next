@@ -59,4 +59,16 @@ pub enum ChannelError {
 
     #[error("failed to capture ffmpeg stderr")]
     CaptureFFmpegStderrFailure,
+
+    #[error("dynamic source cannot be played directly")]
+    DynamicSourceCannotBePlayedDirectly,
+
+    #[error("dynamic source failure: {0}")]
+    DynamicSourceFailure(String),
+
+    #[error("dynamic source has no remaining time in window")]
+    DynamicSourceNoRemainingTime,
+
+    #[error("dynamic sources cannot return dynamic sources")]
+    DynamicSourceCannotRecurse,
 }
