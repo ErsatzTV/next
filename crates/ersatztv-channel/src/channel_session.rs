@@ -9,20 +9,24 @@ use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
-    PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
-    WatermarkLocation, WatermarkTiming,
+    AudioHint, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, ProbeHint,
+    TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{
-    HttpInputOptions, HttpInputSource, InputSettings, InputSource, LavfiInputSource,
-    LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource, WatermarkInput,
+    FfmpegInputArgs, HttpInputOptions, HttpInputSource, InputSettings, InputSource,
+    LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
+    WatermarkInput,
 };
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
-use ffpipeline::probe::{ProbeResult, ProbeResultVideoStream, Probeable};
+use ffpipeline::probe::{
+    CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
+    ProbeResultVideoStream, Probeable,
+};
 use ffpipeline::web_vtt::Cue;
 use ffpipeline::{pipeline, probe};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
@@ -415,19 +419,23 @@ impl ChannelSession {
                 .and_then(|s| self.playout_source_to_input_source(s.clone()).ok())
         };
 
-        let audio_fut = self.probe_source(&audio_input_source);
+        let audio_fut = self.resolve_probe(&audio_source, &audio_input_source);
         let video_fut = async {
             if audio_source_is_video_source {
                 Ok::<_, ChannelError>(None)
             } else {
-                self.probe_source(&video_input_source).await.map(Some)
+                self.resolve_probe(&video_source, &video_input_source)
+                    .await
+                    .map(Some)
             }
         };
         let subtitle_fut = async {
             if subtitle_source_is_video_source {
                 Ok::<_, ChannelError>(None)
-            } else if let Some(s) = subtitle_input_source.as_ref() {
-                self.probe_source(s).await.map(Some)
+            } else if let (Some(src), Some(s)) =
+                (subtitle_source.as_ref(), subtitle_input_source.as_ref())
+            {
+                self.resolve_probe(src, s).await.map(Some)
             } else {
                 Ok(None)
             }
@@ -439,7 +447,7 @@ impl ChannelSession {
                 let location = playout_location_to_pipeline(&w.location);
                 let timing = playout_timing_to_pipeline(w.timing.as_ref());
 
-                let probe_result = self.probe_source(&input_source).await?;
+                let probe_result = self.resolve_probe(&w.source, &input_source).await?;
                 Ok(Some(WatermarkInput {
                     input_source,
                     probe_result,
@@ -760,6 +768,20 @@ impl ChannelSession {
         result
     }
 
+    async fn resolve_probe(
+        &self,
+        src: &PlayoutItemSource,
+        input: &InputSource,
+    ) -> Result<ProbeResult, ChannelError> {
+        match src.probe_hint() {
+            Some(hint) => {
+                let path = input.input_path().ok_or(ChannelError::ProbeHintFailure)?;
+                Ok(probe_hint_to_result(hint, path))
+            }
+            None => self.probe_source(input).await,
+        }
+    }
+
     async fn probe_source(&self, source: &InputSource) -> Result<ProbeResult, ChannelError> {
         let probe_deps = probe::ProbeDeps {
             ffprobe_path: &self.ffprobe_path,
@@ -777,7 +799,7 @@ impl ChannelSession {
             PlayoutItemSource::Local { path, .. } => {
                 Ok(InputSource::Local(LocalInputSource { path }))
             }
-            PlayoutItemSource::Lavfi { params } => {
+            PlayoutItemSource::Lavfi { params, .. } => {
                 Ok(InputSource::Lavfi(LavfiInputSource { params }))
             }
             PlayoutItemSource::Http {
@@ -810,7 +832,9 @@ impl ChannelSession {
                     },
                 }))
             }
-            PlayoutItemSource::Rtsp { uri, timeout_us } => {
+            PlayoutItemSource::Rtsp {
+                uri, timeout_us, ..
+            } => {
                 let expanded_uri = expand_template(&uri)?;
 
                 Ok(InputSource::Rtsp(RtspInputSource {
@@ -915,33 +939,58 @@ impl ChannelSession {
     }
 
     fn fake_playout_item(&self, next_start: Option<OffsetDateTime>) -> PlayoutItem {
+        let width = self
+            .channel_config
+            .normalization
+            .video
+            .width
+            .unwrap_or(1920);
+
+        let height = self
+            .channel_config
+            .normalization
+            .video
+            .height
+            .unwrap_or(1080);
+
+        let duration = Duration::from_mins(1);
+
         PlayoutItem {
             id: uuid::Uuid::new_v4().to_string(),
             start: self.transcoded_until,
-            finish: next_start.unwrap_or(self.transcoded_until + Duration::from_mins(1)),
+            finish: next_start.unwrap_or(self.transcoded_until + duration),
             source: None,
             tracks: Some(PlayoutItemTracks {
                 audio: Some(TrackSelection {
                     source: Some(PlayoutItemSource::Lavfi {
                         params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
+                        probe_hint: Some(ProbeHint {
+                            video: Vec::new(),
+                            audio: vec![AudioHint {
+                                stream_index: 0,
+                                codec: String::from("pcm_s16le"),
+                                channels: 2,
+                            }],
+                            format_name: Some(String::from("mpegts")),
+                            duration_ms: Some(duration.as_millis() as u64),
+                        }),
                     }),
                     stream_index: None,
                 }),
                 video: Some(TrackSelection {
                     source: Some(PlayoutItemSource::Lavfi {
-                        params: format!(
-                            "color=c=black:s={}x{}",
-                            self.channel_config
-                                .normalization
-                                .video
-                                .width
-                                .unwrap_or(1920),
-                            self.channel_config
-                                .normalization
-                                .video
-                                .height
-                                .unwrap_or(1080),
-                        ),
+                        params: format!("color=c=black:s={}x{}", width, height),
+                        probe_hint: Some(ProbeHint {
+                            video: vec![VideoHint::new(
+                                String::from("rawvideo"),
+                                width,
+                                height,
+                                String::from("yuv420p"),
+                            )],
+                            audio: Vec::new(),
+                            format_name: Some(String::from("mpegts")),
+                            duration_ms: Some(duration.as_millis() as u64),
+                        }),
                     }),
                     stream_index: None,
                 }),
@@ -1196,4 +1245,47 @@ fn source_is_live(source: &PlayoutItemSource) -> bool {
             ..
         } | PlayoutItemSource::Rtsp { .. }
     )
+}
+
+fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
+    let video = hint.video.iter().map(|v| {
+        ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
+            stream_index: v.stream_index,
+            codec: v.codec.to_lowercase(),
+            codec_type: CodecType::Video,
+            profile: v.profile.clone().unwrap_or_default().to_lowercase(),
+            height: Some(v.height),
+            width: Some(v.width),
+            pix_fmt: v.pix_fmt.clone(),
+            color_params: ProbeResultColorParams {
+                color_range: v.color_range.clone(),
+                color_space: v.color_space.clone(),
+                color_transfer: v.color_transfer.clone(),
+                color_primaries: v.color_primaries.clone(),
+            },
+            field_order: v.field_order.clone(),
+            frame_rate: v
+                .frame_rate
+                .as_deref()
+                .map(FrameRate::parse)
+                .unwrap_or_default(),
+            sample_aspect_ratio: v.sample_aspect_ratio.clone(),
+            display_aspect_ratio: v.display_aspect_ratio.clone(),
+        }))
+    });
+
+    let audio = hint.audio.iter().map(|a| {
+        ProbeResultStream::Audio(ProbeResultAudioStream {
+            stream_index: a.stream_index,
+            codec: a.codec.to_lowercase(),
+            channels: a.channels,
+        })
+    });
+
+    ProbeResult {
+        path,
+        streams: video.chain(audio).collect(),
+        duration: hint.duration_ms.map(Duration::from_millis),
+        format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
 }

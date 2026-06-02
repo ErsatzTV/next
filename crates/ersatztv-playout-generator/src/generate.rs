@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ersatztv_playout::playout::{
-    DATE_FORMAT, Playout, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, TrackSelection,
-    parse_playout_filename,
+    AudioHint, DATE_FORMAT, Playout, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, ProbeHint,
+    TrackSelection, VideoHint, parse_playout_filename,
 };
 use ffpipeline::probe::{ProbeResult, ProbeResultStream};
 use rand::RngExt;
@@ -177,6 +177,69 @@ async fn build_items(
                 path,
             )
         {
+            if let Some(PlayoutItemSource::Local {
+                path,
+                in_point_ms,
+                out_point_ms,
+                ..
+            }) = playout_item.source.as_ref()
+            {
+                let audio: Vec<AudioHint> = probe_result
+                    .streams
+                    .iter()
+                    .filter_map(|s| match s {
+                        ProbeResultStream::Audio(a) => Some(AudioHint {
+                            stream_index: a.stream_index,
+                            codec: a.codec.clone(),
+                            channels: a.channels,
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+
+                let video: Vec<VideoHint> = probe_result
+                    .streams
+                    .iter()
+                    .filter_map(|s| match s {
+                        ProbeResultStream::Video(v) => {
+                            if let (Some(width), Some(height)) = (v.width, v.height) {
+                                Some(VideoHint {
+                                    stream_index: v.stream_index,
+                                    codec: v.codec.clone(),
+                                    width,
+                                    height,
+                                    pix_fmt: v.pix_fmt.clone(),
+                                    profile: Some(v.profile.clone()),
+                                    frame_rate: Some(v.frame_rate.r_frame_rate.clone()),
+                                    field_order: v.field_order.clone(),
+                                    color_primaries: v.color_params.color_primaries.clone(),
+                                    color_range: v.color_params.color_range.clone(),
+                                    color_space: v.color_params.color_space.clone(),
+                                    color_transfer: v.color_params.color_transfer.clone(),
+                                    display_aspect_ratio: v.display_aspect_ratio.clone(),
+                                    sample_aspect_ratio: v.sample_aspect_ratio.clone(),
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
+                playout_item.source = Some(PlayoutItemSource::Local {
+                    path: path.clone(),
+                    in_point_ms: *in_point_ms,
+                    out_point_ms: *out_point_ms,
+                    probe_hint: Some(ProbeHint {
+                        audio,
+                        video,
+                        format_name: probe_result.format_name.clone(),
+                        duration_ms: probe_result.duration.map(|d| d.as_millis() as u64),
+                    }),
+                })
+            }
+
             // use separate tracks with lavfi audio for images
             if !has_audio {
                 playout_item.tracks = Some(PlayoutItemTracks {
@@ -185,6 +248,16 @@ async fn build_items(
                             params: String::from(
                                 "anullsrc=channel_layout=stereo:sample_rate=48000",
                             ),
+                            probe_hint: Some(ProbeHint {
+                                video: Vec::new(),
+                                audio: vec![AudioHint {
+                                    stream_index: 0,
+                                    codec: String::from("pcm_s16le"),
+                                    channels: 2,
+                                }],
+                                format_name: Some(String::from("mpegts")),
+                                duration_ms: None,
+                            }),
                         }),
                         stream_index: None,
                     }),
@@ -240,6 +313,7 @@ async fn build_items(
                                     path: entry_path.to_string_lossy().to_string(),
                                     in_point_ms: None,
                                     out_point_ms: None,
+                                    probe_hint: None,
                                 }),
                                 stream_index: None,
                             }),

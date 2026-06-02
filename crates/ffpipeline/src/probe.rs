@@ -11,7 +11,6 @@ use tokio::process::Command;
 
 use crate::ArgVec;
 use crate::error::FFPipelineError;
-use crate::error::FFPipelineError::ProbeFailed;
 use crate::frame_rate::FrameRate;
 use crate::input::LavfiInputSource;
 use crate::input::LocalInputSource;
@@ -255,7 +254,7 @@ impl Probeable for LocalInputSource {
             "-show_chapters",
         ];
         args.extend(self.args_for_input());
-        let expanded_path = self.expand_path().ok_or(ProbeFailed)?;
+        let expanded_path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
         args.extend(args!["-i", expanded_path.clone()]);
 
         probe_with_args(probe_deps.ffprobe_path, &expanded_path, &args).await
@@ -312,12 +311,16 @@ impl Probeable for LavfiInputSource {
             return Err(FFPipelineError::ProbeFailed);
         }
 
-        parse_ffprobe_stdout(self.params.clone(), output.stdout)
+        parse_ffprobe_stdout(
+            self.input_path().ok_or(FFPipelineError::ProbeFailed)?,
+            output.stdout,
+        )
     }
 }
 
 impl Probeable for HttpInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
+        let path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
         let mut args: ArgVec = args![
             "-hide_banner",
             "-print_format",
@@ -327,14 +330,15 @@ impl Probeable for HttpInputSource {
             "-show_chapters",
         ];
         args.extend(self.args_for_input());
-        args.extend(args!["-i", self.uri.clone()]);
+        args.extend(args!["-i", path.clone()]);
 
-        probe_with_args(probe_deps.ffprobe_path, &self.uri, &args).await
+        probe_with_args(probe_deps.ffprobe_path, &path, &args).await
     }
 }
 
 impl Probeable for RtspInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
+        let path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
         let mut args: ArgVec = args![
             "-hide_banner",
             "-print_format",
@@ -344,9 +348,9 @@ impl Probeable for RtspInputSource {
             "-show_chapters",
         ];
         args.extend(self.args_for_input());
-        args.extend(args!["-i", self.uri.clone()]);
+        args.extend(args!["-i", path.clone()]);
 
-        probe_with_args(probe_deps.ffprobe_path, &self.uri, &args).await
+        probe_with_args(probe_deps.ffprobe_path, &path, &args).await
     }
 }
 

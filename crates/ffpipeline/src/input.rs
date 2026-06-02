@@ -268,17 +268,24 @@ pub enum InputSource {
 #[enum_dispatch]
 pub trait FfmpegInputArgs {
     fn args_for_input(&self) -> ArgVec;
+    fn input_path(&self) -> Option<String>;
 }
 
 impl FfmpegInputArgs for LocalInputSource {
     fn args_for_input(&self) -> ArgVec {
         vec![]
     }
+    fn input_path(&self) -> Option<String> {
+        self.expand_path()
+    }
 }
 
 impl FfmpegInputArgs for LavfiInputSource {
     fn args_for_input(&self) -> ArgVec {
         args!["-f", "lavfi"]
+    }
+    fn input_path(&self) -> Option<String> {
+        Some(self.params.clone())
     }
 }
 impl FfmpegInputArgs for HttpInputSource {
@@ -329,6 +336,10 @@ impl FfmpegInputArgs for HttpInputSource {
 
         args
     }
+
+    fn input_path(&self) -> Option<String> {
+        Some(self.uri.clone())
+    }
 }
 
 impl FfmpegInputArgs for RtspInputSource {
@@ -345,6 +356,10 @@ impl FfmpegInputArgs for RtspInputSource {
         ]);
 
         args
+    }
+
+    fn input_path(&self) -> Option<String> {
+        Some(self.uri.clone())
     }
 }
 

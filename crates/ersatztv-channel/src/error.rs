@@ -77,4 +77,7 @@ pub enum ChannelError {
 
     #[error("dynamic sources cannot return dynamic sources")]
     DynamicSourceCannotRecurse,
+
+    #[error("probe hint failure")]
+    ProbeHintFailure,
 }

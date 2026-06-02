@@ -13,7 +13,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 1,
+    compatible: 2,
 };
 const VERSION_URI_PREFIX: &str = "https://ersatztv.org/playout/version/0.";
 
@@ -93,6 +93,7 @@ impl PlayoutItem {
                 path: path.to_string_lossy().to_string(),
                 in_point_ms: in_point.map(|d| d.as_millis() as u64),
                 out_point_ms: out_point.map(|d| d.as_millis() as u64),
+                probe_hint: None,
             }),
             tracks: None,
             watermark: None,
@@ -201,9 +202,13 @@ pub enum PlayoutItemSource {
         in_point_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         out_point_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        probe_hint: Option<ProbeHint>,
     },
     Lavfi {
         params: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        probe_hint: Option<ProbeHint>,
     },
     Http {
         /// URI template, e.g. "https://example.com/file.mkv?token={{MY_SECRET}}"
@@ -231,11 +236,15 @@ pub enum PlayoutItemSource {
         /// Enable persistent connections in ffmpeg (default: false)
         #[serde(skip_serializing_if = "Option::is_none")]
         keep_alive: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        probe_hint: Option<ProbeHint>,
     },
     Rtsp {
         uri: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_us: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        probe_hint: Option<ProbeHint>,
     },
     Script {
         /// Command that writes an MPEG-TS stream to its stdout
@@ -246,6 +255,8 @@ pub enum PlayoutItemSource {
         /// Whether the content is live and therefore cannot work ahead (default: false)
         #[serde(skip_serializing_if = "Option::is_none")]
         is_live: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        probe_hint: Option<ProbeHint>,
     },
     Dynamic {
         /// URI template, e.g. "https://example.com/file.mkv?token={{MY_SECRET}}"
@@ -260,6 +271,76 @@ pub enum PlayoutItemSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_us: Option<u64>,
     },
+}
+
+impl PlayoutItemSource {
+    pub fn probe_hint(&self) -> Option<&ProbeHint> {
+        match self {
+            PlayoutItemSource::Local { probe_hint, .. }
+            | PlayoutItemSource::Lavfi { probe_hint, .. }
+            | PlayoutItemSource::Http { probe_hint, .. }
+            | PlayoutItemSource::Rtsp { probe_hint, .. }
+            | PlayoutItemSource::Script { probe_hint, .. } => probe_hint.as_ref(),
+            PlayoutItemSource::Dynamic { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ProbeHint {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video: Vec<VideoHint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<AudioHint>,
+    pub format_name: Option<String>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
+pub struct VideoHint {
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
+    pub pix_fmt: String,
+    pub stream_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_rate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_order: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_aspect_ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_aspect_ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_range: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_space: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_transfer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_primaries: Option<String>,
+}
+
+impl VideoHint {
+    pub fn new(codec: String, width: u32, height: u32, pix_fmt: String) -> VideoHint {
+        VideoHint {
+            stream_index: 0,
+            codec,
+            width,
+            height,
+            pix_fmt,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct AudioHint {
+    pub codec: String,
+    pub channels: u32,
+    pub stream_index: u32,
 }
 
 pub struct PlayoutLoadResult {
