@@ -71,10 +71,15 @@ impl ChannelSession {
 fn channel_binary_path() -> Result<PathBuf, LineupError> {
     let mut path = std::env::current_exe()?
         .parent()
-        .ok_or(LineupError::ChannelNotFound(String::from(
-            "unable to locate channel binary",
-        )))?
+        .ok_or(LineupError::ChannelBinaryNotFound)?
         .to_path_buf();
-    path.push("ersatztv-channel");
-    Ok(path)
+    path.push(format!("ersatztv-channel{}", std::env::consts::EXE_SUFFIX));
+
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(LineupError::ChannelBinaryNotFoundAtPath(
+            path.to_string_lossy().to_string(),
+        ))
+    }
 }

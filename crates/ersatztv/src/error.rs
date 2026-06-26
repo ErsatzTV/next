@@ -19,6 +19,12 @@ pub enum LineupError {
     #[error("no channels have been loaded; please review your lineup config")]
     NoChannelsLoaded,
 
+    #[error("unable to locate channel binary")]
+    ChannelBinaryNotFound,
+
+    #[error("unable to locate channel binary; tried {0}")]
+    ChannelBinaryNotFoundAtPath(String),
+
     #[error("unable to find channel with number {0}")]
     ChannelNotFound(String),
 
