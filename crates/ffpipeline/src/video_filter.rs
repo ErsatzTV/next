@@ -83,6 +83,9 @@ pub enum VideoFilter {
     // OpenCL hardware filters
     PadOpencl(accel::opencl::PadOpencl),
     TonemapOpencl(accel::opencl::TonemapOpencl),
+    // RKRGA hardware filters
+    FormatRkrga(accel::rkmpp::FormatRkrga),
+    ScaleRkrga(accel::rkmpp::ScaleRkrga),
     // QSV hardware filters
     ScaleQsv(accel::qsv::ScaleQsv),
     FormatQsv(accel::qsv::FormatQsv),
@@ -142,6 +145,7 @@ impl VideoFilterOp for HwUploadFilter {
 
         match &self.target_surface {
             FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
+            FrameSurface::Rkmpp => Some(format!("{format_filter}hwupload")),
             FrameSurface::Qsv => Some(format!("{format_filter}hwupload=extra_hw_frames=64")),
             FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
             FrameSurface::Vulkan => Some(format!("{format_filter}hwupload")),

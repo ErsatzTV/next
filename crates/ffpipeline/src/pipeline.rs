@@ -120,11 +120,12 @@ pub enum PixelFormat {
     Yuva420p,
     Yuva420p10le,
     Nv12,
+    Nv15,
     P010le,
     P016,
 }
 
-gen_subset!(HwPixelFormat, PixelFormat, Nv12, P010le);
+gen_subset!(HwPixelFormat, PixelFormat, Nv12, Nv15, P010le);
 
 impl PixelFormat {
     pub(crate) fn parse(pix_fmt: &str) -> PixelFormat {
@@ -135,6 +136,7 @@ impl PixelFormat {
             "yuva420p" => PixelFormat::Yuva420p,
             "yuva420p10le" => PixelFormat::Yuva420p10le,
             "nv12" => PixelFormat::Nv12,
+            "nv15" => PixelFormat::Nv15,
             "p010le" => PixelFormat::P010le,
             _ => {
                 log::warn!("assuming unknown pixel format {} is yuv420p", pix_fmt);
@@ -149,7 +151,10 @@ impl PixelFormat {
             | PixelFormat::Yuv420p
             | PixelFormat::Yuva420p
             | PixelFormat::Nv12 => 8,
-            PixelFormat::Yuv420p10le | PixelFormat::Yuva420p10le | PixelFormat::P010le => 10,
+            PixelFormat::Yuv420p10le
+            | PixelFormat::Yuva420p10le
+            | PixelFormat::P010le
+            | PixelFormat::Nv15 => 10,
             PixelFormat::P016 => 16,
         }
     }
@@ -169,6 +174,7 @@ impl PixelFormat {
             PixelFormat::Yuva420p => "yuva420p",
             PixelFormat::Yuva420p10le => "yuva420p10le",
             PixelFormat::Nv12 => "nv12",
+            PixelFormat::Nv15 => "nv15",
             PixelFormat::P010le => "p010le",
             PixelFormat::P016 => "p016",
         }

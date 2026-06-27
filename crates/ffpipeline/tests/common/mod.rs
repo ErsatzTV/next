@@ -71,6 +71,7 @@ pub async fn run_test_case(test_env: &TestEnv, test_case: TestCase) {
     let source = fixture_path(test_case.fixture_name);
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
 
+    let accel = test_case.params.accel.clone();
     let input = build_input(&source, probe, Duration::from_secs(1));
     let output = build_output(dir.path(), test_case.params);
 
@@ -87,6 +88,7 @@ pub async fn run_test_case(test_env: &TestEnv, test_case: TestCase) {
         &test_case.expected_video_codec,
         test_case.expected_video_size.width,
         test_case.expected_video_size.height,
+        accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
 }
@@ -280,7 +282,13 @@ pub fn find_first_segment(dir: &Path) -> PathBuf {
     entries[0].path()
 }
 
-pub fn assert_video(probe: &ProbeResult, codec: &str, width: u32, height: u32) {
+pub fn assert_video(
+    probe: &ProbeResult,
+    codec: &str,
+    width: u32,
+    height: u32,
+    accel: Option<HardwareAccel>,
+) {
     let video = probe
         .streams
         .iter()
@@ -292,11 +300,15 @@ pub fn assert_video(probe: &ProbeResult, codec: &str, width: u32, height: u32) {
     assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
     assert_eq!(video.width, Some(width), "unexpected video width");
     assert_eq!(video.height, Some(height), "unexpected video height");
-    assert_eq!(
-        video.sample_aspect_ratio,
-        Some(String::from("1:1")),
-        "unexpected SAR"
-    );
+
+    // RKMPP encoders don't seem to set SAR
+    if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) {
+        assert_eq!(
+            video.sample_aspect_ratio,
+            Some(String::from("1:1")),
+            "unexpected SAR"
+        );
+    }
 }
 
 pub fn assert_audio(probe: &ProbeResult, codec: &str) {

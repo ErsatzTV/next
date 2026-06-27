@@ -126,7 +126,7 @@ impl FilterChain {
             if eager_unlocks_hw_overlay {
                 let fmt: Option<VideoFilter> = if initial_state.surface == FrameSurface::System {
                     Some(FormatFilter { format: *pf }.into())
-                } else if a.can_convert_pixel_format(pf) {
+                } else if a.can_convert_pixel_format(ffmpeg_info, pf) {
                     a.format_filter(pf)
                 } else {
                     None
@@ -152,6 +152,7 @@ impl FilterChain {
                     if let Some(required) = best.required_surface()
                         && current_state.surface != required
                         && !Self::transfer_surface(
+                            ffmpeg_info,
                             accel,
                             &mut resolved,
                             &mut current_state,
@@ -183,6 +184,7 @@ impl FilterChain {
                     let main_req = best.kind.main_input_state(&current_state);
                     if current_state.surface != main_req.surface {
                         Self::transfer_surface(
+                            ffmpeg_info,
                             accel,
                             &mut resolved,
                             &mut current_state,
@@ -195,6 +197,7 @@ impl FilterChain {
                     // ensure main input matches overlay required pixel format
                     if current_state.pixel_format != main_req.pixel_format {
                         Self::convert_pixel_format(
+                            ffmpeg_info,
                             &mut resolved,
                             &mut current_state,
                             &main_req.pixel_format,
@@ -256,6 +259,7 @@ impl FilterChain {
             );
 
             if !Self::transfer_surface(
+                ffmpeg_info,
                 accel,
                 &mut resolved,
                 &mut current_state,
@@ -271,6 +275,7 @@ impl FilterChain {
             && current_state.pixel_format != *pixel_format
         {
             Self::convert_pixel_format(
+                ffmpeg_info,
                 &mut resolved,
                 &mut current_state,
                 pixel_format,
@@ -294,6 +299,7 @@ impl FilterChain {
     }
 
     fn transfer_surface(
+        ffmpeg_info: &FfmpegInfo,
         accel: &Option<HardwareAccel>,
         resolved: &mut Vec<PipelineFilter>,
         current_state: &mut FrameState,
@@ -309,8 +315,12 @@ impl FilterChain {
         );
         // Check if we're moving down to system (software) frames
         if required == FrameSurface::System {
-            let target_pixel_format = match current_state.pixel_format.bit_depth() {
-                10 => PixelFormat::P010le,
+            let target_pixel_format = match (
+                current_state.surface,
+                current_state.pixel_format.bit_depth(),
+            ) {
+                (FrameSurface::Rkmpp, 10) => PixelFormat::Nv15,
+                (_, 10) => PixelFormat::P010le,
                 _ => PixelFormat::Nv12,
             };
 
@@ -334,7 +344,7 @@ impl FilterChain {
             let hw_can_convert = |pf: &PixelFormat| {
                 accel
                     .as_ref()
-                    .is_none_or(|a| a.can_convert_pixel_format(pf))
+                    .is_none_or(|a| a.can_convert_pixel_format(ffmpeg_info, pf))
             };
 
             let needs_format_change = encoder_pixel_format
@@ -346,8 +356,12 @@ impl FilterChain {
                     && !encoder_pixel_format.as_ref().is_some_and(hw_can_convert));
 
             if convert_in_sw {
-                let canonical = match current_state.pixel_format.bit_depth() {
-                    10 => PixelFormat::P010le,
+                let canonical = match (
+                    current_state.surface,
+                    current_state.pixel_format.bit_depth(),
+                ) {
+                    (FrameSurface::Rkmpp, 10) => PixelFormat::Nv15,
+                    (_, 10) => PixelFormat::P010le,
                     _ => PixelFormat::Nv12,
                 };
 
@@ -395,6 +409,7 @@ impl FilterChain {
     }
 
     fn convert_pixel_format(
+        ffmpeg_info: &FfmpegInfo,
         resolved: &mut Vec<PipelineFilter>,
         current_state: &mut FrameState,
         pixel_format: &PixelFormat,
@@ -416,7 +431,7 @@ impl FilterChain {
                 format.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(format))
             }
-            (_, Some(a)) if a.can_convert_pixel_format(pixel_format) => {
+            (_, Some(a)) if a.can_convert_pixel_format(ffmpeg_info, pixel_format) => {
                 if let Some(f) = a.format_filter(pixel_format) {
                     f.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(f));
@@ -428,6 +443,7 @@ impl FilterChain {
                 // hw can't do the format change, so use sw
                 // hwdownload -> format -> hwupload
                 Self::transfer_surface(
+                    ffmpeg_info,
                     accel,
                     resolved,
                     current_state,
@@ -442,6 +458,7 @@ impl FilterChain {
                 format.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(format));
                 Self::transfer_surface(
+                    ffmpeg_info,
                     accel,
                     resolved,
                     current_state,

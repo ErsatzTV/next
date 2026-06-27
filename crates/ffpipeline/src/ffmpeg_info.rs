@@ -69,6 +69,8 @@ pub enum KnownVideoFilter {
     PadVaapi,
     #[strum(serialize = "scale_cuda")]
     ScaleCuda,
+    #[strum(serialize = "scale_rkrga")]
+    ScaleRkrga,
     #[strum(serialize = "scale_vaapi")]
     ScaleVaapi,
     #[strum(serialize = "scale_vt")]

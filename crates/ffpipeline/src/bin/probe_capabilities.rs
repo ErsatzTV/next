@@ -69,6 +69,7 @@ fn format_name(f: &VideoFormat) -> &'static str {
 fn pixel_format_name(f: &PixelFormat) -> &'static str {
     match f {
         PixelFormat::Nv12 => "nv12",
+        PixelFormat::Nv15 => "nv15",
         PixelFormat::P010le => "p010le",
         PixelFormat::Yuv420p => "yuv420p",
         PixelFormat::Yuv420p10le => "yuv420p10le",

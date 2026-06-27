@@ -83,7 +83,11 @@ pub trait HwAccel {
     }
 
     /// Can the accel's format filter (scale_vaapi, vpp_qsv, etc.) use this pixel format
-    fn can_convert_pixel_format(&self, _pixel_format: &PixelFormat) -> bool {
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        _pixel_format: &PixelFormat,
+    ) -> bool {
         true
     }
 }

@@ -337,7 +337,11 @@ impl HwAccel for Vaapi {
             || self.capabilities.vpp_supports_format(pixel_format)
     }
 
-    fn can_convert_pixel_format(&self, pixel_format: &PixelFormat) -> bool {
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        pixel_format: &PixelFormat,
+    ) -> bool {
         self.capabilities.vpp_supports_format(pixel_format)
     }
 }
