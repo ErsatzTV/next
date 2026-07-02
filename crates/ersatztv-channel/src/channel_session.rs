@@ -971,6 +971,7 @@ impl ChannelSession {
                                 codec: String::from("pcm_s16le"),
                                 channels: 2,
                             }],
+                            subtitle: Vec::new(),
                             format_name: Some(String::from("mpegts")),
                             duration_ms: Some(duration.as_millis() as u64),
                         }),
@@ -988,6 +989,7 @@ impl ChannelSession {
                                 String::from("yuv420p"),
                             )],
                             audio: Vec::new(),
+                            subtitle: Vec::new(),
                             format_name: Some(String::from("mpegts")),
                             duration_ms: Some(duration.as_millis() as u64),
                         }),
@@ -1282,9 +1284,26 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         })
     });
 
+    let subtitle = hint.subtitle.iter().map(|s| {
+        ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
+            stream_index: s.stream_index,
+            codec: s.codec.to_lowercase(),
+            codec_type: CodecType::Subtitle,
+            profile: String::new(),
+            height: None,
+            width: None,
+            pix_fmt: String::new(),
+            color_params: ProbeResultColorParams::default(),
+            field_order: None,
+            frame_rate: FrameRate::default(),
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+        }))
+    });
+
     ProbeResult {
         path,
-        streams: video.chain(audio).collect(),
+        streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
     }

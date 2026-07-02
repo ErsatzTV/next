@@ -292,6 +292,8 @@ pub struct ProbeHint {
     pub video: Vec<VideoHint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio: Vec<AudioHint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtitle: Vec<SubtitleHint>,
     pub format_name: Option<String>,
     pub duration_ms: Option<u64>,
 }
@@ -340,6 +342,12 @@ impl VideoHint {
 pub struct AudioHint {
     pub codec: String,
     pub channels: u32,
+    pub stream_index: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct SubtitleHint {
+    pub codec: String,
     pub stream_index: u32,
 }
 

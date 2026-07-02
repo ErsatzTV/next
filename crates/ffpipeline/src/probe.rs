@@ -28,7 +28,7 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
 
 static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct ProbeResultColorParams {
     pub color_range: Option<String>,
     pub color_space: Option<String>,

@@ -629,7 +629,7 @@
     },
     "ProbeHint": {
       "type": "object",
-      "description": "Pre-supplied probe metadata for a source. When present, the server trusts these values and skips running ffprobe entirely, so the source is opened only once (at playback) instead of twice. This matters most for slow or expensive inputs such as scripted yt-dlp pipelines.\n\nThe hint fully replaces probing: values are not validated up front, so incorrect metadata surfaces as an ffmpeg error during playback rather than a probe failure. Provide an entry for every stream the pipeline needs to select — typically one video and one audio.",
+      "description": "Pre-supplied probe metadata for a source. When present, the server trusts these values and skips running ffprobe entirely, so the source is opened only once (at playback) instead of twice. This matters most for slow or expensive inputs such as scripted yt-dlp pipelines.\n\nThe hint fully replaces probing: values are not validated up front, so incorrect metadata surfaces as an ffmpeg error during playback rather than a probe failure. Provide an entry for every stream the pipeline needs to select — typically one video and one audio, plus any subtitle stream a track selects.",
       "properties": {
         "video": {
           "type": "array",
@@ -644,6 +644,13 @@
             "$ref": "#/definitions/AudioHint"
           },
           "description": "Audio streams in the source. Omit (or use `[]`) for video-only sources; defaults to empty."
+        },
+        "subtitle": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SubtitleHint"
+          },
+          "description": "Subtitle streams in the source. Omit (or use `[]`) for sources without subtitles; defaults to empty. Provide an entry for any subtitle stream a track selects, otherwise the requested subtitle stream cannot be located and subtitles are dropped."
         },
         "format_name": {
           "type": [
@@ -783,6 +790,25 @@
           "type": "integer",
           "minimum": 0,
           "description": "Number of audio channels."
+        }
+      }
+    },
+    "SubtitleHint": {
+      "type": "object",
+      "description": "Probe metadata for a single subtitle stream.",
+      "required": [
+        "stream_index",
+        "codec"
+      ],
+      "properties": {
+        "stream_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Zero-based index of this stream within the source."
+        },
+        "codec": {
+          "type": "string",
+          "description": "Codec name as reported by ffprobe (e.g. \"subrip\", \"ass\", \"hdmv_pgs_subtitle\", \"dvd_subtitle\"). Compared case-insensitively; image-based codecs are handled differently from text-based ones."
         }
       }
     }

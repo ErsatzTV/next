@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use ersatztv_playout::playout::{
     AudioHint, DATE_FORMAT, Playout, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, ProbeHint,
-    TrackSelection, VideoHint, parse_playout_filename,
+    SubtitleHint, TrackSelection, VideoHint, parse_playout_filename,
 };
-use ffpipeline::probe::{ProbeResult, ProbeResultStream};
+use ffpipeline::probe::{CodecType, ProbeResult, ProbeResultStream};
 use rand::RngExt;
 use rand::prelude::SliceRandom;
 use time::OffsetDateTime;
@@ -227,6 +227,20 @@ async fn build_items(
                     })
                     .collect();
 
+                let subtitle: Vec<SubtitleHint> = probe_result
+                    .streams
+                    .iter()
+                    .filter_map(|s| match s {
+                        ProbeResultStream::Video(v) if v.codec_type == CodecType::Subtitle => {
+                            Some(SubtitleHint {
+                                codec: v.codec.clone(),
+                                stream_index: v.stream_index,
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
                 playout_item.source = Some(PlayoutItemSource::Local {
                     path: path.clone(),
                     in_point_ms: *in_point_ms,
@@ -234,6 +248,7 @@ async fn build_items(
                     probe_hint: Some(ProbeHint {
                         audio,
                         video,
+                        subtitle,
                         format_name: probe_result.format_name.clone(),
                         duration_ms: probe_result.duration.map(|d| d.as_millis() as u64),
                     }),
@@ -255,6 +270,7 @@ async fn build_items(
                                     codec: String::from("pcm_s16le"),
                                     channels: 2,
                                 }],
+                                subtitle: Vec::new(),
                                 format_name: Some(String::from("mpegts")),
                                 duration_ms: None,
                             }),
