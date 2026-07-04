@@ -10,6 +10,7 @@ use crate::LineupState;
 use crate::channel_model::ChannelModel;
 
 struct ChannelMeta {
+    pub number: String,
     pub name: String,
     pub tvg_id: String,
     pub logo: Option<String>,
@@ -18,6 +19,7 @@ struct ChannelMeta {
 impl From<&ChannelModel> for ChannelMeta {
     fn from(model: &ChannelModel) -> Self {
         Self {
+            number: model.number().to_string(),
             name: model.name().to_string(),
             tvg_id: model.tvg_id().to_string(),
             logo: model.logo().map(|s| s.to_string()),
@@ -46,9 +48,17 @@ fn generate_blocking(
                 w.create_element("channel")
                     .with_attribute(("id", channel.tvg_id.as_str()))
                     .write_inner_content(|inner_writer| {
+                        let channel_num = channel.number.as_str();
+                        let channel_name = channel.name.as_str();
+                        let display_name = format!("{channel_num} {channel_name}");
+                        
                         inner_writer
                             .create_element("display-name")
-                            .write_text_content(BytesText::new(channel.name.as_str()))?;
+                            .write_text_content(BytesText::new(&display_name))?;
+
+                        inner_writer
+                            .create_element("display-name")
+                            .write_text_content(BytesText::new(&channel_name))?;
 
                         if let Some(logo) = &channel.logo {
                             inner_writer
