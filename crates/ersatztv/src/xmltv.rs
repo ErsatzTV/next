@@ -88,7 +88,7 @@ fn copy_programmes<R: BufRead, W: Write>(
     buf: &mut Vec<u8>,
 ) -> std::io::Result<()> {
     let mut reader = Reader::from_reader(reader);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut depth = 0u32;
     loop {
         match reader.read_event_into(buf).map_err(std::io::Error::other)? {
@@ -103,12 +103,61 @@ fn copy_programmes<R: BufRead, W: Write>(
             Event::Empty(e) if e.name().as_ref() == b"programme" || depth > 0 => {
                 writer.write_event(Event::Empty(e))?
             }
-            Event::Text(e) if depth > 0 => writer.write_event(Event::Text(e))?,
-            Event::CData(e) if depth > 0 => writer.write_event(Event::CData(e))?,
             Event::Eof => return Ok(()),
+            other if depth > 0 => {
+                writer.write_event(other)?;
+            }
             _ => {}
         }
 
         buf.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // regression test for #172: entity/character references inside programmes were
+    // dropped because quick-xml emits them as separate `Event::GeneralRef`
+    // events that the copy loop did not forward.
+    #[test]
+    fn copy_programmes_preserves_entities_and_children() {
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="ErsatzTV">
+  <programme start="20260630153000 -0600" stop="20260630160000 -0600" channel="tv.1">
+    <title lang="en">Mister Rogers&#39; Neighborhood</title>
+    <sub-title lang="en">DAY CARE &amp; NIGHT CARE</sub-title>
+    <desc lang="en">Line one.&#xA;&#xA;Line two.</desc>
+    <category lang="en">Kids</category>
+    <episode-num system="onscreen">S13E16</episode-num>
+  </programme>
+</tv>"#;
+
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        let mut buf = Vec::new();
+        copy_programmes(input.as_bytes(), &mut writer, &mut buf).unwrap();
+        let output = String::from_utf8(writer.into_inner().into_inner()).unwrap();
+
+        assert!(
+            output.contains("Mister Rogers&#39; Neighborhood"),
+            "apostrophe reference dropped: {output}"
+        );
+        assert!(
+            output.contains("DAY CARE &amp; NIGHT CARE"),
+            "ampersand reference dropped: {output}"
+        );
+        assert!(
+            output.contains("Line one.&#xA;&#xA;Line two."),
+            "newline references dropped: {output}"
+        );
+        assert!(
+            output.contains(r#"<sub-title lang="en">"#),
+            "child element dropped: {output}"
+        );
+        assert!(
+            output.contains(r#"<episode-num system="onscreen">S13E16</episode-num>"#),
+            "child element dropped: {output}"
+        );
     }
 }

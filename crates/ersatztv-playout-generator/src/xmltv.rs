@@ -130,18 +130,21 @@ fn read_existing_programmes(
                 let stop = OffsetDateTime::parse(&stop_s, &XMLTV_FMT)?;
 
                 let mut title = String::new();
-                let mut in_title = false;
                 loop {
                     match reader
                         .read_event_into(&mut inner_buf)
                         .map_err(std::io::Error::other)?
                     {
-                        Event::Start(t) if t.name().as_ref() == b"title" => in_title = true,
-                        Event::End(t) if t.name().as_ref() == b"title" => in_title = false,
-                        Event::Text(t) if in_title => title.push_str(
-                            &t.xml_content(XmlVersion::Implicit1_0)
-                                .map_err(std::io::Error::other)?,
-                        ),
+                        Event::Start(t) if t.name().as_ref() == b"title" => {
+                            let mut text_buf = Vec::new();
+                            let text_event = reader
+                                .read_text_into(t.name(), &mut text_buf)
+                                .map_err(std::io::Error::other)?;
+                            let text = text_event.decode().map_err(std::io::Error::other)?;
+                            title = quick_xml::escape::unescape(&text)
+                                .map_err(std::io::Error::other)?
+                                .into_owned();
+                        }
                         Event::End(t) if t.name().as_ref() == b"programme" => break,
                         Event::Eof => break,
                         _ => {}
