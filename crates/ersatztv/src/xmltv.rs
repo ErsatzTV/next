@@ -58,6 +58,10 @@ fn generate_blocking(
 
                         inner_writer
                             .create_element("display-name")
+                            .write_text_content(BytesText::new(&channel_num))?;
+
+                        inner_writer
+                            .create_element("display-name")
                             .write_text_content(BytesText::new(&channel_name))?;
 
                         if let Some(logo) = &channel.logo {
