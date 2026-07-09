@@ -175,8 +175,7 @@ impl std::fmt::Display for ProbeResult {
         write!(
             f,
             "{}",
-            &self
-                .streams
+            self.streams
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<String>>()

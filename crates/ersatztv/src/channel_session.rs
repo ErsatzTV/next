@@ -48,7 +48,7 @@ impl ChannelSession {
 
             let _ = child.wait().await;
             watcher.abort();
-            log::debug!("channel {} exited", &channel_number);
+            log::debug!("channel {} exited", channel_number);
             active.lock().await.remove(&channel_number);
 
             if ready_file.exists() {
