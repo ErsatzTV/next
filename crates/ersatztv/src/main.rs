@@ -288,7 +288,7 @@ async fn channel_playlist(
             channel.name()
         ));
         content.push_str(&format!(
-            "{}/channel/{}.m3u8",
+            "{}/channel/{}.m3u8\n",
             get_scheme_host(&request),
             channel.number()
         ));
