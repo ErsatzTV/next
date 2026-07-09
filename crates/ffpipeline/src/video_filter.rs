@@ -64,6 +64,7 @@ pub enum VideoFilter {
     Deinterlace(DeinterlaceFilter),
     HwMap(HwMapFilter),
     Subtitles(SubtitlesFilter),
+    SubtitleImageScale(SubtitleImageScaleFilter),
     ColorChannelMixer(ColorChannelMixerFilter),
     Fade(FadeFilter),
     Crop(CropFilter),
@@ -521,6 +522,36 @@ impl VideoFilterOp for SubtitlesFilter {
         } else {
             Some(format!("subtitles={}", escaped_path))
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SubtitleImageScaleFilter {
+    pub size: FrameSize,
+}
+
+impl VideoFilterOp for SubtitleImageScaleFilter {
+    fn evaluate(&self, _state: &FrameState, _info: &FfmpegInfo) -> Option<VideoFilter> {
+        Some(self.clone().into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.size = self.size;
+        state.is_anamorphic = false;
+        state.sample_aspect_ratio = Some(String::from("1:1"));
+        state.display_aspect_ratio = None;
+        state.surface = FrameSurface::System;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!(
+            "scale={}:{}:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1",
+            self.size.width, self.size.height,
+        ))
     }
 }
 

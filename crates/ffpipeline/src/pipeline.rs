@@ -26,8 +26,8 @@ use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter,
-    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions, SubtitlesFilter,
-    ToneMapFilter, VideoFilter,
+    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions,
+    SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -447,8 +447,7 @@ impl Pipeline {
             && let Some(subtitle_input) = input_settings.subtitle_input.as_ref()
         {
             if subtitle_stream.is_subtitle_image()
-                && let Some(height) = subtitle_stream.height
-                && let Some(width) = subtitle_stream.width
+                && let Some(size) = final_output_settings.video_size
             {
                 inputs.push(PipelineInput::Subtitle {
                     input_source: subtitle_input.input_source.to_owned(),
@@ -458,7 +457,7 @@ impl Pipeline {
                 });
 
                 let secondary_initial_state = FrameState {
-                    size: FrameSize { width, height },
+                    size,
                     is_anamorphic: subtitle_stream.is_anamorphic(),
                     is_interlaced: false,
                     sample_aspect_ratio: subtitle_stream.sample_aspect_ratio.to_owned(),
@@ -474,15 +473,7 @@ impl Pipeline {
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
                     kind: SoftwareOverlay::default().into(),
-                    secondary: vec![
-                        ScaleFilter {
-                            size: final_output_settings.video_size,
-                            scaling_mode: ScalingMode::ScaleAndPad,
-                            input_is_anamorphic: subtitle_stream.is_anamorphic(),
-                            force_original_aspect_ratio: None,
-                        }
-                        .into(),
-                    ],
+                    secondary: vec![SubtitleImageScaleFilter { size }.into()],
                     secondary_initial_state,
                     secondary_source: OverlaySource::Subtitle,
                     location: None,
