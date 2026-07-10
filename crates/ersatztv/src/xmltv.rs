@@ -51,18 +51,18 @@ fn generate_blocking(
                         let channel_num = channel.number.as_str();
                         let channel_name = channel.name.as_str();
                         let display_name = format!("{channel_num} {channel_name}");
-                        
+
                         inner_writer
                             .create_element("display-name")
                             .write_text_content(BytesText::new(&display_name))?;
 
                         inner_writer
                             .create_element("display-name")
-                            .write_text_content(BytesText::new(&channel_num))?;
+                            .write_text_content(BytesText::new(channel_num))?;
 
                         inner_writer
                             .create_element("display-name")
-                            .write_text_content(BytesText::new(&channel_name))?;
+                            .write_text_content(BytesText::new(channel_name))?;
 
                         if let Some(logo) = &channel.logo {
                             inner_writer
