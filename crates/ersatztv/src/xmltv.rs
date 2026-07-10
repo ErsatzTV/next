@@ -174,4 +174,21 @@ mod tests {
             "child element dropped: {output}"
         );
     }
+
+    #[test]
+    fn generate_blocking_includes_display_names() {
+        let channels = vec![ChannelMeta {
+            number: "1.1".to_string(),
+            name: "Test Channel".to_string(),
+            tvg_id: "test.1".to_string(),
+            logo: None,
+        }];
+
+        let result = generate_blocking(None, &channels).unwrap();
+        let output = String::from_utf8(result).unwrap();
+
+        assert!(output.contains("<display-name>1.1 Test Channel</display-name>"));
+        assert!(output.contains("<display-name>1.1</display-name>"));
+        assert!(output.contains("<display-name>Test Channel</display-name>"));
+    }
 }
