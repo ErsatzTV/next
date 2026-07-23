@@ -14,7 +14,7 @@ ENV ETV_VERSION=${INFO_VERSION}
 COPY . .
 RUN cargo build --release
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:7.1.1
+FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2
 
 RUN groupadd --gid 1000 ersatztv && \
     useradd --uid 1000 --gid 1000 --no-create-home --shell /sbin/nologin ersatztv && \
