@@ -197,7 +197,7 @@ impl HwAccel for Vaapi {
         &self,
         format: &VideoFormat,
         bit_depth: u8,
-        video_size: Option<FrameSize>,
+        _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         let force_cqp = self.capabilities.rate_control_mode_for(format, bit_depth)
             == Some(RateControlMode::Cqp);
@@ -222,14 +222,6 @@ impl HwAccel for Vaapi {
                 let mut options = Vec::new();
                 if force_cqp {
                     options.extend(args!["-rc_mode", "1"]);
-                }
-
-                // WORKAROUND: RadeonSI doesn't always output appropriate crop
-                // metadata with HEVC encoder; it doesn't hurt anything to always specify
-                if self.driver == VaapiDriver::RadeonSI
-                    && video_size.map(|s| s.height) == Some(1080)
-                {
-                    options.extend(args!["-bsf:v", "hevc_metadata=crop_bottom=8"]);
                 }
 
                 Some(VideoCodec {
