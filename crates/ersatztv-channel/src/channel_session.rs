@@ -21,7 +21,7 @@ use ffpipeline::input::{
     LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
     WatermarkInput,
 };
-use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings};
+use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings, SubtitleMode};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
 use ffpipeline::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
@@ -529,6 +529,12 @@ impl ChannelSession {
                 None
             },
             subtitle_mode: self.channel_config.normalization.subtitle.mode.into(),
+            fonts_folder: self
+                .channel_config
+                .normalization
+                .subtitle
+                .fonts_folder
+                .clone(),
             reports_folder: self.channel_config.ffmpeg.reports_folder.clone(),
             report_id: Some(self.channel_config.number().to_owned()),
         };
@@ -589,7 +595,7 @@ impl ChannelSession {
             _ => None,
         };
 
-        let input_settings = InputSettings {
+        let mut input_settings = InputSettings {
             start: current_item.start,
             audio_input: ProbedInput {
                 input_source: audio_input_source,
@@ -614,7 +620,7 @@ impl ChannelSession {
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
-        if output_settings.subtitle_mode == ffpipeline::output_settings::SubtitleMode::Convert
+        if output_settings.subtitle_mode == SubtitleMode::Convert
             && let Some(subtitle_stream) = input_settings.select_subtitle_stream()
             && !subtitle_stream.is_subtitle_image()
             && let Some(input) = input_settings.subtitle_input.as_ref()
@@ -631,6 +637,23 @@ impl ChannelSession {
                 cursor: 0,
                 next_segment_source_offset: input.in_point,
             });
+        }
+
+        let skip_embedded_text_subtitles = output_settings.subtitle_mode == SubtitleMode::Burn
+            && input_settings
+                .subtitle_input
+                .as_ref()
+                .is_some_and(|i| i.probe_result.streams.len() > 1)
+            && input_settings
+                .select_subtitle_stream()
+                .is_some_and(|s| !s.is_subtitle_image());
+
+        if skip_embedded_text_subtitles {
+            log::warn!(
+                "skipping embedded text subtitles for item {}; scheduler must extract to a sidecar file",
+                current_item.id
+            );
+            input_settings.subtitle_input = None;
         }
 
         let pts_offset = output_settings.pts_offset;

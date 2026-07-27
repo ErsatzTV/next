@@ -491,6 +491,7 @@ impl VideoFilterOp for HwMapFilter {
 pub struct SubtitlesFilter {
     pub path: String,
     pub seek: Duration,
+    pub fonts_folder: Option<String>,
 }
 
 impl VideoFilterOp for SubtitlesFilter {
@@ -511,16 +512,23 @@ impl VideoFilterOp for SubtitlesFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        let escaped_path = FfmpegInfo::escape_path(&self.path);
+        let filter_args = match self.fonts_folder.as_ref() {
+            Some(fonts_folder) => format!(
+                "{}:fontsdir={}",
+                FfmpegInfo::escape_path(&self.path),
+                FfmpegInfo::escape_path(fonts_folder)
+            ),
+            None => FfmpegInfo::escape_path(&self.path),
+        };
 
         if self.seek > Duration::ZERO {
             Some(format!(
                 "setpts=PTS+{}/TB,subtitles={},setpts=PTS-STARTPTS",
                 self.seek.as_secs_f64(),
-                escaped_path,
+                filter_args,
             ))
         } else {
-            Some(format!("subtitles={}", escaped_path))
+            Some(format!("subtitles={}", filter_args))
         }
     }
 }

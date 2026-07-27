@@ -230,6 +230,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         is_live: false,
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
+        fonts_folder: None,
         reports_folder: None,
         report_id: None,
     }

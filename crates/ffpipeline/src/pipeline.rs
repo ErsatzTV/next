@@ -485,6 +485,7 @@ impl Pipeline {
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),
                         seek: subtitle_input.in_point,
+                        fonts_folder: final_output_settings.fonts_folder.to_owned(),
                     }
                     .into(),
                 ))

@@ -22,6 +22,7 @@ pub struct OutputSettings {
     pub is_live: bool,
     pub frame_rate: Option<FrameRate>,
     pub subtitle_mode: SubtitleMode,
+    pub fonts_folder: Option<String>,
     pub reports_folder: Option<String>,
     pub report_id: Option<String>,
 }
