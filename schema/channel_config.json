@@ -234,6 +234,7 @@
         "subtitle": {
           "$ref": "#/$defs/SubtitleNormalizationConfig",
           "default": {
+            "fonts_folder": null,
             "mode": "burn"
           }
         },
@@ -283,6 +284,13 @@
     "SubtitleNormalizationConfig": {
       "type": "object",
       "properties": {
+        "fonts_folder": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "mode": {
           "$ref": "#/$defs/SubtitleMode",
           "default": "burn"

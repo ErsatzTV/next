@@ -14,6 +14,7 @@ pub const PATH_FIELDS: &[&str] = &[
     "/ffmpeg/ffmpeg_path",
     "/ffmpeg/ffprobe_path",
     "/ffmpeg/reports_folder",
+    "/normalization/subtitle/fonts_folder",
 ];
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
@@ -460,6 +461,8 @@ impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
 pub struct SubtitleNormalizationConfig {
     #[serde(default)]
     pub mode: SubtitleMode,
+    #[serde(default)]
+    pub fonts_folder: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default, Copy)]
