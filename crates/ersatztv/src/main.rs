@@ -312,14 +312,27 @@ async fn xmltv(
 }
 
 fn get_scheme_host(request: &axum::extract::Request) -> String {
-    // TODO: need scheme, host from reverse proxy
-    let host = request
-        .headers()
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost");
+    let scheme =
+        get_first_header_value(request, "x-forwarded-proto").unwrap_or_else(|| "http".to_string());
 
-    format!("http://{host}")
+    let host = get_first_header_value(request, "x-forwarded-host")
+        .or_else(|| get_first_header_value(request, axum::http::header::HOST.as_str()))
+        .unwrap_or_else(|| "localhost".to_string());
+
+    format!("{scheme}://{host}")
+}
+
+// headers set by chained proxies may contain multiple comma-separated values;
+// the first value is the one set by the proxy closest to the client
+fn get_first_header_value(request: &axum::extract::Request, name: &str) -> Option<String> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 async fn session_middleware(
