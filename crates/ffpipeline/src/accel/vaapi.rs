@@ -556,6 +556,7 @@ mod tests {
             hwaccels: HashSet::new(),
             video_filters,
             preferred_filters: HashMap::new(),
+            video_filter_options: HashMap::new(),
         }
     }
 
