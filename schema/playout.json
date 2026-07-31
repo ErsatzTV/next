@@ -428,6 +428,13 @@
           "type": "string",
           "description": "URI template, e.g. \"https://example.com/file.mkv?token={{MY_SECRET}}\"."
         },
+        "is_live": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether the content is live and therefore cannot seek or work ahead. Default: false."
+        },
         "in_point_ms": {
           "type": [
             "integer",
