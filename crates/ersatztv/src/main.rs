@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use clap::{Parser, Subcommand};
@@ -205,7 +206,7 @@ async fn stream(
         Err(_) => return Err(LineupError::ChannelNotReady),     // 30s deadline
     }
 
-    let content = get_multi_variant(channel, request);
+    let content = get_multi_variant(channel, request.headers());
 
     Ok((
         [(
@@ -236,13 +237,13 @@ async fn fix_content_types(
     response
 }
 
-fn get_multi_variant(channel: &ChannelModel, request: axum::extract::Request) -> String {
+fn get_multi_variant(channel: &ChannelModel, headers: &HeaderMap) -> String {
     let mut result = String::new();
     result.push_str("#EXTM3U\n");
     result.push_str("#EXT-X-VERSION:6\n");
     result.push_str(&format!(
         "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,LANGUAGE=\"en\",URI=\"{}/session/{}/live_sub.m3u8\"\n",
-        get_scheme_host(&request),
+        get_scheme_host(headers),
         channel.number()
     ));
     result.push_str(&format!(
@@ -251,7 +252,7 @@ fn get_multi_variant(channel: &ChannelModel, request: axum::extract::Request) ->
     ));
     result.push_str(&format!(
         "{}/session/{}/live.m3u8",
-        get_scheme_host(&request),
+        get_scheme_host(headers),
         channel.number()
     ));
 
@@ -263,7 +264,8 @@ async fn channel_playlist(
     request: axum::extract::Request,
 ) -> Result<impl IntoResponse, LineupError> {
     let mut content = String::new();
-    let xmltv_url = format!("{}/xmltv.xml", get_scheme_host(&request));
+    let scheme_host = get_scheme_host(request.headers());
+    let xmltv_url = format!("{}/xmltv.xml", scheme_host);
     content.push_str(&format!(
         "#EXTM3U url-tvg=\"{xmltv_url}\" x-tvg-url=\"{xmltv_url}\"\n"
     ));
@@ -289,7 +291,7 @@ async fn channel_playlist(
         ));
         content.push_str(&format!(
             "{}/channel/{}.m3u8\n",
-            get_scheme_host(&request),
+            scheme_host,
             channel.number()
         ));
     }
@@ -311,15 +313,29 @@ async fn xmltv(
     ))
 }
 
-fn get_scheme_host(request: &axum::extract::Request) -> String {
-    // TODO: need scheme, host from reverse proxy
-    let host = request
-        .headers()
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
+fn get_scheme_host(headers: &HeaderMap) -> String {
+    let scheme = get_first_header_value(headers, "x-forwarded-proto")
+        .map(|s| s.to_lowercase())
+        .unwrap_or_else(|| "http".to_string());
+
+    let host = get_first_header_value(headers, "x-forwarded-host")
+        .or_else(|| get_first_header_value(headers, axum::http::header::HOST.as_str()))
         .unwrap_or("localhost");
 
-    format!("http://{host}")
+    format!("{scheme}://{host}")
+}
+
+// headers set by chained proxies may contain multiple comma-separated values;
+// the first value is the one set by the proxy closest to the client
+fn get_first_header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(name)?
+        .to_str()
+        .ok()?
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
 }
 
 async fn session_middleware(
