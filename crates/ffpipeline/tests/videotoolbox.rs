@@ -65,6 +65,33 @@ async fn pipeline(
     }
 }
 
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark(
+    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264.ts")] src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_videotoolbox_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark::default()),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
 async fn run_videotoolbox_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env
