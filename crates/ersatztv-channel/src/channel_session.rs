@@ -443,11 +443,26 @@ impl ChannelSession {
 
         let watermark_fut = async {
             if let Some(w) = current_item.watermark.as_ref() {
-                let input_source = self.playout_source_to_input_source(w.source.clone())?;
+                // a watermark is cosmetic: an unreadable or unprobeable
+                // artwork file must not take down the item it decorates
+                let prepared = async {
+                    let input_source = self.playout_source_to_input_source(w.source.clone())?;
+                    let probe_result = self.resolve_probe(&w.source, &input_source).await?;
+                    Ok::<_, ChannelError>((input_source, probe_result))
+                }
+                .await;
+
+                let (input_source, probe_result) = match prepared {
+                    Ok(prepared) => prepared,
+                    Err(e) => {
+                        log::warn!("skipping watermark for item {}: {e}", current_item.id);
+                        return Ok(None);
+                    }
+                };
+
                 let location = playout_location_to_pipeline(&w.location);
                 let timing = playout_timing_to_pipeline(w.timing.as_ref());
 
-                let probe_result = self.resolve_probe(&w.source, &input_source).await?;
                 Ok(Some(WatermarkInput {
                     input_source,
                     probe_result,
