@@ -42,6 +42,10 @@ use crate::pts_scanner::{PtsScanner, PtsTime};
 
 const STDERR_RING_LINES: usize = 2_000;
 
+/// How far a measured resume position may sit from the scheduled one before it
+/// is treated as unusable. Encoder drift over a single chunk is far below this.
+const MAX_RESUME_DRIFT: Duration = Duration::from_secs(SEGMENT_SECONDS as u64);
+
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
     SeekAndWorkAhead,
@@ -93,6 +97,12 @@ pub struct ChannelSession {
 
     cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
     dynamic_http_client: reqwest::Client,
+
+    /// The output pts the current item started at, recorded when the item
+    /// begins. A pipeline resuming the item partway through uses the distance
+    /// from this to the current pts as its source read position, so the
+    /// content and the output timeline advance by the same amount.
+    item_base_pts: Option<Duration>,
 }
 
 impl ChannelSession {
@@ -187,6 +197,7 @@ impl ChannelSession {
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
             cached_subtitles: None,
             dynamic_http_client,
+            item_base_pts: None,
         })
     }
 
@@ -544,12 +555,25 @@ impl ChannelSession {
             ChannelSessionState::ZeroAndWorkAhead | ChannelSessionState::ZeroAndRealtime
         );
 
+        // record where this item's output timeline began, so a pipeline that
+        // resumes the item partway through can measure how much content the
+        // previous one actually produced
+        if start_at_zero {
+            self.item_base_pts = pts_duration;
+        }
+
+        let measured_progress = match (pts_duration, self.item_base_pts) {
+            (Some(now), Some(base)) => Some(now.saturating_sub(base)),
+            _ => None,
+        };
+
         let audio_timing = self.input_timing(
             current_item,
             &audio_source,
             start_at_zero,
             realtime,
             is_live,
+            measured_progress,
         );
         let video_timing = self.input_timing(
             current_item,
@@ -557,10 +581,18 @@ impl ChannelSession {
             start_at_zero,
             realtime,
             is_live,
+            measured_progress,
         );
-        let subtitle_timing = subtitle_source
-            .as_ref()
-            .map(|s| self.input_timing(current_item, s, start_at_zero, realtime, is_live));
+        let subtitle_timing = subtitle_source.as_ref().map(|s| {
+            self.input_timing(
+                current_item,
+                s,
+                start_at_zero,
+                realtime,
+                is_live,
+                measured_progress,
+            )
+        });
 
         let video_index = current_item
             .tracks
@@ -894,6 +926,7 @@ impl ChannelSession {
         start_at_zero: bool,
         realtime: bool,
         is_live: bool,
+        measured_progress: Option<Duration>,
     ) -> TimingResult {
         let mut is_complete = true;
 
@@ -928,11 +961,8 @@ impl ChannelSession {
             self.transcoded_until
         };
 
-        let progress_ms = if start_at_zero {
-            0
-        } else {
-            (effective_now - item_start).whole_milliseconds().max(0) as u64
-        };
+        let progress_ms =
+            resume_progress_ms(start_at_zero, measured_progress, effective_now - item_start);
         let effective_in_point = Duration::from_millis(item_in_point_base_ms + progress_ms);
 
         let duration =
@@ -1262,6 +1292,50 @@ fn playout_timing_to_pipeline(
     })
 }
 
+/// How far into an item the next pipeline resumes reading, in milliseconds of
+/// content.
+///
+/// A pipeline that stops partway through an item is followed by one that seeks
+/// back in and continues, and the output pts that second pipeline is stamped
+/// with comes from measuring what the first one actually left on disk. The
+/// source read position has to come from that same measurement. Deriving the
+/// read position from the schedule instead lets the two disagree by however
+/// much the encoder over- or under-ran, which leaves a gap in one of the
+/// output streams at the restart while the other stays continuous.
+///
+/// Falls back to the scheduled position when there is no measurement to use,
+/// which is the case for the first item a channel joins partway through, or
+/// when the measurement is too far from the schedule to be describing this
+/// item at all.
+fn resume_progress_ms(
+    start_at_zero: bool,
+    measured_progress: Option<Duration>,
+    scheduled_progress: time::Duration,
+) -> u64 {
+    if start_at_zero {
+        return 0;
+    }
+
+    let scheduled_ms = scheduled_progress.whole_milliseconds().max(0) as u64;
+
+    let Some(measured) = measured_progress else {
+        return scheduled_ms;
+    };
+
+    // the two should differ only by encoder drift over one chunk. Anything
+    // larger means the measured pts is not describing this item, and seeking
+    // to it would land outside the source, so prefer the schedule
+    let measured_ms = measured.as_millis() as u64;
+    if measured_ms.abs_diff(scheduled_ms) > MAX_RESUME_DRIFT.as_millis() as u64 {
+        log::warn!(
+            "measured resume position {measured_ms}ms is too far from the scheduled {scheduled_ms}ms; using the schedule"
+        );
+        return scheduled_ms;
+    }
+
+    measured_ms
+}
+
 fn source_is_live(source: &PlayoutItemSource) -> bool {
     matches!(
         source,
@@ -1329,5 +1403,73 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_item_starting_fresh_reads_from_its_in_point() {
+        let progress = resume_progress_ms(
+            true,
+            Some(Duration::from_secs(90)),
+            time::Duration::seconds(30),
+        );
+
+        assert_eq!(progress, 0);
+    }
+
+    #[test]
+    fn a_resumed_item_reads_from_the_measured_output_position() {
+        // the previous pipeline was stamped from 60s and left output ending at
+        // 103.5s, so it produced 43.5s of content, half a second short of the
+        // 44s the schedule asked for
+        let progress = resume_progress_ms(
+            false,
+            Some(Duration::from_millis(43_500)),
+            time::Duration::seconds(44),
+        );
+
+        assert_eq!(progress, 43_500);
+    }
+
+    #[test]
+    fn a_resumed_item_falls_back_to_the_schedule_without_a_measurement() {
+        let progress = resume_progress_ms(false, None, time::Duration::seconds(44));
+
+        assert_eq!(progress, 44_000);
+    }
+
+    #[test]
+    fn a_measurement_far_from_the_schedule_is_rejected() {
+        // a pts that does not describe this item at all, e.g. carried over
+        // from somewhere else; seeking there would land outside the source
+        let progress = resume_progress_ms(
+            false,
+            Some(Duration::from_secs(4_000)),
+            time::Duration::seconds(44),
+        );
+
+        assert_eq!(progress, 44_000);
+    }
+
+    #[test]
+    fn a_measurement_within_the_drift_allowance_is_used() {
+        let progress = resume_progress_ms(
+            false,
+            Some(Duration::from_millis(46_000)),
+            time::Duration::seconds(44),
+        );
+
+        assert_eq!(progress, 46_000);
+    }
+
+    #[test]
+    fn a_negative_scheduled_position_is_clamped_to_the_in_point() {
+        let progress = resume_progress_ms(false, None, time::Duration::seconds(-5));
+
+        assert_eq!(progress, 0);
     }
 }
