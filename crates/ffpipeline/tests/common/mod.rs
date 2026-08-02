@@ -6,7 +6,9 @@ use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
-use ffpipeline::input::{InputSettings, InputSource, LocalInputSource, ProbedInput};
+use ffpipeline::input::{
+    InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput, WatermarkLocation,
+};
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
     AudioLoudnessSettings, AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode,
@@ -32,6 +34,26 @@ pub struct TestCase {
     pub expected_video_codec: String,
     pub expected_video_size: FrameSize,
     pub expected_audio_codec: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct TestWatermark {
+    pub fixture_name: &'static str,
+    pub location: WatermarkLocation,
+    pub width_percent: Option<f32>,
+    pub opacity_percent: Option<f32>,
+}
+
+impl Default for TestWatermark {
+    fn default() -> Self {
+        Self {
+            fixture_name: "watermark.png",
+            location: WatermarkLocation::TopLeft,
+            width_percent: Some(10.0),
+            opacity_percent: Some(90.0),
+        }
+    }
 }
 
 pub async fn test_env() -> Option<&'static TestEnv> {
@@ -66,13 +88,17 @@ pub async fn test_env() -> Option<&'static TestEnv> {
 }
 
 #[allow(dead_code)]
-pub async fn run_test_case(test_env: &TestEnv, test_case: TestCase) {
+pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
-    let input = build_input(&source, probe, Duration::from_secs(1));
+    let watermark = match test_case.params.watermark.take() {
+        Some(watermark) => Some(build_watermark_input(test_env, &watermark).await),
+        None => None,
+    };
+    let input = build_input(&source, probe, Duration::from_secs(1), watermark);
     let output = build_output(dir.path(), test_case.params);
 
     let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
@@ -140,7 +166,36 @@ pub async fn probe_file(ffmpeg: &Path, ffprobe: &Path, path: &Path) -> ProbeResu
 
 // --- Input/output builders ---
 
-pub fn build_input(path: &Path, probe: ProbeResult, duration: Duration) -> InputSettings {
+#[allow(dead_code)]
+pub async fn build_watermark_input(
+    test_env: &TestEnv,
+    watermark: &TestWatermark,
+) -> WatermarkInput {
+    let path = fixture_path(watermark.fixture_name);
+    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
+
+    WatermarkInput {
+        input_source: InputSource::Local(LocalInputSource {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        probe_result: probe,
+        stream_index: None,
+        location: watermark.location.clone(),
+        width_percent: watermark.width_percent,
+        within_source_content: Some(false),
+        horizontal_margin_percent: Some(5.0),
+        vertical_margin_percent: Some(5.0),
+        opacity_percent: watermark.opacity_percent,
+        timing: None,
+    }
+}
+
+pub fn build_input(
+    path: &Path,
+    probe: ProbeResult,
+    duration: Duration,
+    watermark: Option<WatermarkInput>,
+) -> InputSettings {
     let path_str = path.to_string_lossy().into_owned();
     InputSettings {
         start: OffsetDateTime::now_utc(),
@@ -161,7 +216,7 @@ pub fn build_input(path: &Path, probe: ProbeResult, duration: Duration) -> Input
             stream_index: None,
         },
         subtitle_input: None,
-        watermark_input: None,
+        watermark_input: watermark,
     }
 }
 
@@ -180,6 +235,7 @@ pub struct TestOutputParams {
     pub accel: Option<HardwareAccel>,
     pub frame_rate: Option<FrameRate>,
     pub filter_options: VideoFilterOptions,
+    pub watermark: Option<TestWatermark>,
 }
 
 impl Default for TestOutputParams {
@@ -198,6 +254,7 @@ impl Default for TestOutputParams {
             accel: None,
             frame_rate: None,
             filter_options: VideoFilterOptions::default(),
+            watermark: None,
         }
     }
 }

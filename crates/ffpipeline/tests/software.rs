@@ -109,6 +109,64 @@ async fn custom_frame_rate() {
     .await;
 }
 
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark(
+    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_software_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark::default()),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
+/// Exercises the `-ignore_loop 0` input branch instead of the still-image `-loop 1`.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark_animated(
+    #[values("1080p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let res = FrameSize::from_str("1920x1080").unwrap();
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_software_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark {
+                    fixture_name: "watermark.gif",
+                    ..TestWatermark::default()
+                }),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
 async fn run_software_test_case(test_case: TestCase) {
     if let Some(env) = test_env().await {
         run_test_case(env, test_case).await;
