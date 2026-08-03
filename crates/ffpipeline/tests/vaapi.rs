@@ -233,6 +233,136 @@ async fn pad_opencl(
     }
 }
 
+/// The 1080p sources paired with a 1920x1080 output are the cases that matter: a
+/// coded height of 1088 pads the decoder's surfaces, and an unscaled output means no
+/// filter intervenes to launder the frame size. The rest are controls.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark(
+    #[values("1080p_h264.ts", "1080p_hevc_10.ts", "720p_h264.ts", "480p_h264.ts")]
+    src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark::default()),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
+/// `Vaapi::best_overlay` upgrades a software overlay to `overlay_vaapi` whenever the
+/// filter exists and the driver can blend BGRA, so without the env var below this is
+/// just a duplicate of `watermark`. Users land on the software path on devices whose
+/// VPP cannot blend BGRA.
+///
+/// What keeps the resulting hwdownload/overlay/hwupload chain safe is the explicit
+/// `format=yuv420p` after hwdownload: it forces a real conversion, which reallocates
+/// the frame at the link size instead of the decoder's padded surface height. Drop
+/// that filter as redundant and 1080p h264 fails with "Failed to upload frame: -22".
+///
+/// Run with: ETV_TEST_DISABLED_FILTERS=overlay_vaapi cargo test --package ffpipeline --test vaapi watermark_software_overlay -- --ignored
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark_software_overlay(
+    #[values("1080p_h264.ts", "1080p_hevc_10.ts", "720p_h264.ts")] src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark::default()),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
+/// Exercises the `-ignore_loop 0` input branch instead of the still-image `-loop 1`.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark_animated(
+    #[values("1080p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let res = FrameSize::from_str("1920x1080").unwrap();
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark {
+                    fixture_name: "watermark.gif",
+                    ..TestWatermark::default()
+                }),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
+/// 1440 and 854 are not 64-aligned, so the encoder has to signal the difference from
+/// the coded size with a conformance window. Every other output size in the suite is
+/// 64-aligned in width and only exercises the height half of that. Inert except on
+/// drivers reporting VASurfaceAttribAlignmentSize, so this needs an AMD runner.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn encode_alignment(
+    #[values("1080p_h264.ts", "480p_h264.ts")] src: &'static str,
+    #[values("1440x1080", "854x480", "1920x1080")] res: FrameSize,
+    #[values(("hevc", 8), ("hevc", 10), ("h264", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_vaapi_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
 async fn run_vaapi_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
