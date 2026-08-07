@@ -41,6 +41,7 @@ use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};
 
 const STDERR_RING_LINES: usize = 2_000;
+const STALL_THRESHOLD: Duration = Duration::from_secs(60);
 
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
@@ -190,7 +191,7 @@ impl ChannelSession {
         })
     }
 
-    pub async fn run(&mut self) -> Result<(), ChannelError> {
+    pub async fn run(&mut self, troubleshoot: bool) -> Result<(), ChannelError> {
         self.prep_output_folder().await?;
 
         self.ffmpeg_info = FfmpegInfo::load(
@@ -228,7 +229,12 @@ impl ChannelSession {
 
         // always work ahead initially
         let realtime = false;
-        self.transcode(realtime).await?;
+        self.transcode(realtime, troubleshoot).await?;
+
+        if troubleshoot {
+            log::debug!("troubleshooting complete; terminating.");
+            return Ok(());
+        }
 
         let pm = self.playlist_manager.clone();
         let tn = self.timeout_notify.clone();
@@ -252,12 +258,14 @@ impl ChannelSession {
             if transcoded_buffer <= time::Duration::minutes(1) {
                 // only use realtime when we're at least 30 seconds ahead
                 let realtime = transcoded_buffer >= time::Duration::seconds(30);
-                self.transcode(realtime).await?;
+                self.transcode(realtime, troubleshoot).await?;
             } else {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {}
                     _ = tn.notified() => {
-                        return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
+                        return Err(ChannelError::IdleTimeout(
+                            self.channel_config.number().to_owned()
+                        )                        );
                     }
                 }
             }
@@ -284,7 +292,7 @@ impl ChannelSession {
         Ok(())
     }
 
-    async fn transcode(&mut self, realtime: bool) -> Result<(), ChannelError> {
+    async fn transcode(&mut self, realtime: bool, troubleshoot: bool) -> Result<(), ChannelError> {
         if !realtime {
             log::debug!("channel session will work ahead");
 
@@ -362,16 +370,18 @@ impl ChannelSession {
         let pts_duration = pts_time.map(|p| p.duration);
 
         let result = self
-            .transcode_item(&current_item, realtime, pts_duration)
+            .transcode_item(&current_item, realtime, troubleshoot, pts_duration)
             .await;
 
         let (finish, is_complete) = match result {
             Ok(ok) => ok,
             Err(e @ ChannelError::IdleTimeout(_)) => return Err(e),
+            Err(e @ ChannelError::Stalled(_)) => return Err(e),
+            Err(e) if troubleshoot => return Err(e),
             Err(e) => {
                 log::error!("item failed, replacing with black/silence: {e}");
                 let fake_item = self.fake_playout_item(Some(current_item.finish));
-                self.transcode_item(&fake_item, realtime, pts_duration)
+                self.transcode_item(&fake_item, realtime, troubleshoot, pts_duration)
                     .await?
             }
         };
@@ -388,6 +398,7 @@ impl ChannelSession {
         &mut self,
         current_item: &PlayoutItem,
         realtime: bool,
+        troubleshoot: bool,
         pts_duration: Option<Duration>,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
         // prioritize source from audio tracks, then default source
@@ -711,38 +722,18 @@ impl ChannelSession {
                 let status = status.map_err(|e| ChannelError::StreamFailure(e.to_string()))?;
                 let _ = reader_handle.await;
                 if !status.success() {
-                    let stderr_tail: Vec<_> = ring
-                        .lock()
-                        .map(|r| r.iter().cloned().collect())
-                        .unwrap_or_default();
-
-                    let mut builder = DossierBuilder::new(&self.channel_config, &self.ffmpeg_info)
-                        .item(current_item)
-                        .stderr(stderr_tail)
-                        .video(&video_probe_result)
-                        .audio(&audio_probe_result);
-
-                    if let Some(accel) = &self.hw_accel {
-                        builder = builder.accel(accel);
-                    }
-
-                    if let Some(subtitle_probe_result) = &subtitle_probe_result {
-                        builder = builder.subtitle(subtitle_probe_result);
-                    }
-
-                    if let Some(report_source_file) = self.channel_config.ffmpeg.reports_folder.as_ref().map(|folder| {
-                        PathBuf::from(folder).join(format!(".in-flight-{}.log", self.channel_config.number()))
-                    }) {
-                        builder = builder.report_source(report_source_file);
-                    }
-
-                    let dossier = builder.build();
-                    if let Err(err) = dossier.write().await {
-                        log::error!("failed to save dossier: {err}");
-                    }
+                    self.write_dossier(                        current_item,
+                        &video_probe_result,                        &audio_probe_result,
+                        subtitle_probe_result.as_ref(),
+                        &ring,
+                        format!("ffmpeg exited with code {status}")).await;
                     return Err(ChannelError::StreamFailure(format!(
                         "ffmpeg exited {status}"
                     )));
+                } else if troubleshoot {
+                    self.write_dossier(current_item, &video_probe_result,
+                        &audio_probe_result, subtitle_probe_result.as_ref(),
+                        &ring, "ffmpeg exited successfully".to_string()).await;
                 } else {
                     self.cleanup_old_report().await;
                 }
@@ -752,6 +743,22 @@ impl ChannelSession {
                 let _ = reader_handle.await;
                 self.cleanup_old_report().await;
                 return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
+            }
+            _ = async {
+                    loop {
+                        let playlist_manager = self.playlist_manager.lock().await;
+                        if OffsetDateTime::now_utc() - *playlist_manager.last_progress() > STALL_THRESHOLD {
+                            break;
+                        }
+                        drop(playlist_manager);
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                } => {
+                ffmpeg_child.kill().await.ok();
+                let _ = reader_handle.await;
+                self.write_dossier(current_item, &video_probe_result, &audio_probe_result,
+                    subtitle_probe_result.as_ref(), &ring, "ffmpeg stalled".to_string()).await;
+                return Err(ChannelError::Stalled(self.channel_config.number().to_owned()));
             }
         }
 
@@ -763,7 +770,8 @@ impl ChannelSession {
 
     fn next_state(state: ChannelSessionState, is_complete: bool) -> ChannelSessionState {
         let result = match state {
-            // after seeking and NOT completing the item, seek again, transcode will accelerate if needed
+            // after seeking and NOT completing the item, seek again,
+            // transcode will accelerate if needed
             ChannelSessionState::SeekAndWorkAhead if !is_complete => {
                 ChannelSessionState::SeekAndRealtime
             }
@@ -771,12 +779,14 @@ impl ChannelSession {
             // after seeking and completing the item, start at zero
             ChannelSessionState::SeekAndWorkAhead => ChannelSessionState::ZeroAndWorkAhead,
 
-            // after starting at zero and NOT completing the item, seek, transcode will accelerate if needed
+            // after starting at zero and NOT completing the item, seek,
+            // transcode will accelerate if needed
             ChannelSessionState::ZeroAndWorkAhead if !is_complete => {
                 ChannelSessionState::SeekAndRealtime
             }
 
-            // after starting at zero and completing the item, start at zero again, transcode method will throttle if needed
+            // after starting at zero and completing the item, start at zero again,
+            // transcode method will throttle if needed
             ChannelSessionState::ZeroAndWorkAhead => ChannelSessionState::ZeroAndWorkAhead,
 
             // realtime will always complete items, so start next at zero
@@ -1213,6 +1223,54 @@ impl ChannelSession {
             if report_file.exists() {
                 let _ = tokio::fs::remove_file(report_file).await;
             }
+        }
+    }
+
+    async fn write_dossier(
+        &self,
+        current_item: &PlayoutItem,
+        video_probe_result: &ProbeResult,
+        audio_probe_result: &ProbeResult,
+        subtitle_probe_result: Option<&ProbeResult>,
+        ring: &Arc<std::sync::Mutex<VecDeque<String>>>,
+        outcome: String,
+    ) {
+        let stderr_tail: Vec<_> = ring
+            .lock()
+            .map(|r| r.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let mut builder = DossierBuilder::new(&self.channel_config, &self.ffmpeg_info)
+            .item(current_item)
+            .stderr(stderr_tail)
+            .video(video_probe_result)
+            .audio(audio_probe_result)
+            .outcome(outcome);
+
+        if let Some(accel) = &self.hw_accel {
+            builder = builder.accel(accel);
+        }
+
+        if let Some(subtitle_probe_result) = subtitle_probe_result {
+            builder = builder.subtitle(subtitle_probe_result);
+        }
+
+        if let Some(report_source_file) =
+            self.channel_config
+                .ffmpeg
+                .reports_folder
+                .as_ref()
+                .map(|folder| {
+                    PathBuf::from(folder)
+                        .join(format!(".in-flight-{}.log", self.channel_config.number()))
+                })
+        {
+            builder = builder.report_source(report_source_file);
+        }
+
+        let dossier = builder.build();
+        if let Err(err) = dossier.write().await {
+            log::error!("failed to save dossier: {err}");
         }
     }
 }
