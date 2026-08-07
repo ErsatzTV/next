@@ -1323,7 +1323,10 @@ fn playout_timing_to_pipeline(
 fn source_is_live(source: &PlayoutItemSource) -> bool {
     matches!(
         source,
-        PlayoutItemSource::Script {
+        PlayoutItemSource::Http {
+            is_live: Some(true),
+            ..
+        } | PlayoutItemSource::Script {
             is_live: Some(true),
             ..
         } | PlayoutItemSource::Rtsp { .. }
