@@ -30,6 +30,7 @@ pub struct Dossier {
     media_info: Option<MediaInfo>,
     stderr_tail: Option<Vec<String>>,
     report_source_file: Option<PathBuf>,
+    outcome: Option<String>,
 }
 
 impl Dossier {
@@ -97,6 +98,11 @@ impl Dossier {
                 .unwrap_or_else(|_| String::from("{}"));
             let channel_config_file = dossier_folder.join("channel_config.json");
             tokio::fs::write(&channel_config_file, &channel_config_json).await?;
+
+            if let Some(outcome) = &self.outcome {
+                let outcome_file = dossier_folder.join("outcome.txt");
+                tokio::fs::write(&outcome_file, outcome).await?;
+            }
         }
 
         Ok(())
@@ -111,6 +117,7 @@ pub struct DossierBuilder {
     media_info: Option<MediaInfo>,
     stderr_tail: Option<Vec<String>>,
     report_source_file: Option<PathBuf>,
+    outcome: Option<String>,
 }
 
 impl DossierBuilder {
@@ -126,6 +133,7 @@ impl DossierBuilder {
             media_info: None,
             stderr_tail: None,
             report_source_file: None,
+            outcome: None,
         }
     }
 
@@ -171,6 +179,11 @@ impl DossierBuilder {
         self
     }
 
+    pub fn outcome(mut self, outcome: String) -> DossierBuilder {
+        self.outcome = Some(outcome);
+        self
+    }
+
     pub fn build(self) -> Dossier {
         Dossier {
             channel_config: self.channel_config,
@@ -180,6 +193,7 @@ impl DossierBuilder {
             media_info: self.media_info,
             stderr_tail: self.stderr_tail,
             report_source_file: self.report_source_file,
+            outcome: self.outcome,
         }
     }
 }
