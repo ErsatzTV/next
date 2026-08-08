@@ -192,7 +192,7 @@ impl ChannelSession {
     }
 
     pub async fn run(&mut self, troubleshoot: bool) -> Result<(), ChannelError> {
-        self.prep_output_folder().await?;
+        self.prep_output_folder(troubleshoot).await?;
 
         self.ffmpeg_info = FfmpegInfo::load(
             &self.ffmpeg_path,
@@ -272,7 +272,7 @@ impl ChannelSession {
         }
     }
 
-    async fn prep_output_folder(&self) -> Result<(), ChannelError> {
+    async fn prep_output_folder(&self, troubleshoot: bool) -> Result<(), ChannelError> {
         let output_folder = self.channel_config.expanded_output_folder();
 
         if self.ready_file.exists() {
@@ -280,9 +280,11 @@ impl ChannelSession {
         }
 
         if output_folder.exists() {
-            empty_folder(output_folder)
-                .await
-                .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+            if !troubleshoot {
+                empty_folder(output_folder)
+                    .await
+                    .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+            }
         } else {
             tokio::fs::create_dir(output_folder)
                 .await
@@ -530,6 +532,7 @@ impl ChannelSession {
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),
                 segment_template: self.output_segment_template.clone(),
+                troubleshoot,
             },
             pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
             realtime,

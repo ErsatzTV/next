@@ -281,6 +281,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         format: OutputFormat::Hls {
             playlist: dir.join("live.m3u8").to_string_lossy().into_owned(),
             segment_template: dir.join("segment_%03d.ts").to_string_lossy().into_owned(),
+            troubleshoot: false,
         },
         pts_offset: None,
         realtime: false,
