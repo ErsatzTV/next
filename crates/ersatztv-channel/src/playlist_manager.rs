@@ -33,6 +33,17 @@ pub struct PlaylistManager {
     discontinuity_before: HashSet<String>,
     media_sequence: u64,
     last_served_media_sequence: u64,
+    /// The sequence at the front of the served window, and when it last
+    /// advanced. After its initial placement the window advances with the
+    /// media it serves, one segment per segment duration, rather than with
+    /// the wall clock: program date times fall behind the wall whenever a
+    /// session starts late or production pauses (a live source cannot be
+    /// read ahead of realtime, so reaching a live item stops production
+    /// until its start), and a wall-anchored window then freezes against
+    /// the end of the produced segments for the length of the pause, which
+    /// stalls every player watching.
+    paced_head: Option<u64>,
+    paced_advanced_at: Option<OffsetDateTime>,
     discontinuity_sequence: u64,
     target_duration: u32,
     target_duration_f64: f64,
@@ -84,6 +95,8 @@ impl PlaylistManager {
             discontinuity_before: HashSet::new(),
             media_sequence: 0,
             last_served_media_sequence: 0,
+            paced_head: None,
+            paced_advanced_at: None,
             discontinuity_sequence: 0,
             target_duration,
             target_duration_f64: target_duration as f64,
@@ -123,7 +136,8 @@ impl PlaylistManager {
 
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
-            let generated_playlist = self.generate_playlist(|s| s.to_owned(), None)?;
+            let generated_playlist =
+                self.generate_playlist(|s| s.to_owned(), None, OffsetDateTime::now_utc())?;
             let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
             tokio::fs::write(temp.path(), generated_playlist).await?;
             tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file).await?;
@@ -236,7 +250,8 @@ impl PlaylistManager {
         }
 
         // generate and atomically save playlist
-        let generated_playlist = self.generate_playlist(|s| s.to_owned(), Some(10))?;
+        let generated_playlist =
+            self.generate_playlist(|s| s.to_owned(), Some(10), OffsetDateTime::now_utc())?;
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
         tokio::fs::write(temp.path(), generated_playlist).await?;
         tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
@@ -245,6 +260,7 @@ impl PlaylistManager {
         let generated_subtitle_playlist = self.generate_playlist(
             |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
             Some(10),
+            OffsetDateTime::now_utc(),
         )?;
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
         tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
@@ -268,6 +284,7 @@ impl PlaylistManager {
         &mut self,
         path_map: fn(&str) -> String,
         max_segments: Option<usize>,
+        now: OffsetDateTime,
     ) -> Result<String, ChannelError> {
         let mut playlist = String::new();
         playlist.push_str("#EXTM3U\n");
@@ -276,19 +293,55 @@ impl PlaylistManager {
 
         let (skip, limit) = match max_segments {
             Some(max) => {
-                let anchor = OffsetDateTime::now_utc()
-                    - Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 5u64);
+                // rfc8216bis 6.2.2 forbids trimming a live playlist below
+                // three target durations; the cap also stops the window from
+                // advancing past produced media during a production pause
+                let floor_cap = self.media_sequence + self.segments.len().saturating_sub(3) as u64;
 
-                let candidate_skip = self
-                    .segments
-                    .iter()
-                    .position(|s| s.program_date_time >= anchor)
-                    .unwrap_or_else(|| self.segments.len().saturating_sub(max));
+                let mut head = match self.paced_head {
+                    Some(head) => head.max(self.media_sequence),
+                    None => {
+                        // initial placement only: a few segments behind the
+                        // wall clock, exactly where a live window sits
+                        let anchor = now
+                            - Duration::from_secs(
+                                ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 5u64,
+                            );
+                        let candidate_skip = self
+                            .segments
+                            .iter()
+                            .position(|s| s.program_date_time >= anchor)
+                            .unwrap_or_else(|| self.segments.len().saturating_sub(max));
+                        self.paced_advanced_at = Some(now);
+                        self.media_sequence + candidate_skip as u64
+                    }
+                };
+
+                // advance with the media being served: one segment per
+                // segment duration, up to the floor cap. a pause in
+                // production is absorbed by walking through the segments
+                // produced ahead of it, instead of freezing the window for
+                // the length of the pause
+                if let Some(mut advanced_at) = self.paced_advanced_at {
+                    while head < floor_cap {
+                        let index = (head - self.media_sequence) as usize;
+                        let Some(segment) = self.segments.get(index) else {
+                            break;
+                        };
+                        let step = time::Duration::seconds_f64(segment.duration.max(0.1));
+                        if now - advanced_at < step {
+                            break;
+                        }
+                        head += 1;
+                        advanced_at += step;
+                    }
+                    self.paced_advanced_at = Some(advanced_at);
+                }
 
                 // monotonic clamp
-                let candidate_ms = self.media_sequence + candidate_skip as u64;
-                let clamped_ms = candidate_ms.max(self.last_served_media_sequence);
+                let clamped_ms = head.max(self.last_served_media_sequence);
                 self.last_served_media_sequence = clamped_ms;
+                self.paced_head = Some(clamped_ms);
 
                 let skip = (clamped_ms - self.media_sequence) as usize;
                 let skip = skip.min(self.segments.len());
@@ -406,4 +459,86 @@ fn render_subtitle_segment(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager() -> PlaylistManager {
+        let folder = std::env::temp_dir();
+        PlaylistManager::new(
+            OffsetDateTime::UNIX_EPOCH,
+            4,
+            folder.clone(),
+            folder.join(".ready-test"),
+            PlaylistManagerOutputFiles {
+                generated_playlist_file: String::from("live.m3u8"),
+                ffmpeg_playlist_file: String::from("ffmpeg.m3u8"),
+                generated_subtitle_playlist_file: String::from("live_sub.m3u8"),
+            },
+        )
+    }
+
+    fn manager_with_segments(segment_count: usize) -> PlaylistManager {
+        let mut m = manager();
+        for i in 0..segment_count {
+            m.segments.push_back(Segment {
+                path: format!("live{i:06}.ts"),
+                duration: 4.0,
+                program_date_time: OffsetDateTime::UNIX_EPOCH + Duration::from_secs(i as u64 * 4),
+            });
+        }
+        m
+    }
+
+    /// The served window advances with the media it serves, one segment per
+    /// segment duration, regardless of what the wall clock does. A session
+    /// whose production pauses (a live source cannot be read ahead of
+    /// realtime) used to freeze its window against the end of the produced
+    /// segments for the whole pause; now the window keeps walking through
+    /// the buffered segments and only rests once it has genuinely run out
+    /// of media.
+    #[test]
+    fn window_advances_with_media_while_production_pauses() {
+        let mut m = manager_with_segments(20);
+        let start = OffsetDateTime::UNIX_EPOCH + Duration::from_secs(40);
+
+        let first = m
+            .generate_playlist(|s| s.to_owned(), Some(10), start)
+            .unwrap();
+        assert!(first.contains("#EXT-X-MEDIA-SEQUENCE:5\n"));
+
+        // no new segments arrive; the window still advances at playback rate
+        let later = m
+            .generate_playlist(|s| s.to_owned(), Some(10), start + Duration::from_secs(8))
+            .unwrap();
+        assert!(later.contains("#EXT-X-MEDIA-SEQUENCE:7\n"));
+
+        // and however long the pause runs, the window never trims below
+        // three target durations of media
+        let much_later = m
+            .generate_playlist(|s| s.to_owned(), Some(10), start + Duration::from_secs(400))
+            .unwrap();
+        assert!(much_later.contains("#EXT-X-MEDIA-SEQUENCE:17\n"));
+        assert!(much_later.contains("live000017.ts"));
+        assert!(much_later.contains("live000019.ts"));
+    }
+
+    /// The media sequence a client observed must never move backwards, no
+    /// matter how the pacing state and the wall clock relate.
+    #[test]
+    fn media_sequence_is_monotonic_across_renders() {
+        let mut m = manager_with_segments(20);
+        let start = OffsetDateTime::UNIX_EPOCH + Duration::from_secs(60);
+
+        let first = m
+            .generate_playlist(|s| s.to_owned(), Some(10), start)
+            .unwrap();
+        let second = m
+            .generate_playlist(|s| s.to_owned(), Some(10), start)
+            .unwrap();
+
+        assert_eq!(first, second);
+    }
 }
