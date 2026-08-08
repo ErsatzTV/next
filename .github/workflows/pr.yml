@@ -83,7 +83,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v2-ubuntu22
+          # Must vary by runner image: rust-cache keys on os/arch only, so 22.04 and
+          # latest would share a key and restore each other's host build scripts.
+          prefix-key: v3-${{ matrix.os }}
           # Workaround for https://github.com/Swatinem/rust-cache/issues/341:
           # on the updated macOS runner image, cache-bin's restored cargo/rustc
           # dispatches as rustup-init and fails with "unexpected argument".
