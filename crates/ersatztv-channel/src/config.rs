@@ -463,6 +463,8 @@ pub struct SubtitleNormalizationConfig {
     pub mode: SubtitleMode,
     #[serde(default)]
     pub fonts_folder: Option<String>,
+    #[serde(default)]
+    pub force_style: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default, Copy)]

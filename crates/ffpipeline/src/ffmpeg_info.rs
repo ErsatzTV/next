@@ -146,14 +146,9 @@ impl FfmpegInfo {
             .min_by_key(|f| self.preference_position(f))
     }
 
-    pub fn escape_path(path: &str) -> String {
-        #[cfg(target_os = "windows")]
-        let normalized: Cow<'_, str> = Cow::Owned(path.replace('\\', "/"));
-        #[cfg(not(target_os = "windows"))]
-        let normalized = Cow::Borrowed(path);
-
-        let mut out = String::with_capacity(normalized.len() + 8);
-        for ch in normalized.chars() {
+    pub fn escape_filter_value(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 8);
+        for ch in value.chars() {
             match ch {
                 // filtergraph delimeters get one backslash
                 '[' | ']' | ',' | ';' => {
@@ -177,6 +172,13 @@ impl FfmpegInfo {
         }
 
         out
+    }
+
+    pub fn escape_path(path: &str) -> String {
+        #[cfg(target_os = "windows")]
+        let path = &path.replace('\\', "/");
+
+        Self::escape_filter_value(path)
     }
 
     /// Returns the preference index for the video filter. If the filter is not known, or does not

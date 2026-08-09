@@ -289,6 +289,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
         fonts_folder: None,
+        subtitle_force_style: None,
         reports_folder: None,
         report_id: None,
     }
