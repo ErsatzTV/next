@@ -481,11 +481,18 @@ impl Pipeline {
             } else if !subtitle_stream.is_subtitle_image()
                 && final_output_settings.subtitle_mode == SubtitleMode::Burn
             {
+                // only use force_style with SRT, which doesn't have any styling of its own
+                let mut final_force_style = None;
+                if subtitle_stream.codec == "srt" || subtitle_stream.codec == "subrip" {
+                    final_force_style = final_output_settings.subtitle_force_style;
+                }
+
                 filters.push(PipelineFilter::Video(
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),
                         seek: subtitle_input.in_point,
                         fonts_folder: final_output_settings.fonts_folder.to_owned(),
+                        force_style: final_force_style,
                     }
                     .into(),
                 ))
