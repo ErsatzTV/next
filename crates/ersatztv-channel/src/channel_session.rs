@@ -549,6 +549,12 @@ impl ChannelSession {
                 .subtitle
                 .fonts_folder
                 .clone(),
+            subtitle_force_style: self
+                .channel_config
+                .normalization
+                .subtitle
+                .force_style
+                .clone(),
             reports_folder: self.channel_config.ffmpeg.reports_folder.clone(),
             report_id: Some(self.channel_config.number().to_owned()),
         };
