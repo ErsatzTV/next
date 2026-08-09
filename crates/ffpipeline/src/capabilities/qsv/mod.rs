@@ -56,4 +56,8 @@ impl QsvCapabilities {
 
         fourcc.is_some_and(|c| self.vpp_pixel_formats.contains(&QsvPixelFormat(c)))
     }
+
+    pub fn count(&self) -> usize {
+        self.supported_decoders.len() + self.supported_encoders.len()
+    }
 }

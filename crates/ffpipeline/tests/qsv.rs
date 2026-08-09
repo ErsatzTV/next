@@ -22,7 +22,7 @@ async fn make_qsv_accel() -> Option<&'static HardwareAccel> {
     QSV_ACCEL
         .get_or_init(|| async {
             let capabilities = QsvCapabilities::probe().ok()?;
-            Some(HardwareAccel::Qsv(Qsv { capabilities }))
+            (capabilities.count() > 0).then(|| HardwareAccel::Qsv(Qsv { capabilities }))
         })
         .await
         .as_ref()
@@ -107,7 +107,7 @@ async fn run_qsv_test_case(mut test_case: TestCase) {
         }
 
         let Some(accel) = make_qsv_accel().await else {
-            panic!("qsv accel failed to probe");
+            panic!("qsv accel failed to probe any capabilities");
         };
 
         test_case.params.accel = Some(accel.clone());
