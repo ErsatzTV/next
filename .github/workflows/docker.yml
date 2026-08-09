@@ -84,13 +84,13 @@ jobs:
             type=image,name=ghcr.io/ersatztv/next,name-canonical=true,push-by-digest=true
 
       - name: Save Digest to Artifact
-        run: echo ${{ steps.build.outputs.digest }} > digest.txt
+        run: echo ${{ steps.build.outputs.digest }} > digest-${{ matrix.name }}.txt
 
       - name: Upload Digest Artifact
         uses: actions/upload-artifact@v6
         with:
           name: digest-${{ matrix.name }}
-          path: digest.txt
+          path: digest-${{ matrix.name }}.txt
 
   build_test_images:
     name: Build ${{ matrix.name }} test image
@@ -157,13 +157,13 @@ jobs:
             type=image,name=ghcr.io/ersatztv/next-test,name-canonical=true,push-by-digest=true
 
       - name: Save Digest to Artifact
-        run: echo ${{ steps.build.outputs.digest }} > digest.txt
+        run: echo ${{ steps.build.outputs.digest }} > digest-${{ matrix.name }}.txt
 
       - name: Upload Digest Artifact
         uses: actions/upload-artifact@v6
         with:
           name: test-digest-${{ matrix.name }}
-          path: digest.txt
+          path: digest-${{ matrix.name }}.txt
 
   merge_manifests:
     name: Merge Manifests
@@ -186,14 +186,16 @@ jobs:
       - name: Download All Digest Artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: digest-*
+          merge-multiple: true
           path: digests/
 
       - name: Read Digests From Artifacts
         id: digests
         run: |
-          AMD64_HASH=$(cat digests/digest-amd64/digest.txt)
-          # ARM32V7_HASH=$(cat digests/digest-arm32v7/digest.txt)
-          # ARM64_HASH=$(cat digests/digest-arm64/digest.txt)
+          AMD64_HASH=$(cat digests/digest-amd64.txt)
+          # ARM32V7_HASH=$(cat digests/digest-arm32v7.txt)
+          # ARM64_HASH=$(cat digests/digest-arm64.txt)
 
           DOCKER_HUB_DIGESTS="ersatztv/next@${AMD64_HASH}"
           GHCR_DIGESTS="ghcr.io/ersatztv/next@${AMD64_HASH}"
@@ -235,14 +237,15 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           pattern: test-digest-*
+          merge-multiple: true
           path: digests/
 
       - name: Read Digests From Artifacts
         id: digests
         run: |
-          AMD64_HASH=$(cat digests/test-digest-amd64/digest.txt)
-          # ARM32V7_HASH=$(cat digests/test-digest-arm32v7/digest.txt)
-          # ARM64_HASH=$(cat digests/test-digest-arm64/digest.txt)
+          AMD64_HASH=$(cat digests/digest-amd64.txt)
+          # ARM32V7_HASH=$(cat digests/digest-arm32v7.txt)
+          # ARM64_HASH=$(cat digests/digest-arm64.txt)
 
           DOCKER_HUB_DIGESTS="ersatztv/next-test@${AMD64_HASH}"
           GHCR_DIGESTS="ghcr.io/ersatztv/next-test@${AMD64_HASH}"
