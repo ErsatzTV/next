@@ -52,8 +52,10 @@ impl HwAccel for Cuda {
                 }
                 .into()
             }
+            // pad_cuda only supports 8-bit content
             VideoFilter::Pad(PadFilter { size, .. })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda) =>
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::PadCuda)
+                    && current_state.pixel_format.bit_depth() == 8 =>
             {
                 PadCuda { size: *size }.into()
             }
