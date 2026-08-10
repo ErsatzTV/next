@@ -10,8 +10,8 @@ use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
-    EnvironmentVariable, FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet,
-    VideoFormat,
+    EnvironmentVariable, FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat,
+    SurfaceSet, VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -117,7 +117,12 @@ impl HwAccel for Vaapi {
                     _ => false,
                 };
 
-                let mut tonemap_options = vec![KnownVideoFilter::TonemapVaapi];
+                let mut tonemap_options = vec![];
+
+                if current_state.hdr_format == HdrFormat::Pq {
+                    tonemap_options.push(KnownVideoFilter::TonemapVaapi);
+                }
+
                 if self.opencl_capabilities.can_tonemap() {
                     // Prepend because OpenCL is preferred.
                     tonemap_options.insert(0, KnownVideoFilter::TonemapOpencl);
@@ -450,7 +455,7 @@ impl VideoFilterOp for TonemapVaapi {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.is_hdr = false;
+        state.hdr_format = HdrFormat::None;
         state.pixel_format = self.output_format.into();
         state.surface = FrameSurface::Vaapi;
     }
@@ -591,7 +596,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         }
     }
 

@@ -8,7 +8,7 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::{BwdifCudaOptions, VideoFilterOptions, YadifCudaOptions};
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
@@ -62,7 +62,9 @@ impl HwAccel for Cuda {
             VideoFilter::ToneMap(ToneMapFilter {
                 output_format: format,
                 ..
-            }) if current_state.is_hdr && current_state.surface == FrameSurface::Vulkan => {
+            }) if current_state.hdr_format != HdrFormat::None
+                && current_state.surface == FrameSurface::Vulkan =>
+            {
                 LibplaceboCuda {
                     algorithm: filter_options.libplacebo.tonemapping.clone(),
                     format: match format {
@@ -197,7 +199,8 @@ impl HwAccel for Cuda {
             &video_stream.profile,
             &PixelFormat::parse(&video_stream.pix_fmt),
         ) {
-            let is_vulkan_hdr = video_stream.color_params.is_hdr()
+            let is_vulkan_hdr = (video_stream.color_params.is_hdr()
+                || video_stream.dv_profile == Some(5))
                 && ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vulkan)
                 && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo);
 
@@ -385,7 +388,7 @@ impl VideoFilterOp for LibplaceboCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.format;
-        state.is_hdr = false;
+        state.hdr_format = HdrFormat::None;
         state.surface = FrameSurface::Cuda;
     }
 

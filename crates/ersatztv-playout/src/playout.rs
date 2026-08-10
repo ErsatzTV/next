@@ -327,6 +327,8 @@ pub struct VideoHint {
     pub color_transfer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_primaries: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dv_profile: Option<u32>,
 }
 
 impl VideoHint {

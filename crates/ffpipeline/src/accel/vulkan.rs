@@ -6,7 +6,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
@@ -176,7 +176,7 @@ impl VideoFilterOp for LibplaceboVulkan {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.format;
-        state.is_hdr = false;
+        state.hdr_format = HdrFormat::None;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {

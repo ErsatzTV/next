@@ -72,7 +72,7 @@ async fn pipeline(
 #[rstest]
 #[tokio::test]
 #[ignore]
-async fn tonemap(
+async fn tonemap_hdr(
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
@@ -81,6 +81,47 @@ async fn tonemap(
     if let Ok(vf) = VideoFormat::from_str(vf_str) {
         run_cuda_test_case(TestCase {
             fixture_name: "1080p_hevc_10_hdr.ts",
+            params: TestOutputParams {
+                audio_format: Some(af),
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                filter_options: VideoFilterOptions {
+                    libplacebo: LibplaceboOptions {
+                        tonemapping: Some("hable".to_string()),
+                    },
+                    ..VideoFilterOptions::default()
+                },
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: af.to_string(),
+        })
+        .await;
+    }
+}
+
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn tonemap_dv(
+    #[values(
+        "1080p_hevc_10_dv5.mp4",
+        "1080p_hevc_10_dv7.mp4",
+        "1080p_hevc_10_dv81.mp4",
+        "1080p_hevc_10_dv82.mp4",
+        "1080p_hevc_10_dv84.mp4"
+    )]
+    src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
+    #[values("aac", "ac3")] af: AudioFormat,
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_cuda_test_case(TestCase {
+            fixture_name: src,
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
