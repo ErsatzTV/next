@@ -361,6 +361,23 @@ impl ChannelSession {
         let current_item = match current_item_result {
             Ok(playout_item) => playout_item,
             Err(ChannelError::PlayoutJsonNoItem { next_start }) => {
+                // filling a schedule gap with black is normal; log it so black
+                // air is explainable
+                match next_start {
+                    Some(start) => {
+                        let gap = start - self.transcoded_until;
+                        log::debug!(
+                            "no playout item covers {}; filling with black/silence for {}m {}s until the next item",
+                            self.transcoded_until,
+                            gap.whole_minutes(),
+                            gap.whole_seconds() % 60
+                        );
+                    }
+                    None => log::debug!(
+                        "no playout item covers {} and none is scheduled after it; filling with black/silence",
+                        self.transcoded_until
+                    ),
+                }
                 self.fake_playout_item(next_start)
             }
             Err(err) => {
