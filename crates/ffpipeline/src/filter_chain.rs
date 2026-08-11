@@ -194,7 +194,10 @@ impl FilterChain {
                         );
                     }
 
+                    best.kind.configure(&current_state);
+
                     // ensure main input matches overlay required pixel format
+                    let main_req = best.kind.main_input_state(&current_state);
                     if current_state.pixel_format != main_req.pixel_format {
                         Self::convert_pixel_format(
                             ffmpeg_info,

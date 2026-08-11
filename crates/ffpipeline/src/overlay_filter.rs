@@ -54,21 +54,31 @@ impl Default for SoftwareOverlay {
     }
 }
 
+impl SoftwareOverlay {
+    fn main_pixel_format(&self) -> PixelFormat {
+        match self.bit_depth {
+            10 => PixelFormat::Yuv420p10le,
+            _ => PixelFormat::Yuv420p,
+        }
+    }
+
+    fn secondary_pixel_format(&self) -> PixelFormat {
+        match self.bit_depth {
+            10 => PixelFormat::Yuva420p10le,
+            _ => PixelFormat::Yuva420p,
+        }
+    }
+}
+
 impl OverlayKindOp for SoftwareOverlay {
     fn apply_to(&self, state: &mut FrameState) {
-        match self.bit_depth {
-            10 => state.pixel_format = PixelFormat::Yuv420p10le,
-            _ => state.pixel_format = PixelFormat::Yuv420p,
-        }
+        state.pixel_format = self.main_pixel_format();
     }
 
     fn main_input_state(&self, current_state: &FrameState) -> FrameState {
         FrameState {
             surface: FrameSurface::System,
-            pixel_format: match current_state.pixel_format.bit_depth() {
-                10 => PixelFormat::Yuv420p10le,
-                _ => PixelFormat::Yuv420p,
-            },
+            pixel_format: self.main_pixel_format(),
             ..current_state.clone()
         }
     }
@@ -76,10 +86,7 @@ impl OverlayKindOp for SoftwareOverlay {
     fn secondary_input_state(&self, current_state: &FrameState) -> FrameState {
         FrameState {
             surface: FrameSurface::System,
-            pixel_format: match current_state.pixel_format.bit_depth() {
-                10 => PixelFormat::Yuva420p10le,
-                _ => PixelFormat::Yuva420p,
-            },
+            pixel_format: self.secondary_pixel_format(),
             ..current_state.clone()
         }
     }

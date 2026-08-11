@@ -175,7 +175,13 @@ async fn tonemap_dv(
 #[tokio::test]
 #[ignore]
 async fn watermark(
-    #[values("1080p_h264.ts", "720p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+    #[values(
+        "1080p_hevc_10.ts",
+        "1080p_h264.ts",
+        "720p_h264.ts",
+        "480p_h264_anamorphic.ts"
+    )]
+    src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
 ) {
