@@ -47,11 +47,15 @@ pub async fn main() {
 
     if let Err(err) = run().await {
         match err {
+            // the idle timeout is a routine reap (the heartbeat went stale
+            // because no client is watching), not a failure; supervisors
+            // read a non-zero exit as a crash, so it must exit clean
             ChannelError::IdleTimeout(_) => log::info!("{err}"),
-            _ => log::error!("{err}"),
+            _ => {
+                log::error!("{err}");
+                std::process::exit(1);
+            }
         };
-
-        std::process::exit(1);
     }
 }
 
