@@ -126,7 +126,7 @@ impl FrameSize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{FrameSurface, PixelFormat};
+    use crate::pipeline::{FrameSurface, HdrFormat, PixelFormat};
 
     #[test]
     fn anamorphic_square_pixels_1280x720() {
@@ -141,7 +141,7 @@ mod tests {
             display_aspect_ratio: Some(String::from("16:9")),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let target = FrameSize {
@@ -165,7 +165,7 @@ mod tests {
             display_aspect_ratio: Some(String::from("16:9")),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let target = FrameSize {

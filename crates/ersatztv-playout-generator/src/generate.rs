@@ -218,6 +218,7 @@ async fn build_items(
                                     color_transfer: v.color_params.color_transfer.clone(),
                                     display_aspect_ratio: v.display_aspect_ratio.clone(),
                                     sample_aspect_ratio: v.sample_aspect_ratio.clone(),
+                                    dv_profile: v.dv_profile,
                                 })
                             } else {
                                 None

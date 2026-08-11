@@ -28,6 +28,8 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
 
 static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
 
+static DOLBY_VISION_SIDE_DATA: &str = "DOVI configuration record";
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ProbeResultColorParams {
     pub color_range: Option<String>,
@@ -57,6 +59,7 @@ pub struct ProbeResultVideoStream {
     pub stream_index: u32,
     pub codec: String,
     pub codec_type: CodecType,
+    pub dv_profile: Option<u32>,
     pub profile: String,
     pub height: Option<u32>,
     pub width: Option<u32>,
@@ -143,6 +146,18 @@ impl std::fmt::Display for ProbeResultStream {
                     a.stream_index, a.codec, a.channels
                 )
             }
+            ProbeResultStream::Video(v) if let Some(dv_profile) = v.dv_profile => {
+                write!(
+                    f,
+                    "{}: video ({} dv profile {} - {}x{} - {:?})",
+                    v.stream_index,
+                    v.codec,
+                    dv_profile,
+                    v.width.unwrap_or(0),
+                    v.height.unwrap_or(0),
+                    v.frame_rate
+                )
+            }
             ProbeResultStream::Video(v) => {
                 write!(
                     f,
@@ -215,6 +230,14 @@ struct ProbeOutputStream {
     color_transfer: Option<String>,
     color_primaries: Option<String>,
     field_order: Option<String>,
+    #[serde(default)]
+    side_data_list: Vec<StreamSideData>,
+}
+
+#[derive(Deserialize)]
+struct StreamSideData {
+    side_data_type: String,
+    dv_profile: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -426,6 +449,11 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 .map_or(String::from("unknown"), |c| c.to_lowercase()),
             codec_type: CodecType::from_str(output_stream.codec_type.to_lowercase().as_str())
                 .unwrap_or(CodecType::Video),
+            dv_profile: output_stream
+                .side_data_list
+                .iter()
+                .find(|sd| sd.side_data_type == DOLBY_VISION_SIDE_DATA)
+                .and_then(|sd| sd.dv_profile),
             profile: output_stream
                 .profile
                 .clone()
