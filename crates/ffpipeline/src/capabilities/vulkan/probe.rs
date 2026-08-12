@@ -43,7 +43,7 @@ use libvulkan_sys::{
     vk_make_api_version,
 };
 
-use crate::capabilities::vulkan::VulkanCapabilities;
+use crate::capabilities::vulkan::{VulkanCapabilities, format_uuid};
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
 
@@ -192,19 +192,6 @@ unsafe fn get_device_identity(vk: &VkLib, device: VkPhysicalDevice) -> DeviceIde
             device_uuid: (id_props.device_uuid != [0u8; 16]).then_some(id_props.device_uuid),
         }
     }
-}
-
-/// Same textual form `nvidia-smi -L` prints, so the two can be compared by eye
-fn format_uuid(uuid: [u8; 16]) -> String {
-    let hex: String = uuid.iter().map(|b| format!("{b:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
 }
 
 fn select_device(
