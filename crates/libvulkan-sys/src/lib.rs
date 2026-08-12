@@ -1,6 +1,7 @@
 #![allow(non_upper_case_globals)]
 
 use std::ffi::{c_char, c_void};
+use std::mem::offset_of;
 
 pub type VkInstance = *mut c_void;
 pub type VkPhysicalDevice = *mut c_void;
@@ -14,6 +15,8 @@ pub const VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: u32 = 2;
 // Structure types
 pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: u32 = 0;
 pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: u32 = 1;
+pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2: u32 = 1000059001;
+pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES: u32 = 1000071004;
 pub const VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR: u32 = 1000023000;
 pub const VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR: u32 = 1000023001;
 pub const VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR: u32 = 1000024001;
@@ -70,6 +73,17 @@ pub const fn vk_make_api_version(variant: u32, major: u32, minor: u32, patch: u3
     (variant << 29) | (major << 22) | (minor << 12) | patch
 }
 
+// VkPhysicalDeviceLimits contains VkDeviceSize members, so it is 8-byte aligned and
+// pipeline_cache_uuid is padded out to offset 296. Getting this wrong makes
+// vkGetPhysicalDeviceProperties write past the end of the struct.
+const _: () = assert!(size_of::<VkPhysicalDeviceProperties>() == 824);
+const _: () = assert!(offset_of!(VkPhysicalDeviceProperties, limits) == 296);
+const _: () = assert!(offset_of!(VkPhysicalDeviceProperties, sparse_properties) == 800);
+const _: () = assert!(size_of::<VkPhysicalDeviceProperties2>() == 840);
+const _: () = assert!(offset_of!(VkPhysicalDeviceProperties2, properties) == 16);
+const _: () = assert!(size_of::<VkPhysicalDeviceIDProperties>() == 64);
+const _: () = assert!(offset_of!(VkPhysicalDeviceIDProperties, device_uuid) == 16);
+
 #[repr(C)]
 pub struct VkApplicationInfo {
     pub s_type: u32,
@@ -108,6 +122,17 @@ pub struct VkExtent2D {
 }
 
 #[repr(C)]
+pub struct VkPhysicalDeviceIDProperties {
+    pub s_type: u32,
+    pub p_next: *mut c_void,
+    pub device_uuid: [u8; 16],
+    pub driver_uuid: [u8; 16],
+    pub device_luid: [u8; 8],
+    pub device_node_mask: u32,
+    pub device_luid_valid: u32,
+}
+
+#[repr(C)]
 pub struct VkPhysicalDeviceProperties {
     pub api_version: u32,
     pub driver_version: u32,
@@ -121,13 +146,20 @@ pub struct VkPhysicalDeviceProperties {
 }
 
 #[repr(C)]
+pub struct VkPhysicalDeviceProperties2 {
+    pub s_type: u32,
+    pub p_next: *mut c_void,
+    pub properties: VkPhysicalDeviceProperties,
+}
+
+#[repr(C, align(8))]
 pub struct VkPhysicalDeviceLimits {
     _data: [u8; 504],
 }
 
 #[repr(C)]
 pub struct VkPhysicalDeviceSparseProperties {
-    _data: [u8; 20],
+    _data: [u32; 5],
 }
 
 #[repr(C)]

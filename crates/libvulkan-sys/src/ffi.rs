@@ -6,7 +6,7 @@ use libloading::Library;
 
 use crate::{
     VkExtensionProperties, VkInstance, VkInstanceCreateInfo, VkPhysicalDevice,
-    VkPhysicalDeviceProperties, VkResult,
+    VkPhysicalDeviceProperties, VkPhysicalDeviceProperties2, VkResult,
 };
 
 pub type PfnVkVoidFunction = unsafe extern "C" fn();
@@ -29,6 +29,8 @@ pub struct VkLib {
     ) -> VkResult,
     pub vkGetPhysicalDeviceProperties:
         unsafe extern "C" fn(VkPhysicalDevice, *mut VkPhysicalDeviceProperties),
+    pub vkGetPhysicalDeviceProperties2:
+        unsafe extern "C" fn(VkPhysicalDevice, *mut VkPhysicalDeviceProperties2),
     pub vkGetInstanceProcAddr:
         unsafe extern "C" fn(VkInstance, *const c_char) -> Option<PfnVkVoidFunction>,
 }
@@ -48,6 +50,7 @@ impl VkLib {
             let vkEnumerateDeviceExtensionProperties =
                 *lib.get(b"vkEnumerateDeviceExtensionProperties\0")?;
             let vkGetPhysicalDeviceProperties = *lib.get(b"vkGetPhysicalDeviceProperties\0")?;
+            let vkGetPhysicalDeviceProperties2 = *lib.get(b"vkGetPhysicalDeviceProperties2\0")?;
             let vkGetInstanceProcAddr = *lib.get(b"vkGetInstanceProcAddr\0")?;
 
             Ok(Self {
@@ -57,6 +60,7 @@ impl VkLib {
                 vkEnumeratePhysicalDevices,
                 vkEnumerateDeviceExtensionProperties,
                 vkGetPhysicalDeviceProperties,
+                vkGetPhysicalDeviceProperties2,
                 vkGetInstanceProcAddr,
             })
         }
