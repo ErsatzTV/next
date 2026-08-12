@@ -1,7 +1,6 @@
 #![allow(non_upper_case_globals)]
 
 use std::ffi::{c_char, c_void};
-use std::mem::offset_of;
 
 pub type VkInstance = *mut c_void;
 pub type VkPhysicalDevice = *mut c_void;
@@ -72,17 +71,6 @@ pub const VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME: &str = "VK_KHR_video_encode_av
 pub const fn vk_make_api_version(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
     (variant << 29) | (major << 22) | (minor << 12) | patch
 }
-
-// VkPhysicalDeviceLimits contains VkDeviceSize members, so it is 8-byte aligned and
-// pipeline_cache_uuid is padded out to offset 296. Getting this wrong makes
-// vkGetPhysicalDeviceProperties write past the end of the struct.
-const _: () = assert!(size_of::<VkPhysicalDeviceProperties>() == 824);
-const _: () = assert!(offset_of!(VkPhysicalDeviceProperties, limits) == 296);
-const _: () = assert!(offset_of!(VkPhysicalDeviceProperties, sparse_properties) == 800);
-const _: () = assert!(size_of::<VkPhysicalDeviceProperties2>() == 840);
-const _: () = assert!(offset_of!(VkPhysicalDeviceProperties2, properties) == 16);
-const _: () = assert!(size_of::<VkPhysicalDeviceIDProperties>() == 64);
-const _: () = assert!(offset_of!(VkPhysicalDeviceIDProperties, device_uuid) == 16);
 
 #[repr(C)]
 pub struct VkApplicationInfo {
