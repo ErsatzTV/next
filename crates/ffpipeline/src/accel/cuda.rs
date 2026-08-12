@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::ArgVec;
 use crate::capabilities::nvidia::NvidiaCapabilities;
+use crate::capabilities::vulkan::VulkanCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
@@ -19,11 +20,35 @@ use crate::video_filter::{
 #[derive(Debug, Clone, Serialize)]
 pub struct Cuda {
     pub capabilities: NvidiaCapabilities,
+    pub vulkan_capabilities: Option<VulkanCapabilities>,
 }
 
 impl Cuda {
-    pub fn new(capabilities: NvidiaCapabilities) -> Cuda {
-        Cuda { capabilities }
+    pub fn new(
+        capabilities: NvidiaCapabilities,
+        vulkan_capabilities: Option<VulkanCapabilities>,
+    ) -> Cuda {
+        Cuda {
+            capabilities,
+            vulkan_capabilities,
+        }
+    }
+
+    fn vulkan_decode_format(codec: &str) -> Option<VideoFormat> {
+        match codec {
+            "av1" => Some(VideoFormat::Av1),
+            "h264" => Some(VideoFormat::H264),
+            "hevc" => Some(VideoFormat::Hevc),
+            _ => None,
+        }
+    }
+
+    fn can_vulkan_decode(&self, video_stream: &ProbeResultVideoStream) -> bool {
+        self.vulkan_capabilities.as_ref().is_some_and(|vk| {
+            Self::vulkan_decode_format(&video_stream.codec).is_some_and(|f| {
+                vk.can_decode(&f, PixelFormat::parse(&video_stream.pix_fmt).bit_depth())
+            })
+        })
     }
 }
 
@@ -202,7 +227,8 @@ impl HwAccel for Cuda {
             let is_vulkan_hdr = (video_stream.color_params.is_hdr()
                 || video_stream.dv_profile == Some(5))
                 && ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vulkan)
-                && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo);
+                && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo)
+                && self.can_vulkan_decode(video_stream);
 
             let decoder = if is_vulkan_hdr {
                 HwDecoder {
