@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 
-use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010};
+use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4};
 use serde::Serialize;
 
 use crate::pipeline::{PixelFormat, VideoFormat};
@@ -51,6 +51,7 @@ impl QsvCapabilities {
         let fourcc = match pixel_format {
             PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(MFX_FOURCC_NV12),
             PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(MFX_FOURCC_P010),
+            PixelFormat::Bgra => Some(MFX_FOURCC_RGB4),
             _ => None,
         };
 
