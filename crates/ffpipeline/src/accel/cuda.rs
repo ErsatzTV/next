@@ -24,17 +24,13 @@ pub struct Cuda {
 }
 
 impl Cuda {
-    pub fn new(capabilities: NvidiaCapabilities) -> Cuda {
+    pub fn new(
+        capabilities: NvidiaCapabilities,
+        vulkan_capabilities: Option<VulkanCapabilities>,
+    ) -> Cuda {
         Cuda {
             capabilities,
-            vulkan_capabilities: None,
-        }
-    }
-
-    pub fn with_vulkan(self, vulkan_capabilities: Option<VulkanCapabilities>) -> Cuda {
-        Cuda {
             vulkan_capabilities,
-            ..self
         }
     }
 

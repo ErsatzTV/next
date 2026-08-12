@@ -24,10 +24,8 @@ async fn make_cuda_accel() -> Option<&'static HardwareAccel> {
     CUDA_ACCEL
         .get_or_init(|| async {
             let capabilities = NvidiaCapabilities::probe().ok()?;
-            let vulkan_caps = VulkanCapabilities::probe_for_nvidia(capabilities.device_uuid()).ok();
-            Some(HardwareAccel::Cuda(
-                Cuda::new(capabilities).with_vulkan(vulkan_caps),
-            ))
+            let vulkan = VulkanCapabilities::probe_for_nvidia(capabilities.device_uuid()).ok();
+            Some(HardwareAccel::Cuda(Cuda::new(capabilities, vulkan)))
         })
         .await
         .as_ref()

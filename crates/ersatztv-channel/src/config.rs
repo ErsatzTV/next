@@ -330,7 +330,7 @@ impl HardwareAccel {
                                 })
                                 .ok();
                         Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
-                            ffpipeline::accel::cuda::Cuda::new(capabilities).with_vulkan(vulkan),
+                            ffpipeline::accel::cuda::Cuda::new(capabilities, vulkan),
                         ))
                     }
                     Err(e) => {
