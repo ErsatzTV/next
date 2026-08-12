@@ -96,14 +96,12 @@ impl CapsBuf {
     }
 }
 
-const NVIDIA_VENDOR_ID: u32 = 0x10de;
-
 #[derive(Clone, Copy)]
 enum DeviceTarget {
     /// Highest scoring device; its index is meaningful as `vulkan:{index}`
     Best,
     /// The device backing a CUDA device, which ffmpeg reaches via `vulkan=vk@nv`
-    Nvidia(Option<[u8; 16]>),
+    Nvidia([u8; 16]),
 }
 
 impl VulkanCapabilities {
@@ -112,11 +110,19 @@ impl VulkanCapabilities {
     }
 
     /// Probe the Vulkan device that backs the CUDA device. `device_uuid` comes from
-    /// `cuDeviceGetUuid` and matches Vulkan's `deviceUUID` on NVIDIA; without it the
-    /// only NVIDIA-vendor device is used instead.
+    /// `cuDeviceGetUuid`, the same call ffmpeg makes to derive `vulkan=vk@nv`, matched
+    /// against the same `deviceUUID`. Without it ffmpeg cannot derive the device either,
+    /// so there is nothing to report.
     pub fn probe_for_nvidia(
         device_uuid: Option<[u8; 16]>,
     ) -> Result<VulkanCapabilities, FFPipelineError> {
+        let device_uuid = device_uuid.ok_or_else(|| {
+            FFPipelineError::VulkanCapabilitiesError(
+                "CUDA device uuid unavailable; ffmpeg cannot derive a Vulkan device from CUDA"
+                    .into(),
+            )
+        })?;
+
         probe_target(DeviceTarget::Nvidia(device_uuid))
     }
 }
@@ -221,7 +227,7 @@ fn select_device(
                 FFPipelineError::VulkanCapabilitiesError("no Vulkan physical devices found".into())
             })
         }
-        DeviceTarget::Nvidia(Some(uuid)) => identities
+        DeviceTarget::Nvidia(uuid) => identities
             .iter()
             .position(|identity| identity.device_uuid == Some(uuid))
             .ok_or_else(|| {
@@ -230,29 +236,6 @@ fn select_device(
                     format_uuid(uuid)
                 ))
             }),
-        DeviceTarget::Nvidia(None) => {
-            let nvidia: Vec<usize> = identities
-                .iter()
-                .enumerate()
-                .filter(|(_, identity)| identity.vendor_id == NVIDIA_VENDOR_ID)
-                .map(|(i, _)| i)
-                .collect();
-
-            match nvidia.as_slice() {
-                [] => Err(FFPipelineError::VulkanCapabilitiesError(
-                    "no NVIDIA Vulkan device found".into(),
-                )),
-                [only] => Ok(*only),
-                [first, ..] => {
-                    log::warn!(
-                        "[vulkan] {} NVIDIA devices and no CUDA uuid to disambiguate; using device {}",
-                        nvidia.len(),
-                        first
-                    );
-                    Ok(*first)
-                }
-            }
-        }
     }
 }
 

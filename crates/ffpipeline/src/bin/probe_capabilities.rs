@@ -148,15 +148,6 @@ fn print_cuda_vulkan_tonemap(caps: &NvidiaCapabilities) {
         "  CUDA device:   {}",
         device_uuid.map_or_else(|| String::from("(uuid unavailable)"), format_uuid)
     );
-    println!(
-        "  Matched by:    {}",
-        if device_uuid.is_some() {
-            "device uuid"
-        } else {
-            "vendor id (no CUDA uuid to match on)"
-        }
-    );
-
     let vulkan = match VulkanCapabilities::probe_for_nvidia(device_uuid) {
         Ok(vulkan) => vulkan,
         Err(e) => {
