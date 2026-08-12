@@ -89,7 +89,8 @@ async fn pipeline(
         "1080p_hevc_10.ts",
         "720p_hevc_10.ts",
         "480p_hevc_10.ts",
-        "480p_h264_anamorphic.ts"
+        "480p_h264_anamorphic.ts",
+        "480p_h264_sps_change.ts"
     )]
     src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
