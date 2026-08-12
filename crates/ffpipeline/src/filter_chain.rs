@@ -524,7 +524,9 @@ impl FilterChain {
                     continue;
                 }
 
-                if let Some(fused) = Self::try_fuse_cuda(&self.filters[i], &self.filters[j]) {
+                let fused = Self::try_fuse_cuda(&self.filters[i], &self.filters[j])
+                    .or_else(|| Self::try_fuse_qsv(&self.filters[i], &self.filters[j]));
+                if let Some(fused) = fused {
                     self.filters[i] = fused;
                     self.filters.remove(j);
                     changed = true;
@@ -559,6 +561,31 @@ impl FilterChain {
                     ..s.clone()
                 }),
             )),
+            _ => None,
+        }
+    }
+
+    /// Fuse a `vpp_qsv` scale immediately followed by a `vpp_qsv` pad into a
+    /// single combined `vpp_qsv` instance. Chaining two `vpp_qsv` scales drops
+    /// the final frame at EOF on real hardware (measured on Intel B50), so the
+    /// scale is folded into the pad which then emits one instance carrying both
+    /// w/h and pad_* options.
+    fn try_fuse_qsv(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
+        use VideoFilter::{PadQsv as PadQsvV, ScaleQsv as ScaleQsvV};
+
+        use crate::accel::qsv::PadQsv;
+        let (PipelineFilter::Video(va), PipelineFilter::Video(vb)) = (a, b) else {
+            return None;
+        };
+        match (va, vb) {
+            (ScaleQsvV(scale), PadQsvV(pad))
+                if scale.size.is_some() && pad.size.is_some() && pad.scale.is_none() =>
+            {
+                Some(PipelineFilter::Video(PadQsvV(PadQsv {
+                    scale: Some(scale.clone()),
+                    ..pad.clone()
+                })))
+            }
             _ => None,
         }
     }
@@ -802,6 +829,7 @@ mod tests {
             hwaccels: HashSet::new(),
             video_filters,
             preferred_filters: HashMap::new(),
+            video_filter_options: HashMap::new(),
         }
     }
 
