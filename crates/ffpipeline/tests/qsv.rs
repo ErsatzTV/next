@@ -37,6 +37,7 @@ async fn pipeline(
         "1080p_h264.ts",
         "720p_h264.ts",
         "480p_h264.ts",
+        "480p_h264_sps_change.ts",
         "1080p_h264_10.ts",
         "720p_h264_10.ts",
         "480p_h264_10.ts",
