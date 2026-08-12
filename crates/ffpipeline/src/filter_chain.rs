@@ -22,7 +22,8 @@ pub(crate) struct FilterChain {
     surfaces: SurfaceSet,
     audio_label: String,
     video_label: String,
-    complex_filter: String,
+    audio_complex_filter: String,
+    video_complex_filter: String,
 }
 
 impl FilterChain {
@@ -32,7 +33,8 @@ impl FilterChain {
             surfaces: SurfaceSet::new(),
             audio_label: String::new(),
             video_label: String::new(),
-            complex_filter: String::new(),
+            audio_complex_filter: String::new(),
+            video_complex_filter: String::new(),
         }
     }
 
@@ -571,7 +573,10 @@ impl FilterChain {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
 
-        let mut filter_chains: Vec<String> = Vec::new();
+        self.audio_complex_filter.clear();
+        self.video_complex_filter.clear();
+
+        let mut video_filter_chains: Vec<String> = Vec::new();
 
         // build filter chain
         let audio_filter_count = self
@@ -600,7 +605,7 @@ impl FilterChain {
             self.audio_label = String::from("[a]");
             filter_chain.push_str(&self.audio_label);
 
-            filter_chains.push(filter_chain);
+            self.audio_complex_filter = filter_chain;
         }
 
         let video_filter_count = self
@@ -639,7 +644,12 @@ impl FilterChain {
 
                         let main_label = format!("v_m{}", overlay_num);
                         if !pending.is_empty() {
-                            flush(&mut filter_chains, &mut pending, &current_in, &main_label);
+                            flush(
+                                &mut video_filter_chains,
+                                &mut pending,
+                                &current_in,
+                                &main_label,
+                            );
                             current_in = main_label;
                         }
 
@@ -652,7 +662,7 @@ impl FilterChain {
                             sec_in.to_owned()
                         } else {
                             let sec_label = format!("v_s{}", overlay_num);
-                            filter_chains.push(format!(
+                            video_filter_chains.push(format!(
                                 "[{}]{}[{}]",
                                 sec_in,
                                 sec_args.join(","),
@@ -663,7 +673,7 @@ impl FilterChain {
 
                         let out_label = format!("v_o{}", overlay_num);
                         if let Some(arg) = overlay.kind.as_arg(overlay.location.clone()) {
-                            filter_chains.push(format!(
+                            video_filter_chains.push(format!(
                                 "[{}][{}]{}[{}]",
                                 current_in, sec_ref, arg, out_label
                             ));
@@ -676,14 +686,14 @@ impl FilterChain {
             }
 
             if !pending.is_empty() {
-                flush(&mut filter_chains, &mut pending, &current_in, "v");
+                flush(&mut video_filter_chains, &mut pending, &current_in, "v");
                 self.video_label = String::from("[v]");
             } else if overlay_num > 0 {
                 self.video_label = format!("[{}]", current_in);
             }
         }
 
-        self.complex_filter = filter_chains.join(";");
+        self.video_complex_filter = video_filter_chains.join(";");
     }
 
     pub(crate) fn audio_label(&self) -> &str {
@@ -695,11 +705,23 @@ impl FilterChain {
     }
 
     pub(crate) fn as_arg(&self) -> ArgVec {
-        if self.complex_filter.is_empty() {
-            Vec::new()
-        } else {
-            args!["-filter_complex", self.complex_filter.to_owned(),]
+        let mut result = Vec::new();
+
+        if !self.audio_complex_filter.is_empty() {
+            result.extend(args![
+                "-filter_complex",
+                self.audio_complex_filter.to_owned()
+            ]);
         }
+
+        if !self.video_complex_filter.is_empty() {
+            result.extend(args![
+                "-filter_complex",
+                self.video_complex_filter.to_owned()
+            ]);
+        }
+
+        result
     }
 }
 
