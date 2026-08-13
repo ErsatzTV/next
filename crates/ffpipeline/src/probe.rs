@@ -12,6 +12,7 @@ use tokio::process::Command;
 use crate::ArgVec;
 use crate::error::FFPipelineError;
 use crate::frame_rate::FrameRate;
+use crate::frame_size::{is_unspecified_ratio, parse_aspect_ratio, storage_aspect_ratio};
 use crate::input::LavfiInputSource;
 use crate::input::LocalInputSource;
 use crate::input::{FfmpegInputArgs, HttpInputSource};
@@ -79,37 +80,37 @@ impl ProbeResultVideoStream {
     }
 
     pub fn is_anamorphic(&self) -> bool {
-        // TODO: need to calculate SAR when it's not provided; port MediaStream::SampleAspectRatio
+        let sample_aspect_ratio = self.sample_aspect_ratio.as_deref();
 
-        match &self.sample_aspect_ratio {
-            Some(sample_aspect_ratio) => {
-                let display_aspect_ratio = self
-                    .display_aspect_ratio
-                    .as_ref()
-                    .map_or("", |dar| dar.as_ref());
+        // square pixels
+        if sample_aspect_ratio.map(str::trim) == Some("1:1") {
+            return false;
+        }
 
-                // square pixels
-                if sample_aspect_ratio == "1:1" {
-                    false
-                }
-                // 0:1 is "unspecified", so anything other than that will be non-square/anamorphic
-                else if sample_aspect_ratio != "0:1" {
-                    true
-                }
-                // SAR 0:1 && DAR 0:1 (both unspecified) means square pixels
-                else if display_aspect_ratio == "0:1" {
-                    false
-                } else if let Some(height) = self.height
-                    && let Some(width) = self.width
-                {
-                    // DAR == W:H is square
-                    display_aspect_ratio != format!("{}:{}", width, height)
-                } else {
-                    // shouldn't ever happen; height and width should only be missing for subtitles
-                    false
-                }
-            }
-            None => false, // assumed SAR of 1:1
+        // any SAR we can read that isn't 1:1 is non-square/anamorphic
+        if !is_unspecified_ratio(sample_aspect_ratio) {
+            return true;
+        }
+
+        // no usable SAR, so DAR is the only clue left
+        let display_aspect_ratio = self.display_aspect_ratio.as_deref();
+        if is_unspecified_ratio(display_aspect_ratio) {
+            return false;
+        }
+
+        // shouldn't ever happen; height and width should only be missing for subtitles
+        let (Some(width), Some(height)) = (self.width, self.height) else {
+            return false;
+        };
+
+        match (
+            display_aspect_ratio.and_then(parse_aspect_ratio),
+            storage_aspect_ratio(width, height),
+        ) {
+            // DAR that matches W:H is square pixels. compare numerically because ffmpeg reports a
+            // reduced ratio (3:2, not 720:480) and media servers sometimes report a rounded decimal
+            (Some(dar), Some(sar)) => (dar / sar - 1f64).abs() > 0.01f64,
+            _ => false,
         }
     }
 
@@ -473,5 +474,77 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
         }))),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    fn video_stream(
+        width: Option<u32>,
+        height: Option<u32>,
+        sample_aspect_ratio: Option<&str>,
+        display_aspect_ratio: Option<&str>,
+    ) -> ProbeResultVideoStream {
+        ProbeResultVideoStream {
+            stream_index: 0,
+            codec: String::from("h264"),
+            codec_type: CodecType::Video,
+            dv_profile: None,
+            profile: String::from("high"),
+            height,
+            width,
+            frame_rate: FrameRate::default(),
+            sample_aspect_ratio: sample_aspect_ratio.map(String::from),
+            display_aspect_ratio: display_aspect_ratio.map(String::from),
+            pix_fmt: String::from("yuv420p"),
+            color_params: ProbeResultColorParams::default(),
+            field_order: None,
+        }
+    }
+
+    #[rstest]
+    // a usable SAR always decides on its own
+    #[case(720, 480, Some("32:27"), Some("16:9"), true)]
+    #[case(720, 480, Some("1:1"), Some("3:2"), false)]
+    #[case(1920, 1080, Some("1:1"), Some("16:9"), false)]
+    // no usable SAR: fall back to DAR vs the storage aspect ratio
+    #[case(720, 480, None, Some("16:9"), true)]
+    #[case(720, 480, Some(""), Some("16:9"), true)]
+    #[case(720, 480, Some("0:0"), Some("16:9"), true)]
+    #[case(720, 480, Some("0:1"), Some("16:9"), true)]
+    #[case(720, 480, Some("0:0"), Some("1.777778"), true)]
+    // DAR matching the storage aspect ratio means square pixels, reduced or decimal
+    #[case(720, 480, Some("0:0"), Some("3:2"), false)]
+    #[case(720, 480, Some("0:0"), Some("1.5"), false)]
+    #[case(720, 480, Some("0:0"), Some("720:480"), false)]
+    #[case(1920, 1080, None, Some("16:9"), false)]
+    // nothing usable at all
+    #[case(720, 480, None, None, false)]
+    #[case(720, 480, Some("0:1"), Some("0:1"), false)]
+    #[case(720, 480, Some("0:0"), Some("junk"), false)]
+    fn is_anamorphic_cases(
+        #[case] width: u32,
+        #[case] height: u32,
+        #[case] sample_aspect_ratio: Option<&str>,
+        #[case] display_aspect_ratio: Option<&str>,
+        #[case] expected: bool,
+    ) {
+        let stream = video_stream(
+            Some(width),
+            Some(height),
+            sample_aspect_ratio,
+            display_aspect_ratio,
+        );
+        assert_eq!(stream.is_anamorphic(), expected);
+    }
+
+    #[test]
+    fn is_anamorphic_without_size() {
+        let stream = video_stream(None, None, Some("0:0"), Some("16:9"));
+        assert!(!stream.is_anamorphic());
     }
 }
