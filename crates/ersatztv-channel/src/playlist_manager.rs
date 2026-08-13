@@ -177,8 +177,13 @@ impl PlaylistManager {
                 .map(|f| f.to_owned())
                 .unwrap_or(self.target_duration_f64);
 
-            if duration > (self.target_duration as f64) {
-                self.target_duration = duration.ceil() as u32;
+            // rfc8216bis 6.2.1 requires EXT-X-TARGETDURATION to stay constant,
+            // and 4.4.3.1 only requires it to cover segment durations rounded
+            // to the nearest integer; raise it (a spec violation players
+            // tolerate better than an undersized target) only when a segment
+            // genuinely exceeds the rounding allowance
+            if duration.round() > (self.target_duration as f64) {
+                self.target_duration = duration.round() as u32;
             }
 
             let program_date_time = self.last_segment_end;
