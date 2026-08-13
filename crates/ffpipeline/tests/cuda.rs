@@ -9,6 +9,7 @@ use std::str::FromStr;
 use common::*;
 use ffpipeline::accel::cuda::Cuda;
 use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
+use ffpipeline::capabilities::vulkan::VulkanCapabilities;
 use ffpipeline::ffmpeg_info::KnownHardwareAccel;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
@@ -23,7 +24,8 @@ async fn make_cuda_accel() -> Option<&'static HardwareAccel> {
     CUDA_ACCEL
         .get_or_init(|| async {
             let capabilities = NvidiaCapabilities::probe().ok()?;
-            Some(HardwareAccel::Cuda(Cuda::new(capabilities)))
+            let vulkan = VulkanCapabilities::probe_for_nvidia(capabilities.device_uuid()).ok();
+            Some(HardwareAccel::Cuda(Cuda::new(capabilities, vulkan)))
         })
         .await
         .as_ref()
@@ -43,7 +45,8 @@ async fn pipeline(
         "1080p_hevc_10.ts",
         "720p_hevc_10.ts",
         "480p_hevc_10.ts",
-        "480p_h264_anamorphic.ts"
+        "480p_h264_anamorphic.ts",
+        "480p_h264_sps_change.ts"
     )]
     src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,

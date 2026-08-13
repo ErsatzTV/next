@@ -136,6 +136,7 @@ impl VideoFilterOp for HwUploadFilter {
             (_, 10, _) => PixelFormat::P010le,
             (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
             (FrameSurface::Vaapi, 8, true) => PixelFormat::Bgra,
+            (FrameSurface::Qsv, 8, true) => PixelFormat::Bgra,
             _ => PixelFormat::Nv12,
         };
 
@@ -148,7 +149,13 @@ impl VideoFilterOp for HwUploadFilter {
         match &self.target_surface {
             FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
             FrameSurface::Rkmpp => Some(format!("{format_filter}hwupload")),
+
+            #[cfg(target_os = "windows")]
             FrameSurface::Qsv => Some(format!("{format_filter}hwupload=extra_hw_frames=64")),
+
+            #[cfg(not(target_os = "windows"))]
+            FrameSurface::Qsv => Some(format!("{format_filter}hwupload")),
+
             FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
             FrameSurface::Vulkan => Some(format!("{format_filter}hwupload")),
             FrameSurface::VideoToolbox => Some(format!("{format_filter}hwupload")),

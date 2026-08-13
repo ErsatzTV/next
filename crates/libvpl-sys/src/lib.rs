@@ -42,6 +42,7 @@ pub const MFX_PROFILE_VP9_3: u32 = 3;
 
 pub const MFX_FOURCC_NV12: u32 = u32::from_ne_bytes(*b"NV12");
 pub const MFX_FOURCC_P010: u32 = u32::from_ne_bytes(*b"P010");
+pub const MFX_FOURCC_RGB4: u32 = u32::from_ne_bytes(*b"RGB4");
 
 #[repr(C)]
 #[derive(Copy, Clone)]

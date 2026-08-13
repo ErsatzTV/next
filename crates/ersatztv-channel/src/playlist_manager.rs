@@ -12,6 +12,10 @@ use time::macros::format_description;
 
 const MIN_SEGMENTS: usize = 4;
 
+// 12s
+const PUBLISH_LEAD: Duration =
+    Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 3);
+
 #[derive(Clone)]
 pub struct SubtitleSource {
     pub cues: Arc<Vec<Cue>>,
@@ -108,6 +112,10 @@ impl PlaylistManager {
         &self.last_progress
     }
 
+    pub fn is_ready(&self) -> &bool {
+        &self.ready
+    }
+
     pub async fn before_new_pipeline(
         &mut self,
         new_pts_offset: Option<PtsOffset>,
@@ -123,7 +131,7 @@ impl PlaylistManager {
 
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
-            let generated_playlist = self.generate_playlist(|s| s.to_owned(), None)?;
+            let (generated_playlist, _) = self.generate_playlist(|s| s.to_owned(), None)?;
             let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
             tokio::fs::write(temp.path(), generated_playlist).await?;
             tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file).await?;
@@ -236,13 +244,14 @@ impl PlaylistManager {
         }
 
         // generate and atomically save playlist
-        let generated_playlist = self.generate_playlist(|s| s.to_owned(), Some(10))?;
+        let (generated_playlist, playlist_segment_count) =
+            self.generate_playlist(|s| s.to_owned(), Some(10))?;
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
         tokio::fs::write(temp.path(), generated_playlist).await?;
         tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
 
         // generate and atomically save subtitle playlist
-        let generated_subtitle_playlist = self.generate_playlist(
+        let (generated_subtitle_playlist, _) = self.generate_playlist(
             |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
             Some(10),
         )?;
@@ -250,7 +259,7 @@ impl PlaylistManager {
         tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
         tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
 
-        if !self.ready && self.segments.len() >= MIN_SEGMENTS {
+        if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
             tokio::fs::write(&self.ready_file, b"").await?;
             self.ready = true;
         }
@@ -268,7 +277,7 @@ impl PlaylistManager {
         &mut self,
         path_map: fn(&str) -> String,
         max_segments: Option<usize>,
-    ) -> Result<String, ChannelError> {
+    ) -> Result<(String, usize), ChannelError> {
         let mut playlist = String::new();
         playlist.push_str("#EXTM3U\n");
         playlist.push_str("#EXT-X-VERSION:7\n");
@@ -276,23 +285,22 @@ impl PlaylistManager {
 
         let (skip, limit) = match max_segments {
             Some(max) => {
-                let anchor = OffsetDateTime::now_utc()
-                    - Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 5u64);
+                let horizon = OffsetDateTime::now_utc() + PUBLISH_LEAD;
 
-                let candidate_skip = self
+                // index one past the newest segment we want to publish
+                let head = self
                     .segments
                     .iter()
-                    .position(|s| s.program_date_time >= anchor)
-                    .unwrap_or_else(|| self.segments.len().saturating_sub(max));
+                    .position(|s| s.program_date_time >= horizon)
+                    .unwrap_or(self.segments.len());
 
-                // monotonic clamp
-                let candidate_ms = self.media_sequence + candidate_skip as u64;
+                // monotonic clamp, in absolute media-sequence space
+                let candidate_ms = self.media_sequence + head.saturating_sub(max) as u64;
                 let clamped_ms = candidate_ms.max(self.last_served_media_sequence);
                 self.last_served_media_sequence = clamped_ms;
 
-                let skip = (clamped_ms - self.media_sequence) as usize;
-                let skip = skip.min(self.segments.len());
-                (skip, max)
+                let skip = ((clamped_ms - self.media_sequence) as usize).min(head);
+                (skip, head - skip)
             }
             None => (0, self.segments.len()),
         };
@@ -333,7 +341,7 @@ impl PlaylistManager {
             playlist.push_str(&format!("{}\n", path_map(&segment.path)));
         }
 
-        Ok(playlist)
+        Ok((playlist, limit))
     }
 
     async fn get_new_segment_durations(&self) -> Result<HashMap<String, f64>, ChannelError> {

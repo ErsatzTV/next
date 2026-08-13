@@ -42,6 +42,8 @@ use crate::pts_scanner::{PtsScanner, PtsTime};
 
 const STDERR_RING_LINES: usize = 2_000;
 const STALL_THRESHOLD: Duration = Duration::from_secs(60);
+const PLAYLIST_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+const PLAYLIST_UPDATE_INTERVAL_STARTUP: Duration = Duration::from_millis(200);
 
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
@@ -222,8 +224,13 @@ impl ChannelSession {
                     tn.notify_one();
                     break;
                 }
+                let interval = if *playlist_manager.is_ready() {
+                    PLAYLIST_UPDATE_INTERVAL
+                } else {
+                    PLAYLIST_UPDATE_INTERVAL_STARTUP
+                };
                 drop(playlist_manager);
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(interval).await;
             }
         });
 

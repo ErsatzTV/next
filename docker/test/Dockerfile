@@ -34,14 +34,34 @@ COPY crates/ffpipeline/tests/fixtures /build/crates/ffpipeline/tests/fixtures
 
 COPY <<'SCRIPT' /app/run-tests
 #!/bin/bash
-# usage: run-tests [suite ...]   (default: all suites present)
-suites=("$@")
+# usage: run-tests [suite ...] [filter ...] [-- libtest-args ...]
+#   run-tests                     all suites, all tests
+#   run-tests cuda qsv            those suites, all tests
+#   run-tests cuda tonemap        cuda suite, tests matching "tonemap"
+#   run-tests tonemap             all suites, tests matching "tonemap"
+#   run-tests cuda -- --nocapture cuda suite, extra libtest args
+# Leading args that name an existing suite select suites; everything after the
+# first non-suite arg is forwarded to each test binary.
+suites=()
+passthru=()
+while [ $# -gt 0 ]; do
+    if [ "$1" = "--" ]; then
+        shift
+        passthru+=("$@")
+        break
+    fi
+    if [ ${#passthru[@]} -eq 0 ] && [ -x "/app/tests/$1" ]; then
+        suites+=("$1")
+    else
+        passthru+=("$1")
+    fi
+    shift
+done
 [ ${#suites[@]} -eq 0 ] && suites=($(ls /app/tests))
 rc=0
 for s in "${suites[@]}"; do
-    [ -x "/app/tests/$s" ] || { echo "no such suite: $s"; rc=1; continue; }
-    echo "=============== $s ==============="
-    "/app/tests/$s" --ignored --test-threads 1 --nocapture || rc=1
+    echo "=============== $s ${passthru[*]} ==============="
+    "/app/tests/$s" --ignored --test-threads 1 "${passthru[@]}" || rc=1
 done
 exit $rc
 SCRIPT
