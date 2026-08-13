@@ -25,9 +25,10 @@ use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter,
-    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions,
-    SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
+    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, FadeFilter,
+    FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
+    SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
+    VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -181,6 +182,14 @@ impl PixelFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HdrFormat {
+    None,
+    Pq,
+    Hlg,
+    Dv5,
+}
+
 #[derive(Clone, Debug, derive_more::Display)]
 #[display(
     "FrameState(size={},is_anamorphic={},surface={})",
@@ -196,7 +205,7 @@ pub struct FrameState {
     pub(crate) display_aspect_ratio: Option<String>,
     pub(crate) surface: FrameSurface,
     pub(crate) pixel_format: PixelFormat,
-    pub(crate) is_hdr: bool,
+    pub(crate) hdr_format: HdrFormat,
 }
 
 pub enum PipelineInput {
@@ -326,6 +335,16 @@ impl Pipeline {
             &final_output_settings,
         );
 
+        let hdr = match (
+            video_stream.dv_profile,
+            video_stream.color_params.color_transfer.as_deref(),
+        ) {
+            (Some(5), _) => HdrFormat::Dv5,
+            (_, Some("smpte2084")) => HdrFormat::Pq,
+            (_, Some("arib-std-b67")) => HdrFormat::Hlg,
+            _ => HdrFormat::None,
+        };
+
         let initial_state = FrameState {
             size: FrameSize {
                 width: video_stream
@@ -343,7 +362,7 @@ impl Pipeline {
             surface: video_decoder.output_surface(),
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
-            is_hdr: video_stream.color_params.is_hdr(),
+            hdr_format: hdr,
         };
 
         let preferred_pixel_format = match final_output_settings.bit_depth {
@@ -373,6 +392,7 @@ impl Pipeline {
 
         filters.extend([
             PipelineFilter::Video(LoopFilter { is_still_image }.into()),
+            PipelineFilter::Video(Dv5WorkaroundFilter.into()),
             PipelineFilter::Video(
                 ToneMapFilter {
                     algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
@@ -468,7 +488,7 @@ impl Pipeline {
                     } else {
                         PixelFormat::parse(&subtitle_stream.pix_fmt)
                     },
-                    is_hdr: false,
+                    hdr_format: HdrFormat::None,
                 };
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
@@ -481,11 +501,18 @@ impl Pipeline {
             } else if !subtitle_stream.is_subtitle_image()
                 && final_output_settings.subtitle_mode == SubtitleMode::Burn
             {
+                // only use force_style with SRT, which doesn't have any styling of its own
+                let mut final_force_style = None;
+                if subtitle_stream.codec == "srt" || subtitle_stream.codec == "subrip" {
+                    final_force_style = final_output_settings.subtitle_force_style;
+                }
+
                 filters.push(PipelineFilter::Video(
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),
                         seek: subtitle_input.in_point,
                         fonts_folder: final_output_settings.fonts_folder.to_owned(),
+                        force_style: final_force_style,
                     }
                     .into(),
                 ))
@@ -541,7 +568,7 @@ impl Pipeline {
                 } else {
                     PixelFormat::parse(&watermark_stream.pix_fmt)
                 },
-                is_hdr: false,
+                hdr_format: HdrFormat::None,
             };
 
             let video_size = final_output_settings

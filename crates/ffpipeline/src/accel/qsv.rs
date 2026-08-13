@@ -6,6 +6,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
+use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -21,7 +22,7 @@ impl HwAccel for Qsv {
         &self,
         video_filter: &VideoFilter,
         ffmpeg_info: &FfmpegInfo,
-        _current_state: &FrameState,
+        current_state: &FrameState,
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
@@ -29,11 +30,15 @@ impl HwAccel for Qsv {
                 size,
                 input_is_anamorphic,
                 ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) => ScaleQsv {
-                size: *size,
-                input_is_anamorphic: *input_is_anamorphic,
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                && !current_state.pixel_format.has_alpha() =>
+            {
+                ScaleQsv {
+                    size: *size,
+                    input_is_anamorphic: *input_is_anamorphic,
+                }
+                .into()
             }
-            .into(),
             VideoFilter::Deinterlace(DeinterlaceFilter { .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceQsv) =>
             {
@@ -46,10 +51,29 @@ impl HwAccel for Qsv {
         }
     }
 
+    fn best_overlay(
+        &self,
+        overlay_filter: &OverlayFilter,
+        ffmpeg_info: &FfmpegInfo,
+        current_state: &FrameState,
+    ) -> OverlayFilter {
+        match overlay_filter.kind {
+            // overlay_qsv only supports 8-bit content
+            OverlayKind::Software(_)
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::OverlayQsv)
+                    && current_state.pixel_format.bit_depth() == 8 =>
+            {
+                overlay_filter.with_kind(OverlayKind::Qsv(QsvOverlay))
+            }
+            _ => overlay_filter.clone(),
+        }
+    }
+
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         let format = match codec {
             "h264" => Some(VideoFormat::H264),
             "hevc" => Some(VideoFormat::Hevc),
+            "mpeg2video" => Some(VideoFormat::Mpeg2Video),
             _ => None,
         };
 
@@ -100,12 +124,16 @@ impl HwAccel for Qsv {
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
-        Some(
-            FormatQsv {
-                format: *pixel_format,
-            }
-            .into(),
-        )
+        if pixel_format.has_alpha() {
+            None
+        } else {
+            Some(
+                FormatQsv {
+                    format: *pixel_format,
+                }
+                .into(),
+            )
+        }
     }
 
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
@@ -137,6 +165,14 @@ impl HwAccel for Qsv {
     }
 
     fn accepts_upload_format(&self, pixel_format: &PixelFormat) -> bool {
+        self.capabilities.vpp_supports_format(pixel_format)
+    }
+
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        pixel_format: &PixelFormat,
+    ) -> bool {
         self.capabilities.vpp_supports_format(pixel_format)
     }
 }
@@ -231,5 +267,39 @@ impl VideoFilterOp for DeinterlaceQsv {
     fn as_arg(&self) -> Option<String> {
         let mode = self.mode.as_deref().unwrap_or("2");
         Some(format!("deinterlace_qsv=mode={mode}"))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QsvOverlay;
+
+impl OverlayKindOp for QsvOverlay {
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = PixelFormat::Nv12;
+        state.surface = FrameSurface::Qsv;
+    }
+
+    fn main_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            pixel_format: PixelFormat::Nv12,
+            surface: FrameSurface::Qsv,
+            ..current_state.clone()
+        }
+    }
+
+    fn secondary_input_state(&self, current_state: &FrameState) -> FrameState {
+        FrameState {
+            pixel_format: PixelFormat::Bgra,
+            surface: FrameSurface::Qsv,
+            ..current_state.clone()
+        }
+    }
+
+    fn as_arg(&self, location: Option<FramePoint>) -> Option<String> {
+        if let Some(location) = location {
+            Some(format!("overlay_qsv=x={}:y={}", location.x, location.y))
+        } else {
+            Some(String::from("overlay_qsv=x=(W-w)/2:y=(H-h)/2"))
+        }
     }
 }

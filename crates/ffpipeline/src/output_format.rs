@@ -9,6 +9,7 @@ pub enum OutputFormat {
     Hls {
         playlist: String,
         segment_template: String,
+        troubleshoot: bool,
     },
 }
 
@@ -31,6 +32,7 @@ impl OutputFormat {
             OutputFormat::Hls {
                 playlist,
                 segment_template,
+                troubleshoot,
             } => {
                 if output_context.video_codec.codec_name != VideoCodec::COPY {
                     args.extend(args![
@@ -56,9 +58,16 @@ impl OutputFormat {
                     segment_template.to_owned(),
                     "-hls_segment_type",
                     "mpegts",
-                    "-hls_flags",
-                    "program_date_time+omit_endlist+append_list+independent_segments",
                 ]);
+
+                if *troubleshoot {
+                    args.extend(args!["-hls_flags", "append_list+independent_segments"]);
+                } else {
+                    args.extend(args![
+                        "-hls_flags",
+                        "program_date_time+omit_endlist+append_list+independent_segments"
+                    ]);
+                }
 
                 match output_context.pts_offset {
                     Some(pts_offset) if pts_offset.duration > Duration::ZERO => {}

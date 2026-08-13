@@ -8,7 +8,7 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat};
 
 #[derive(Debug, Clone)]
 pub enum ForceOriginalAspectRatio {
@@ -68,6 +68,7 @@ pub enum VideoFilter {
     ColorChannelMixer(ColorChannelMixerFilter),
     Fade(FadeFilter),
     Crop(CropFilter),
+    Dv5Workaround(Dv5WorkaroundFilter),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -135,6 +136,7 @@ impl VideoFilterOp for HwUploadFilter {
             (_, 10, _) => PixelFormat::P010le,
             (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
             (FrameSurface::Vaapi, 8, true) => PixelFormat::Bgra,
+            (FrameSurface::Qsv, 8, true) => PixelFormat::Bgra,
             _ => PixelFormat::Nv12,
         };
 
@@ -147,7 +149,13 @@ impl VideoFilterOp for HwUploadFilter {
         match &self.target_surface {
             FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
             FrameSurface::Rkmpp => Some(format!("{format_filter}hwupload")),
+
+            #[cfg(target_os = "windows")]
             FrameSurface::Qsv => Some(format!("{format_filter}hwupload=extra_hw_frames=64")),
+
+            #[cfg(not(target_os = "windows"))]
+            FrameSurface::Qsv => Some(format!("{format_filter}hwupload")),
+
             FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
             FrameSurface::Vulkan => Some(format!("{format_filter}hwupload")),
             FrameSurface::VideoToolbox => Some(format!("{format_filter}hwupload")),
@@ -360,7 +368,7 @@ pub struct ToneMapFilter {
 
 impl VideoFilterOp for ToneMapFilter {
     fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        if state.is_hdr {
+        if state.hdr_format != HdrFormat::None {
             Some(self.clone().into())
         } else {
             None
@@ -369,7 +377,7 @@ impl VideoFilterOp for ToneMapFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.output_format;
-        state.is_hdr = false;
+        state.hdr_format = HdrFormat::None;
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -378,7 +386,7 @@ impl VideoFilterOp for ToneMapFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!(
-            "zscale=transfer=linear,tonemap={},zscale=transfer=bt709,format={}",
+            "zscale=t=linear,zscale=p=bt709,tonemap={},zscale=p=bt709:t=bt709:m=bt709:r=tv,format={}",
             self.algorithm.as_deref().unwrap_or("linear"),
             self.output_format.as_arg()
         ))
@@ -492,6 +500,7 @@ pub struct SubtitlesFilter {
     pub path: String,
     pub seek: Duration,
     pub fonts_folder: Option<String>,
+    pub force_style: Option<String>,
 }
 
 impl VideoFilterOp for SubtitlesFilter {
@@ -512,13 +521,24 @@ impl VideoFilterOp for SubtitlesFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        let filter_args = match self.fonts_folder.as_ref() {
-            Some(fonts_folder) => format!(
+        let filter_args = match (self.fonts_folder.as_ref(), self.force_style.as_ref()) {
+            (Some(fonts_folder), Some(force_style)) => format!(
+                "{}:fontsdir={}:force_style={}",
+                FfmpegInfo::escape_path(&self.path),
+                FfmpegInfo::escape_path(fonts_folder),
+                FfmpegInfo::escape_filter_value(force_style)
+            ),
+            (Some(fonts_folder), None) => format!(
                 "{}:fontsdir={}",
                 FfmpegInfo::escape_path(&self.path),
-                FfmpegInfo::escape_path(fonts_folder)
+                FfmpegInfo::escape_path(fonts_folder),
             ),
-            None => FfmpegInfo::escape_path(&self.path),
+            (None, Some(force_style)) => format!(
+                "{}:force_style={}",
+                FfmpegInfo::escape_path(&self.path),
+                FfmpegInfo::escape_filter_value(force_style)
+            ),
+            (None, None) => FfmpegInfo::escape_path(&self.path),
         };
 
         if self.seek > Duration::ZERO {
@@ -810,6 +830,31 @@ impl VideoFilterOp for CropFilter {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Dv5WorkaroundFilter;
+
+impl VideoFilterOp for Dv5WorkaroundFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if state.hdr_format == HdrFormat::Dv5 {
+            Some(self.clone().into())
+        } else {
+            None
+        }
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {}
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        None
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from(
+            "setparams=color_trc=smpte2084:colorspace=bt2020nc:color_primaries=bt2020",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use time::{Date, Month, Time, UtcOffset};
@@ -868,7 +913,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
-            is_hdr: true,
+            hdr_format: HdrFormat::Pq,
         };
 
         let filter: VideoFilter = HwMapFilter {
@@ -881,7 +926,7 @@ mod tests {
 
         assert_eq!(state.surface, FrameSurface::OpenCL);
         assert_eq!(state.pixel_format, PixelFormat::P010le);
-        assert!(state.is_hdr);
+        assert_eq!(state.hdr_format, HdrFormat::Pq);
     }
 
     #[test]

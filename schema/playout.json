@@ -772,6 +772,14 @@
             "null"
           ],
           "description": "Color primaries (e.g. \"bt709\", \"bt2020\"). Omit if unknown."
+        },
+        "dv_profile": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Dolby Vision profile from the stream's DOVI configuration record (e.g. 5, 7, 8). Profile 5 has no backward-compatible base layer and is not described by the color_* fields; profiles 4, 7 and 8 do, so those are handled from color_transfer alone. Omit for non-Dolby Vision streams."
         }
       }
     },

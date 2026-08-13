@@ -36,6 +36,8 @@ enum Commands {
         output_folder: PathBuf,
         #[arg(short, long)]
         number: String,
+        #[arg(short, long)]
+        troubleshoot: bool,
     },
 }
 
@@ -45,11 +47,15 @@ pub async fn main() {
 
     if let Err(err) = run().await {
         match err {
+            // the idle timeout is a routine reap (the heartbeat went stale
+            // because no client is watching), not a failure; supervisors
+            // read a non-zero exit as a crash, so it must exit clean
             ChannelError::IdleTimeout(_) => log::info!("{err}"),
-            _ => log::error!("{err}"),
+            _ => {
+                log::error!("{err}");
+                std::process::exit(1);
+            }
         };
-
-        std::process::exit(1);
     }
 }
 
@@ -61,13 +67,14 @@ async fn run() -> Result<(), ChannelError> {
             config_paths,
             output_folder,
             number,
+            troubleshoot,
         } => {
             let channel_config =
                 ChannelConfig::from_sources(&config_paths, &output_folder, &number).await?;
 
             // start channel session
             let mut channel_session = ChannelSession::new(channel_config).await?;
-            channel_session.run().await
+            channel_session.run(troubleshoot).await
         }
         Commands::Debug { config_paths } => {
             let channel_config =

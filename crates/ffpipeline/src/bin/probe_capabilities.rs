@@ -5,7 +5,7 @@ use ffpipeline::capabilities::qsv::QsvCapabilities;
 use ffpipeline::capabilities::rkmpp::RkmppCapabilities;
 use ffpipeline::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
 use ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities;
-use ffpipeline::capabilities::vulkan::VulkanCapabilities;
+use ffpipeline::capabilities::vulkan::{VulkanCapabilities, format_uuid};
 use ffpipeline::pipeline::{PixelFormat, VideoFormat};
 
 #[derive(Parser)]
@@ -132,7 +132,52 @@ fn print_cuda() -> Result<(), String> {
     println!();
     print_vpp_table(|pf| caps.vpp_supports_format(pf));
 
+    println!();
+    print_cuda_vulkan_tonemap(&caps);
+
     Ok(())
+}
+
+/// HDR on CUDA decodes through Vulkan so libplacebo can tone map, so the answer
+/// depends on what the Vulkan device backing this CUDA device can decode.
+fn print_cuda_vulkan_tonemap(caps: &NvidiaCapabilities) {
+    println!("Vulkan Tone Mapping (HDR):");
+
+    let device_uuid = caps.device_uuid();
+    println!(
+        "  CUDA device:   {}",
+        device_uuid.map_or_else(|| String::from("(uuid unavailable)"), format_uuid)
+    );
+    let vulkan = match VulkanCapabilities::probe_for_nvidia(device_uuid) {
+        Ok(vulkan) => vulkan,
+        Err(e) => {
+            println!("  Vulkan:        unavailable ({e})");
+            println!("  HDR falls back to NVDEC decode with software tone mapping.");
+            return;
+        }
+    };
+
+    println!();
+    println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
+    println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
+
+    let mut any = false;
+    for f in ALL_FORMATS {
+        // the pipeline only reaches the Vulkan branch for codecs NVDEC also handles
+        let hdr8 = caps.can_decode(f, 8) && vulkan.can_decode(f, 8);
+        let hdr10 = caps.can_decode(f, 10) && vulkan.can_decode(f, 10);
+        if hdr8 || hdr10 {
+            println!("  {:<12} {:<8} {:<8}", format_name(f), yn(hdr8), yn(hdr10));
+            any = true;
+        }
+    }
+    if !any {
+        println!("  (no codec can decode on both NVDEC and Vulkan)");
+    }
+
+    println!();
+    println!("  10-bit is the column that matters; HDR sources are 10-bit.");
+    println!("  Also requires ffmpeg with the vulkan hwaccel and the libplacebo filter.");
 }
 
 fn print_qsv() -> Result<(), String> {
