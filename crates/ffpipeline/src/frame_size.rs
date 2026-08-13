@@ -52,9 +52,12 @@ impl FrameSize {
             self.height as f64 / source_height,
         );
 
+        let width = ((source_width * min_percent).round_ties_even() as u32).min(self.width);
+        let height = ((source_height * min_percent).round_ties_even() as u32).min(self.height);
+
         FrameSize {
-            width: ((source_width * min_percent).round_ties_even() as u32).min(self.width),
-            height: ((source_height * min_percent).round_ties_even() as u32).min(self.height),
+            width: width - (width % 2),
+            height: height - (height % 2),
         }
     }
 
@@ -73,9 +76,12 @@ impl FrameSize {
             self.height as f64 / source_height,
         );
 
+        let width = (source_width * max_percent).round_ties_even() as u32;
+        let height = (source_height * max_percent).round_ties_even() as u32;
+
         FrameSize {
-            width: (source_width * max_percent).round_ties_even() as u32,
-            height: (source_height * max_percent).round_ties_even() as u32,
+            width: width - (width % 2),
+            height: height - (height % 2),
         }
     }
 
@@ -260,5 +266,65 @@ mod tests {
     #[case("junk", None)]
     fn parse_aspect_ratio_cases(#[case] input: &str, #[case] expected: Option<f64>) {
         assert_eq!(parse_aspect_ratio(input), expected);
+    }
+
+    #[rstest]
+    fn round_down_to_even_contain() {
+        let state = FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1036,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            hdr_format: HdrFormat::None,
+        };
+
+        let target = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+
+        assert_eq!(
+            target.square_pixel_size_contain(&state),
+            FrameSize {
+                width: 1280,
+                height: 690
+            }
+        );
+    }
+
+    #[rstest]
+    fn round_down_to_even_cover() {
+        let state = FrameState {
+            size: FrameSize {
+                width: 1902,
+                height: 1038,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            hdr_format: HdrFormat::None,
+        };
+
+        let target = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+
+        assert_eq!(
+            target.square_pixel_size_cover(&state),
+            FrameSize {
+                width: 1318,
+                height: 720
+            }
+        );
     }
 }
