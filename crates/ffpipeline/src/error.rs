@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum FFPipelineError {
+    #[error("unable to locate a usable video stream for graphics layer {0}")]
+    GraphicsStreamNotFound(usize),
     #[error("error detecting ffmpeg capabilities: {0}")]
     FfmpegCapabilitiesError(String),
     #[error("ffprobe failed")]
