@@ -964,21 +964,24 @@ impl ChannelSession {
             _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
         };
 
-        // live content never seeks and is always a complete transcode
-        if is_live {
-            return TimingResult {
-                in_point: Duration::ZERO,
-                out_point: Duration::from_millis(item_duration.whole_milliseconds() as u64),
-                finish: item_finish,
-                is_complete: true,
-            };
-        }
-
         let effective_now = if start_at_zero {
             item_start
         } else {
             self.transcoded_until
         };
+
+        // live content never seeks. limit it to the remaining schedule interval
+        // so pipeline duration and graphics timing end at the same point.
+        if is_live {
+            return TimingResult {
+                in_point: Duration::ZERO,
+                out_point: Duration::from_millis(
+                    (item_finish - effective_now).whole_milliseconds().max(0) as u64,
+                ),
+                finish: item_finish,
+                is_complete: true,
+            };
+        }
 
         let progress_ms = if start_at_zero {
             0
