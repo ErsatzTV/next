@@ -14,6 +14,9 @@ use crate::probe::{
 
 pub struct InputSettings {
     pub start: OffsetDateTime,
+    /// Elapsed schedule time from the playout item's start to this pipeline.
+    /// This intentionally excludes any media source in-point.
+    pub playout_offset: Duration,
     pub audio_input: ProbedInput,
     pub video_input: ProbedInput,
     pub subtitle_input: Option<ProbedInput>,
