@@ -5,6 +5,7 @@ use std::str::FromStr;
 use common::*;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
+use ffpipeline::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use ffpipeline::output_settings::AudioLoudnessSettings;
 use ffpipeline::pipeline::{AudioFormat, VideoFormat};
 use rstest::rstest;
@@ -205,7 +206,7 @@ async fn watermark(
     }
 }
 
-/// Exercises the `-ignore_loop 0` input branch instead of the still-image `-loop 1`.
+/// Exercises the `-ignore_loop 0` input branch instead of the single-frame still-image branch.
 #[rstest]
 #[tokio::test]
 #[ignore]
@@ -224,6 +225,44 @@ async fn watermark_animated(
                 bit_depth: Some(bpp),
                 watermark: Some(TestWatermark {
                     fixture_name: "watermark.gif",
+                    ..TestWatermark::default()
+                }),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
+/// Exercises fades over a still image, which need the looped (repeated) frames to carry timestamps.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark_periodic(
+    #[values("1080p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let res = FrameSize::from_str("1920x1080").unwrap();
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_software_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark {
+                    timing: Some(WatermarkTiming::Periodic(PeriodicTiming {
+                        clock: PeriodicClock::Content,
+                        frequency_ms: 2000,
+                        phase_offset_ms: None,
+                        disable_after_ms: None,
+                        fade_ms: Some(200),
+                        hold_ms: 400,
+                    })),
                     ..TestWatermark::default()
                 }),
                 ..TestOutputParams::default()
