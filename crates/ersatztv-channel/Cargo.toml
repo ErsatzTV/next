@@ -11,6 +11,7 @@ ersatztv-core = { workspace = true }
 ersatztv-playout = { workspace = true }
 ffpipeline = { workspace = true }
 futures-core = { workspace = true }
+futures-util = { workspace = true }
 log = { workspace = true }
 reqwest = { workspace = true }
 schemars = { workspace = true }

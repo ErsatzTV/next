@@ -33,7 +33,7 @@ pub struct FramePoint {
 #[derive(Debug, Clone)]
 pub enum OverlaySource {
     Subtitle,
-    Watermark,
+    Graphics(usize),
 }
 
 #[derive(Debug, Clone)]

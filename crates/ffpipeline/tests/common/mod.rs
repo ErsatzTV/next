@@ -175,6 +175,7 @@ pub async fn build_watermark_input(
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
 
     WatermarkInput {
+        layer_index: 0,
         input_source: InputSource::Local(LocalInputSource {
             path: path.to_string_lossy().into_owned(),
         }),
@@ -216,7 +217,7 @@ pub fn build_input(
             stream_index: None,
         },
         subtitle_input: None,
-        watermark_input: watermark,
+        graphics_inputs: watermark.into_iter().collect(),
     }
 }
 

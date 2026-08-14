@@ -617,7 +617,7 @@ pub struct FadeFilter {
 }
 
 impl FadeFilter {
-    pub fn for_watermark(
+    pub fn for_graphics(
         timing: Option<&WatermarkTiming>,
         item_start: OffsetDateTime,
         in_point: Duration,
@@ -699,7 +699,7 @@ impl FadePoint {
         let hold = Duration::from_millis(timing.hold_ms);
 
         if fade > hold || 2 * fade + hold > frequency {
-            log::error!("watermark requires fade <= hold and 2 * fade + hold <= frequency");
+            log::error!("graphics layer requires fade <= hold and 2 * fade + hold <= frequency");
             return result;
         }
 

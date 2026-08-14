@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ersatztv.org/playout/version/0.0.2",
+  "$id": "https://ersatztv.org/playout/version/0.0.3",
   "title": "Playout",
   "description": "A playout schedule for a single time window.\n\nFiles should be named `{start}_{finish}.json` using compact ISO 8601 (no separators), e.g. `20260413T000000.000000000-0500_20260414T002131.620000000-0500.json`, so that the channel can locate the correct file for the current time.",
   "type": "object",
@@ -68,15 +68,22 @@
           ]
         },
         "watermark": {
-          "description": "Watermark (image/video overlay) to composite on top of the primary content for the duration of this item. Omit for no watermark.",
+          "description": "Compatibility graphics layer composited below every entry in `graphics`. Omit for no legacy watermark.",
           "oneOf": [
             {
-              "$ref": "#/definitions/Watermark"
+              "$ref": "#/definitions/GraphicsLayer"
             },
             {
               "type": "null"
             }
           ]
+        },
+        "graphics": {
+          "type": "array",
+          "description": "Ordered media-backed graphics layers. The first entry is lowest and the last entry is highest; a compatibility `watermark` is always below this array.",
+          "items": {
+            "$ref": "#/definitions/GraphicsLayer"
+          }
         }
       }
     },
@@ -144,16 +151,16 @@
         }
       }
     },
-    "Watermark": {
+    "GraphicsLayer": {
       "type": "object",
-      "description": "An image or video overlay composited on top of the primary content. Sized and positioned relative to the primary content's frame.",
+      "description": "An image or video graphics layer composited on top of the primary content. Sized and positioned relative to the primary content's frame.",
       "required": [
         "source",
         "location"
       ],
       "properties": {
         "source": {
-          "description": "The source providing the watermark media (typically an image, but any `PlayoutItemSource` is accepted).",
+          "description": "The source providing the graphics media (typically an image, but any `PlayoutItemSource` is accepted).",
           "$ref": "#/definitions/PlayoutItemSource"
         },
         "stream_index": {
@@ -166,7 +173,7 @@
         },
         "location": {
           "description": "Anchor position within the primary content frame.",
-          "$ref": "#/definitions/WatermarkLocation"
+          "$ref": "#/definitions/GraphicsLocation"
         },
         "width_percent": {
           "type": [
@@ -175,7 +182,7 @@
           ],
           "minimum": 0,
           "maximum": 100,
-          "description": "Scale the watermark to this percent of the primary content width (0–100). Omit to use the watermark's actual size."
+          "description": "Scale the graphics layer to this percent of the primary content width (0–100). Omit to use its actual size."
         },
         "horizontal_margin_percent": {
           "type": [
@@ -209,13 +216,13 @@
             "boolean",
             "null"
           ],
-          "description": "When true, position margins are measured from the edges of the source content rather than the padded output frame, so letterbox/pillarbox bars push the watermark inward and keep it inside the visible content. When false, margins are relative to the full padded frame, so a 0% margin can land inside the bars. Has no effect when the primary content fills the output (crop/stretch). Omit for false."
+          "description": "When true, position margins are measured from the edges of the source content rather than the padded output frame, so letterbox/pillarbox bars push the graphics layer inward and keep it inside the visible content. When false, margins are relative to the full padded frame, so a 0% margin can land inside the bars. Has no effect when the primary content fills the output (crop/stretch). Omit for false."
         },
         "timing": {
-          "description": "Visibility schedule for the watermark. Omit for an always-on watermark.",
+          "description": "Visibility schedule for the graphics layer. Omit for an always-on layer.",
           "oneOf": [
             {
-              "$ref": "#/definitions/WatermarkTiming"
+              "$ref": "#/definitions/GraphicsTiming"
             },
             {
               "type": "null"
@@ -224,8 +231,8 @@
         }
       }
     },
-    "WatermarkTiming": {
-      "description": "Controls when the watermark is shown. Exactly one variant, distinguished by `timing_type`.",
+    "GraphicsTiming": {
+      "description": "Controls when the graphics layer is shown. Exactly one variant, distinguished by `timing_type`.",
       "discriminator": {
         "propertyName": "timing_type"
       },
@@ -237,7 +244,7 @@
     },
     "PeriodicTiming": {
       "type": "object",
-      "description": "Cyclical visibility: the watermark fades in, holds, and fades out once every `frequency_ms`. Cycle length is start-to-start, so `2 * fade_ms + hold_ms` must be ≤ `frequency_ms`, and `fade_ms` must be ≤ `hold_ms`.",
+      "description": "Cyclical visibility: the graphics layer fades in, holds, and fades out once every `frequency_ms`. Cycle length is start-to-start, so `2 * fade_ms + hold_ms` must be ≤ `frequency_ms`, and `fade_ms` must be ≤ `hold_ms`.",
       "required": [
         "timing_type",
         "clock",
@@ -297,7 +304,7 @@
         "content"
       ]
     },
-    "WatermarkLocation": {
+    "GraphicsLocation": {
       "type": "string",
       "description": "Nine-position anchor within the primary content frame. Read like a 3×3 grid: rows top/center/bottom, columns left/center/right; the dead center is `center`.",
       "enum": [

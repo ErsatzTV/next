@@ -13,7 +13,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 2,
+    compatible: 3,
 };
 const VERSION_URI_PREFIX: &str = "https://ersatztv.org/playout/version/0.";
 
@@ -74,6 +74,10 @@ pub struct PlayoutItem {
     pub tracks: Option<PlayoutItemTracks>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watermark: Option<Watermark>,
+    /// Ordered graphics layers, from bottom to top. The compatibility watermark,
+    /// when present, is composited below every entry in this collection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graphics: Vec<GraphicsLayer>,
 }
 
 impl PlayoutItem {
@@ -97,11 +101,16 @@ impl PlayoutItem {
             }),
             tracks: None,
             watermark: None,
+            graphics: Vec::new(),
         })
     }
 
     pub fn finish(&self) -> OffsetDateTime {
         self.finish
+    }
+
+    pub fn effective_graphics(&self) -> impl Iterator<Item = &GraphicsLayer> {
+        self.watermark.iter().chain(self.graphics.iter())
     }
 }
 
@@ -124,11 +133,11 @@ pub struct TrackSelection {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Watermark {
+pub struct GraphicsLayer {
     pub source: PlayoutItemSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_index: Option<u32>,
-    pub location: WatermarkLocation,
+    pub location: GraphicsLocation,
     /// Scale to this percent of primary content width (0–100).
     /// Omitted = actual size.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,12 +162,14 @@ pub struct Watermark {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opacity_percent: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub timing: Option<WatermarkTiming>,
+    pub timing: Option<GraphicsTiming>,
 }
+
+pub type Watermark = GraphicsLayer;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WatermarkLocation {
+pub enum GraphicsLocation {
     TopLeft,
     TopCenter,
     TopRight,
@@ -170,9 +181,11 @@ pub enum WatermarkLocation {
     BottomRight,
 }
 
+pub type WatermarkLocation = GraphicsLocation;
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "timing_type", rename_all = "snake_case")]
-pub enum WatermarkTiming {
+pub enum GraphicsTiming {
     Periodic {
         clock: PeriodicClock,
         frequency_ms: u64,
@@ -185,6 +198,8 @@ pub enum WatermarkTiming {
         hold_ms: u64,
     },
 }
+
+pub type WatermarkTiming = GraphicsTiming;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -428,5 +443,59 @@ fn parse_unix_timestamp(timestamp: &str) -> Option<OffsetDateTime> {
         OffsetDateTime::from_unix_timestamp(epoch).ok()
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layer(path: &str) -> serde_json::Value {
+        serde_json::json!({
+            "source": { "source_type": "local", "path": path },
+            "location": "top_left"
+        })
+    }
+
+    fn item_json() -> serde_json::Value {
+        serde_json::json!({
+            "id": "item",
+            "start": "2026-08-14T00:00:00Z",
+            "finish": "2026-08-14T00:01:00Z",
+            "source": { "source_type": "lavfi", "params": "testsrc" }
+        })
+    }
+
+    #[test]
+    fn legacy_watermark_loads_and_graphics_defaults_empty() {
+        let mut value = item_json();
+        value["watermark"] = layer("legacy.png");
+        let item: PlayoutItem = serde_json::from_value(value).unwrap();
+
+        assert!(item.watermark.is_some());
+        assert!(item.graphics.is_empty());
+        assert!(
+            !serde_json::to_value(&item)
+                .unwrap()
+                .get("graphics")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn effective_graphics_orders_legacy_watermark_below_array() {
+        let mut value = item_json();
+        value["watermark"] = layer("legacy.png");
+        value["graphics"] = serde_json::json!([layer("middle.png"), layer("top.png")]);
+        let item: PlayoutItem = serde_json::from_value(value).unwrap();
+
+        let paths: Vec<_> = item
+            .effective_graphics()
+            .map(|layer| match &layer.source {
+                PlayoutItemSource::Local { path, .. } => path.as_str(),
+                _ => panic!("expected local graphics source"),
+            })
+            .collect();
+        assert_eq!(paths, ["legacy.png", "middle.png", "top.png"]);
     }
 }

@@ -568,7 +568,7 @@ impl FilterChain {
         audio_label: &str,
         video_label: &str,
         subtitle_label: Option<&String>,
-        watermark_label: Option<&String>,
+        graphics_labels: &[Option<String>],
     ) {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
@@ -635,7 +635,9 @@ impl FilterChain {
                     PipelineFilter::Overlay(overlay) => {
                         let sec_label = match overlay.secondary_source {
                             OverlaySource::Subtitle => subtitle_label,
-                            OverlaySource::Watermark => watermark_label,
+                            OverlaySource::Graphics(layer_index) => {
+                                graphics_labels.get(layer_index).and_then(Option::as_ref)
+                            }
                         };
 
                         let Some(sec_in) = sec_label else {
@@ -738,6 +740,7 @@ mod tests {
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
     use crate::output_settings::ScalingMode;
+    use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
     use crate::pipeline::{HdrFormat, HwPixelFormat};
     use crate::video_filter::{
         FormatFilter, HwMapFilter, HwUploadFilter, PadFilter, ScaleFilter, ToneMapFilter,
@@ -758,6 +761,36 @@ mod tests {
             },
             opencl_capabilities: OpenCLCapabilities::default(),
         })
+    }
+
+    #[test]
+    fn graphics_overlays_bind_indexed_labels_in_layer_order() {
+        let state = hdr_vaapi_state();
+        let overlay = |layer_index| {
+            PipelineFilter::Overlay(OverlayFilter {
+                kind: SoftwareOverlay::default().into(),
+                secondary: Vec::new(),
+                secondary_initial_state: state.clone(),
+                secondary_source: OverlaySource::Graphics(layer_index),
+                location: None,
+            })
+        };
+        let mut chain = FilterChain::new(vec![overlay(0), overlay(1)]);
+
+        chain.build(
+            "0:a",
+            "0:v",
+            None,
+            &[Some(String::from("2:0")), Some(String::from("3:0"))],
+        );
+
+        let filter_complex = &chain.as_arg()[1];
+        let lower = filter_complex.find("[2:0]overlay").unwrap();
+        let upper = filter_complex.find("[3:0]overlay").unwrap();
+        assert!(
+            lower < upper,
+            "layers must be composited from first to last"
+        );
     }
 
     fn vaapi_accel_with_tonemap(
@@ -913,7 +946,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None, None);
+        chain.build("0:a", "0:v", None, &[]);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1209,7 +1242,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None, None);
+        chain.build("0:a", "0:v", None, &[]);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1511,7 +1544,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None, None);
+        chain.build("0:a", "0:v", None, &[]);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1551,7 +1584,7 @@ mod tests {
         assert!(upload.as_arg().is_none());
 
         let mut chain = FilterChain::new(vec![PipelineFilter::Video(upload)]);
-        chain.build("0:1", "0:0", None, None);
+        chain.build("0:1", "0:0", None, &[]);
 
         assert_eq!(chain.video_label(), "0:0");
         let args = chain.as_arg();

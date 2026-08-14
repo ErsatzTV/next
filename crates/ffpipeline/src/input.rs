@@ -17,7 +17,7 @@ pub struct InputSettings {
     pub audio_input: ProbedInput,
     pub video_input: ProbedInput,
     pub subtitle_input: Option<ProbedInput>,
-    pub watermark_input: Option<WatermarkInput>,
+    pub graphics_inputs: Vec<GraphicsInput>,
 }
 
 impl InputSettings {
@@ -160,50 +160,51 @@ impl InputSettings {
         }
     }
 
-    pub fn select_watermark_stream(&self) -> Option<&ProbeResultVideoStream> {
-        let mut all_watermark_streams: Vec<&Box<ProbeResultVideoStream>> =
-            match self.watermark_input.as_ref() {
-                Some(input) => input
-                    .probe_result
-                    .streams
-                    .iter()
-                    .filter_map(|s| match s {
-                        ProbeResultStream::Video(video_stream)
-                            if video_stream.codec_type == CodecType::Video =>
-                        {
-                            Some(video_stream)
-                        }
-                        _ => None,
-                    })
-                    .collect(),
-                None => Vec::new(),
-            };
+    pub fn select_graphics_stream<'a>(
+        &self,
+        input: &'a GraphicsInput,
+    ) -> Option<&'a ProbeResultVideoStream> {
+        let mut all_graphics_streams: Vec<&Box<ProbeResultVideoStream>> = input
+            .probe_result
+            .streams
+            .iter()
+            .filter_map(|s| match s {
+                ProbeResultStream::Video(video_stream)
+                    if video_stream.codec_type == CodecType::Video =>
+                {
+                    Some(video_stream)
+                }
+                _ => None,
+            })
+            .collect();
 
-        if let Some(watermark_index) = self.watermark_input.as_ref().and_then(|i| i.stream_index) {
-            let matched_stream = all_watermark_streams
+        if let Some(graphics_index) = input.stream_index {
+            let matched_stream = all_graphics_streams
                 .iter()
-                .find(|a| a.stream_index == watermark_index);
+                .find(|a| a.stream_index == graphics_index);
 
             match matched_stream {
-                Some(watermark_stream) => return Some(watermark_stream),
+                Some(graphics_stream) => return Some(graphics_stream),
                 None => {
                     log::warn!(
-                        "unable to locate requested watermark stream with index {}",
-                        watermark_index
+                        "unable to locate requested graphics layer {} stream with index {}",
+                        input.layer_index,
+                        graphics_index
                     );
                 }
             }
         }
 
-        match all_watermark_streams.len() {
+        match all_graphics_streams.len() {
             0 => None,
-            1 => Some(all_watermark_streams[0]),
+            1 => Some(all_graphics_streams[0]),
             _ => {
                 log::warn!(
-                    "content contains more than one watermark video stream; selecting stream with lowest index"
+                    "graphics layer {} contains more than one video stream; selecting stream with lowest index",
+                    input.layer_index
                 );
-                all_watermark_streams.sort_by_key(|v| v.stream_index);
-                Some(all_watermark_streams[0])
+                all_graphics_streams.sort_by_key(|v| v.stream_index);
+                Some(all_graphics_streams[0])
             }
         }
     }
@@ -372,21 +373,22 @@ pub struct ProbedInput {
 }
 
 #[derive(Debug, Clone)]
-pub struct WatermarkInput {
+pub struct GraphicsInput {
+    pub layer_index: usize,
     pub input_source: InputSource,
     pub probe_result: ProbeResult,
     pub stream_index: Option<u32>,
-    pub location: WatermarkLocation,
+    pub location: GraphicsLocation,
     pub width_percent: Option<f32>,
     pub within_source_content: Option<bool>,
     pub horizontal_margin_percent: Option<f32>,
     pub vertical_margin_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
-    pub timing: Option<WatermarkTiming>,
+    pub timing: Option<GraphicsTiming>,
 }
 
 #[derive(Debug, Clone)]
-pub enum WatermarkTiming {
+pub enum GraphicsTiming {
     Periodic(PeriodicTiming),
 }
 
@@ -406,10 +408,13 @@ pub enum PeriodicClock {
     Content,
 }
 
-impl WatermarkInput {
+pub type WatermarkInput = GraphicsInput;
+pub type WatermarkTiming = GraphicsTiming;
+
+impl GraphicsInput {
     pub(crate) fn scaled_size(
         &self,
-        watermark_size: FrameSize,
+        graphics_size: FrameSize,
         video_size: Option<FrameSize>,
     ) -> FrameSize {
         if let Some(output_size) = video_size
@@ -417,7 +422,7 @@ impl WatermarkInput {
         {
             let mut scaled_width =
                 f32::round((width_percent / 100f32) * output_size.width as f32) as u32;
-            let aspect_ratio = watermark_size.height as f32 / watermark_size.width as f32;
+            let aspect_ratio = graphics_size.height as f32 / graphics_size.width as f32;
             let mut scaled_height = f32::round(scaled_width as f32 * aspect_ratio) as u32;
             if scaled_width % 2 == 1 {
                 scaled_width += 1;
@@ -430,7 +435,7 @@ impl WatermarkInput {
                 height: scaled_height,
             }
         } else {
-            watermark_size
+            graphics_size
         }
     }
 
@@ -466,39 +471,39 @@ impl WatermarkInput {
         let bottom_anchor = video_size.height.saturating_sub(scaled_size.height);
 
         match self.location {
-            WatermarkLocation::TopLeft => FramePoint {
+            GraphicsLocation::TopLeft => FramePoint {
                 x: h_pct_margin + h_pad_offset,
                 y: v_pct_margin + v_pad_offset,
             },
-            WatermarkLocation::TopCenter => FramePoint {
+            GraphicsLocation::TopCenter => FramePoint {
                 x: center_x + h_pct_margin,
                 y: v_pct_margin + v_pad_offset,
             },
-            WatermarkLocation::TopRight => FramePoint {
+            GraphicsLocation::TopRight => FramePoint {
                 x: right_anchor.saturating_sub(h_pct_margin + h_pad_offset),
                 y: v_pct_margin + v_pad_offset,
             },
-            WatermarkLocation::CenterLeft => FramePoint {
+            GraphicsLocation::CenterLeft => FramePoint {
                 x: h_pct_margin + h_pad_offset,
                 y: center_y + v_pct_margin,
             },
-            WatermarkLocation::Center => FramePoint {
+            GraphicsLocation::Center => FramePoint {
                 x: center_x + h_pct_margin,
                 y: center_y + v_pct_margin,
             },
-            WatermarkLocation::CenterRight => FramePoint {
+            GraphicsLocation::CenterRight => FramePoint {
                 x: right_anchor.saturating_sub(h_pct_margin + h_pad_offset),
                 y: center_y + v_pct_margin,
             },
-            WatermarkLocation::BottomLeft => FramePoint {
+            GraphicsLocation::BottomLeft => FramePoint {
                 x: h_pct_margin + h_pad_offset,
                 y: bottom_anchor.saturating_sub(v_pct_margin + v_pad_offset),
             },
-            WatermarkLocation::BottomCenter => FramePoint {
+            GraphicsLocation::BottomCenter => FramePoint {
                 x: center_x + h_pct_margin,
                 y: bottom_anchor.saturating_sub(v_pct_margin + v_pad_offset),
             },
-            WatermarkLocation::BottomRight => FramePoint {
+            GraphicsLocation::BottomRight => FramePoint {
                 x: right_anchor.saturating_sub(h_pct_margin + h_pad_offset),
                 y: bottom_anchor.saturating_sub(v_pct_margin + v_pad_offset),
             },
@@ -507,7 +512,7 @@ impl WatermarkInput {
 }
 
 #[derive(Debug, Clone)]
-pub enum WatermarkLocation {
+pub enum GraphicsLocation {
     TopLeft,
     TopCenter,
     TopRight,
@@ -518,3 +523,5 @@ pub enum WatermarkLocation {
     BottomCenter,
     BottomRight,
 }
+
+pub type WatermarkLocation = GraphicsLocation;
