@@ -539,13 +539,11 @@ impl Pipeline {
                 ));
             };
             let extra_input_args = if graphics_stream.is_still_image() {
+                // decode a single frame; the loop filter below repeats it *after* scaling, so
+                // decode and scale happen once instead of once per output frame
                 args![
-                    "-loop",
-                    "1",
                     "-framerate",
-                    output_context.media_frame_rate.r_frame_rate.clone(),
-                    "-t",
-                    format!("{}ms", duration.as_millis())
+                    output_context.media_frame_rate.r_frame_rate.clone()
                 ]
             } else if graphics_stream.codec == "gif" || graphics_stream.codec == "apng" {
                 args![
@@ -604,6 +602,13 @@ impl Pipeline {
             let location =
                 Some(graphics_input.frame_location(&source_content_size, &scaled_size, video_size));
 
+            let fade_filters = FadeFilter::for_graphics(
+                graphics_input.timing.as_ref(),
+                input_settings.start,
+                input_settings.playout_offset,
+                duration,
+            );
+
             let mut secondary_filters: Vec<VideoFilter> = vec![
                 ColorChannelMixerFilter {
                     alpha: graphics_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
@@ -625,12 +630,17 @@ impl Pipeline {
                 .into(),
             ];
 
-            let fade_filters = FadeFilter::for_graphics(
-                graphics_input.timing.as_ref(),
-                input_settings.start,
-                input_settings.playout_offset,
-                duration,
-            );
+            // a still image is decoded as a single frame; only fades need it repeated (they act on
+            // frame timestamps). otherwise the overlay's repeatlast holds it, which keeps the
+            // per-frame format conversion and hwupload out of the chain entirely
+            if !fade_filters.is_empty() {
+                secondary_filters.push(
+                    LoopFilter {
+                        is_still_image: graphics_stream.is_still_image(),
+                    }
+                    .into(),
+                );
+            }
 
             secondary_filters.extend(fade_filters.iter().map(|f| f.clone().into()));
 

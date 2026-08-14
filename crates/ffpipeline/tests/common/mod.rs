@@ -8,6 +8,7 @@ use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{
     InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput, WatermarkLocation,
+    WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
@@ -43,6 +44,7 @@ pub struct TestWatermark {
     pub location: WatermarkLocation,
     pub width_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
+    pub timing: Option<WatermarkTiming>,
 }
 
 impl Default for TestWatermark {
@@ -52,6 +54,7 @@ impl Default for TestWatermark {
             location: WatermarkLocation::TopLeft,
             width_percent: Some(10.0),
             opacity_percent: Some(90.0),
+            timing: None,
         }
     }
 }
@@ -187,7 +190,7 @@ pub async fn build_watermark_input(
         horizontal_margin_percent: Some(5.0),
         vertical_margin_percent: Some(5.0),
         opacity_percent: watermark.opacity_percent,
-        timing: None,
+        timing: watermark.timing.clone(),
     }
 }
 

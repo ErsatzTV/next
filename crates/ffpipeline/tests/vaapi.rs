@@ -344,7 +344,7 @@ async fn watermark_software_overlay(
     }
 }
 
-/// Exercises the `-ignore_loop 0` input branch instead of the still-image `-loop 1`.
+/// Exercises the `-ignore_loop 0` input branch instead of the single-frame still-image branch.
 #[rstest]
 #[tokio::test]
 #[ignore]
