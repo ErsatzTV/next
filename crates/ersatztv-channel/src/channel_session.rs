@@ -641,6 +641,15 @@ impl ChannelSession {
 
         let mut input_settings = InputSettings {
             start: current_item.start,
+            playout_offset: if start_at_zero {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(
+                    (self.transcoded_until - current_item.start)
+                        .whole_milliseconds()
+                        .max(0) as u64,
+                )
+            },
             audio_input: ProbedInput {
                 input_source: audio_input_source,
                 in_point: audio_timing.in_point,

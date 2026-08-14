@@ -200,6 +200,7 @@ pub fn build_input(
     let path_str = path.to_string_lossy().into_owned();
     InputSettings {
         start: OffsetDateTime::now_utc(),
+        playout_offset: Duration::ZERO,
         audio_input: ProbedInput {
             input_source: InputSource::Local(LocalInputSource {
                 path: path_str.clone(),

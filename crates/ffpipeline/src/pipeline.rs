@@ -628,8 +628,8 @@ impl Pipeline {
             let fade_filters = FadeFilter::for_graphics(
                 graphics_input.timing.as_ref(),
                 input_settings.start,
-                input_settings.video_input.in_point,
-                input_settings.video_input.out_point,
+                input_settings.playout_offset,
+                duration,
             );
 
             secondary_filters.extend(fade_filters.iter().map(|f| f.clone().into()));

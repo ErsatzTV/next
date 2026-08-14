@@ -620,17 +620,17 @@ impl FadeFilter {
     pub fn for_graphics(
         timing: Option<&WatermarkTiming>,
         item_start: OffsetDateTime,
-        in_point: Duration,
-        out_point: Duration,
+        playout_offset: Duration,
+        duration: Duration,
     ) -> Vec<FadeFilter> {
         if let Some(WatermarkTiming::Periodic(timing)) = timing {
-            let duration = Duration::from_millis(timing.fade_ms.unwrap_or(1000));
-            let points = FadePoint::periodic(timing, item_start, in_point, out_point);
+            let fade_duration = Duration::from_millis(timing.fade_ms.unwrap_or(1000));
+            let points = FadePoint::periodic(timing, item_start, playout_offset, duration);
             points
                 .iter()
                 .map(|p| FadeFilter {
                     point: *p,
-                    duration,
+                    duration: fade_duration,
                 })
                 .collect()
         } else {
@@ -686,13 +686,13 @@ impl FadePoint {
     pub fn periodic(
         timing: &PeriodicTiming,
         item_start: OffsetDateTime,
-        in_point: Duration,
-        out_point: Duration,
+        playout_offset: Duration,
+        duration: Duration,
     ) -> Vec<FadePoint> {
         let mut result = Vec::new();
 
-        let duration = out_point - in_point;
-        let item_finish = item_start + duration;
+        let interval_start = item_start + playout_offset;
+        let interval_finish = interval_start + duration;
 
         let frequency = Duration::from_millis(timing.frequency_ms);
         let fade = Duration::from_millis(timing.fade_ms.unwrap_or(1000));
@@ -712,9 +712,9 @@ impl FadePoint {
                 let phase = timing.phase_offset_ms.unwrap_or(0) as i64;
                 let freq = timing.frequency_ms as i64;
 
-                let item_ms = (item_start.unix_timestamp_nanos() / 1_000_000) as i64;
+                let interval_ms = (interval_start.unix_timestamp_nanos() / 1_000_000) as i64;
 
-                let n = (item_ms - phase).div_euclid(freq);
+                let n = (interval_ms - phase).div_euclid(freq);
                 let last_ms = n * freq + phase;
 
                 OffsetDateTime::UNIX_EPOCH + Duration::from_millis(last_ms as u64)
@@ -724,17 +724,18 @@ impl FadePoint {
         let stop_at = timing
             .disable_after_ms
             .map(|d| item_start + Duration::from_millis(d))
-            .unwrap_or(item_finish);
+            .unwrap_or(interval_finish + frequency);
 
-        let in_point_ms = in_point.as_millis() as i128;
         let fade_ms = fade.as_millis() as i128;
         let hold_ms = hold.as_millis() as i128;
 
-        while current_time < stop_at {
-            let delta_ms = (current_time - item_start).whole_milliseconds();
+        // include the first cycle after this pipeline interval.
+        // a future fade-in keeps alpha at zero when the entire interval falls between appearances.
+        while current_time < stop_at && current_time < interval_finish + frequency {
+            let delta_ms = (current_time - interval_start).whole_milliseconds();
 
-            let fade_in_time_ms = delta_ms - in_point_ms;
-            let fade_out_time_ms = (delta_ms + fade_ms + hold_ms) - in_point_ms;
+            let fade_in_time_ms = delta_ms;
+            let fade_out_time_ms = delta_ms + fade_ms + hold_ms;
 
             let fade_in_time = if fade_in_time_ms >= 0 {
                 Some(Duration::from_millis(fade_in_time_ms as u64))
@@ -771,7 +772,16 @@ impl FadePoint {
             current_time += frequency;
         }
 
-        result.retain(|p| p.enable_start < p.enable_finish);
+        // With no remaining appearances (for example after disable_after), a
+        // future fade-in establishes transparent alpha for the whole interval.
+        if result.is_empty() {
+            result.push(FadePoint {
+                mode: FadeMode::In,
+                time: duration + fade,
+                enable_start: Duration::ZERO,
+                enable_finish: duration,
+            });
+        }
 
         // overlap 'enable' windows on consecutive fades
         for i in 0..result.len() {
@@ -789,6 +799,8 @@ impl FadePoint {
                 result[i + 1].time.saturating_sub(fade)
             };
         }
+
+        result.retain(|p| p.enable_start < p.enable_finish);
 
         result
     }
@@ -941,7 +953,7 @@ mod tests {
     }
 
     #[test]
-    fn fade_point_periodic() {
+    fn wall_clock_periodic_uses_the_current_playout_interval() {
         // every 5 min
         let timing = PeriodicTiming {
             clock: PeriodicClock::Wall,
@@ -959,13 +971,63 @@ mod tests {
             UtcOffset::from_hms(-5, 0, 0).unwrap(),
         );
 
-        // join at 4:45
-        let in_point = Duration::from_mins(4) + Duration::from_secs(45);
+        // Join at 4:45 during the hidden portion. The next appearance begins
+        // 15 seconds into this pipeline, not relative to the item's midnight start.
+        let playout_offset = Duration::from_mins(4) + Duration::from_secs(45);
+        let points =
+            FadePoint::periodic(&timing, item_start, playout_offset, Duration::from_secs(44));
 
-        let points = FadePoint::periodic(&timing, item_start, in_point, Duration::from_secs(734));
-
-        assert_eq!(points.len(), 4);
+        assert!(matches!(points[0].mode, FadeMode::In));
         assert_eq!(points[0].time, Duration::from_secs(15));
-        assert_eq!(points[2].time, Duration::from_secs(5 * 60 + 15));
+    }
+
+    #[test]
+    fn wall_clock_periodic_stays_hidden_when_next_cycle_is_after_pipeline_end() {
+        let timing = PeriodicTiming {
+            clock: PeriodicClock::Wall,
+            frequency_ms: 300_000,
+            phase_offset_ms: Some(0),
+            disable_after_ms: None,
+            fade_ms: Some(1_000),
+            hold_ms: 30_000,
+        };
+        let item_start = OffsetDateTime::UNIX_EPOCH;
+
+        // Join four minutes into the cycle and transcode only 44 seconds. The
+        // future fade-in is retained so FFmpeg initializes alpha to transparent.
+        let filters = FadeFilter::for_graphics(
+            Some(&WatermarkTiming::Periodic(timing)),
+            item_start,
+            Duration::from_mins(4),
+            Duration::from_secs(44),
+        );
+        let arg = filters[0].as_arg().unwrap();
+
+        assert!(arg.contains("fade=in:st=60"), "unexpected fade: {arg}");
+        assert!(
+            arg.contains("between(t,0,90)"),
+            "future fade must control alpha from pipeline start: {arg}"
+        );
+    }
+
+    #[test]
+    fn wall_clock_periodic_join_during_visible_phase_fades_out_on_schedule() {
+        let timing = PeriodicTiming {
+            clock: PeriodicClock::Wall,
+            frequency_ms: 300_000,
+            phase_offset_ms: Some(0),
+            disable_after_ms: None,
+            fade_ms: Some(1_000),
+            hold_ms: 30_000,
+        };
+        let points = FadePoint::periodic(
+            &timing,
+            OffsetDateTime::UNIX_EPOCH,
+            Duration::from_mins(5) + Duration::from_secs(5),
+            Duration::from_secs(44),
+        );
+
+        assert!(matches!(points[0].mode, FadeMode::Out));
+        assert_eq!(points[0].time, Duration::from_secs(26));
     }
 }
