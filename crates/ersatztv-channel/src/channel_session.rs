@@ -71,6 +71,42 @@ struct TimingResult {
     is_complete: bool,
 }
 
+/// Plain-data inputs for [`ChannelSession::build_output_settings`].
+/// `transcode_item` launches a real ffmpeg, so every decision that lives
+/// inline in it is invisible to the test suite; this seam lets tests reach
+/// the output settings a pipeline is actually built with.
+struct OutputSettingsPlan<'a> {
+    channel_config: &'a ChannelConfig,
+    accel: Option<ffpipeline::hw_accel::HardwareAccel>,
+    output_file: String,
+    output_segment_template: String,
+    troubleshoot: bool,
+    pts_duration: Option<Duration>,
+    realtime: bool,
+    is_live: bool,
+    video_is_still_image: bool,
+}
+
+/// Plain-data inputs for [`ChannelSession::plan_timings`].
+struct TimingPlan<'a> {
+    current_item: &'a PlayoutItem,
+    audio_source: &'a PlayoutItemSource,
+    video_source: &'a PlayoutItemSource,
+    subtitle_source: Option<&'a PlayoutItemSource>,
+    start_at_zero: bool,
+    realtime: bool,
+    is_live: bool,
+    transcoded_until: OffsetDateTime,
+}
+
+/// What [`ChannelSession::plan_timings`] decided: the per-stream input
+/// timings for one pipeline invocation.
+struct PlannedTimings {
+    audio: TimingResult,
+    video: TimingResult,
+    subtitle: Option<TimingResult>,
+}
+
 pub struct ChannelSession {
     channel_config: ChannelConfig,
     playout_loader: PlayoutLoader,
@@ -512,99 +548,42 @@ impl ChannelSession {
             subtitle_probe_opt
         };
 
-        let audio_norm = &self.channel_config.normalization.audio;
-        let video_norm = &self.channel_config.normalization.video;
-
-        let video_size = match (video_norm.width, video_norm.height) {
-            (Some(width), Some(height)) => Some(FrameSize { width, height }),
-            _ => None,
-        };
-
         // consider an item to be live if any of its sources are live;
         // live sources can never seek or work ahead
         let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
 
         // generate pipeline
-        let output_settings = OutputSettings {
-            audio: AudioOutputSettings {
-                format: audio_norm.format.clone().map(AudioFormat::from),
-                bitrate: audio_norm.bitrate_kbps.map(Kbps),
-                buffer: audio_norm.buffer_kbps.map(Kbps),
-                channels: audio_norm.channels,
-                sample_rate: audio_norm.sample_rate_hz.map(Hz),
-                loudness: if audio_norm.normalize_loudness {
-                    Some(
-                        audio_norm
-                            .loudness
-                            .as_ref()
-                            .map(|l| l.into())
-                            .unwrap_or_default(),
-                    )
-                } else {
-                    None
-                },
-            },
-            video_format: video_norm.format.clone().map(VideoFormat::from),
-            bit_depth: video_norm.bit_depth,
-            video_bitrate: video_norm.bitrate_kbps.map(Kbps),
-            video_buffer: video_norm.buffer_kbps.map(Kbps),
-            video_size,
-            scaling_mode: video_norm.scaling_mode.into(),
-            filter_options: video_norm.filters.clone().into(),
-            deinterlace: video_norm.deinterlace,
+        let output_settings = Self::build_output_settings(OutputSettingsPlan {
+            channel_config: &self.channel_config,
             accel: self.hw_accel.clone(),
-            format: ffpipeline::output_format::OutputFormat::Hls {
-                playlist: self.output_file.clone(),
-                segment_template: self.output_segment_template.clone(),
-                troubleshoot,
-            },
-            pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
+            output_file: self.output_file.clone(),
+            output_segment_template: self.output_segment_template.clone(),
+            troubleshoot,
+            pts_duration,
             realtime,
             is_live,
-            frame_rate: if video_probe_result.is_still_image() {
-                Some(FrameRate::default())
-            } else {
-                None
-            },
-            subtitle_mode: self.channel_config.normalization.subtitle.mode.into(),
-            fonts_folder: self
-                .channel_config
-                .normalization
-                .subtitle
-                .fonts_folder
-                .clone(),
-            subtitle_force_style: self
-                .channel_config
-                .normalization
-                .subtitle
-                .force_style
-                .clone(),
-            reports_folder: self.channel_config.ffmpeg.reports_folder.clone(),
-            report_id: Some(self.channel_config.number().to_owned()),
-        };
+            video_is_still_image: video_probe_result.is_still_image(),
+        });
 
         let start_at_zero = matches!(
             self.state,
             ChannelSessionState::ZeroAndWorkAhead | ChannelSessionState::ZeroAndRealtime
         );
 
-        let audio_timing = self.input_timing(
+        let PlannedTimings {
+            audio: audio_timing,
+            video: video_timing,
+            subtitle: subtitle_timing,
+        } = Self::plan_timings(TimingPlan {
             current_item,
-            &audio_source,
+            audio_source: &audio_source,
+            video_source: &video_source,
+            subtitle_source: subtitle_source.as_ref(),
             start_at_zero,
             realtime,
             is_live,
-        );
-        let video_timing = self.input_timing(
-            current_item,
-            &video_source,
-            start_at_zero,
-            realtime,
-            is_live,
-        );
-        let subtitle_timing = subtitle_source
-            .as_ref()
-            .map(|s| self.input_timing(current_item, s, start_at_zero, realtime, is_live));
+            transcoded_until: self.transcoded_until,
+        });
 
         let video_index = current_item
             .tracks
@@ -939,13 +918,13 @@ impl ChannelSession {
         }
     }
 
-    fn input_timing(
-        &self,
+    fn input_timing_at(
         current_item: &PlayoutItem,
         source: &PlayoutItemSource,
         start_at_zero: bool,
         realtime: bool,
         is_live: bool,
+        transcoded_until: OffsetDateTime,
     ) -> TimingResult {
         let mut is_complete = true;
 
@@ -967,7 +946,7 @@ impl ChannelSession {
         let effective_now = if start_at_zero {
             item_start
         } else {
-            self.transcoded_until
+            transcoded_until
         };
 
         // live content never seeks. limit it to the remaining schedule interval
@@ -1013,6 +992,115 @@ impl ChannelSession {
             out_point,
             finish,
             is_complete,
+        }
+    }
+
+    /// The output settings for one pipeline, as a pure function of plain
+    /// inputs, so a test can observe what a pipeline is actually built with.
+    fn build_output_settings(plan: OutputSettingsPlan) -> OutputSettings {
+        let audio_norm = &plan.channel_config.normalization.audio;
+        let video_norm = &plan.channel_config.normalization.video;
+
+        let video_size = match (video_norm.width, video_norm.height) {
+            (Some(width), Some(height)) => Some(FrameSize { width, height }),
+            _ => None,
+        };
+
+        OutputSettings {
+            audio: AudioOutputSettings {
+                format: audio_norm.format.clone().map(AudioFormat::from),
+                bitrate: audio_norm.bitrate_kbps.map(Kbps),
+                buffer: audio_norm.buffer_kbps.map(Kbps),
+                channels: audio_norm.channels,
+                sample_rate: audio_norm.sample_rate_hz.map(Hz),
+                loudness: if audio_norm.normalize_loudness {
+                    Some(
+                        audio_norm
+                            .loudness
+                            .as_ref()
+                            .map(|l| l.into())
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    None
+                },
+            },
+            video_format: video_norm.format.clone().map(VideoFormat::from),
+            bit_depth: video_norm.bit_depth,
+            video_bitrate: video_norm.bitrate_kbps.map(Kbps),
+            video_buffer: video_norm.buffer_kbps.map(Kbps),
+            video_size,
+            scaling_mode: video_norm.scaling_mode.into(),
+            filter_options: video_norm.filters.clone().into(),
+            deinterlace: video_norm.deinterlace,
+            accel: plan.accel,
+            format: ffpipeline::output_format::OutputFormat::Hls {
+                playlist: plan.output_file,
+                segment_template: plan.output_segment_template,
+                troubleshoot: plan.troubleshoot,
+            },
+            pts_offset: plan.pts_duration.map(|duration| PtsOffset { duration }),
+            realtime: plan.realtime,
+            is_live: plan.is_live,
+            frame_rate: if plan.video_is_still_image {
+                Some(FrameRate::default())
+            } else {
+                None
+            },
+            subtitle_mode: plan.channel_config.normalization.subtitle.mode.into(),
+            fonts_folder: plan
+                .channel_config
+                .normalization
+                .subtitle
+                .fonts_folder
+                .clone(),
+            subtitle_force_style: plan
+                .channel_config
+                .normalization
+                .subtitle
+                .force_style
+                .clone(),
+            reports_folder: plan.channel_config.ffmpeg.reports_folder.clone(),
+            report_id: Some(plan.channel_config.number().to_owned()),
+        }
+    }
+
+    /// The input timings for one pipeline, as a pure function of plain
+    /// inputs. Same seam and same reason as
+    /// [`Self::build_output_settings`]: what the pipeline's -ss and -t are
+    /// derived from should be observable by a test.
+    fn plan_timings(plan: TimingPlan) -> PlannedTimings {
+        let audio = Self::input_timing_at(
+            plan.current_item,
+            plan.audio_source,
+            plan.start_at_zero,
+            plan.realtime,
+            plan.is_live,
+            plan.transcoded_until,
+        );
+        let video = Self::input_timing_at(
+            plan.current_item,
+            plan.video_source,
+            plan.start_at_zero,
+            plan.realtime,
+            plan.is_live,
+            plan.transcoded_until,
+        );
+        let subtitle = plan.subtitle_source.map(|s| {
+            Self::input_timing_at(
+                plan.current_item,
+                s,
+                plan.start_at_zero,
+                plan.realtime,
+                plan.is_live,
+                plan.transcoded_until,
+            )
+        });
+
+        PlannedTimings {
+            audio,
+            video,
+            subtitle,
         }
     }
 
@@ -1446,5 +1534,174 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The channel configuration exactly as the scaffolder writes it, which
+    /// is the shape every deployment starts from.
+    fn test_channel_config() -> ChannelConfig {
+        serde_json::from_value(serde_json::json!({
+            "playout": { "folder": "/tmp/playout" },
+            "ffmpeg": {},
+            "normalization": {
+                "audio": {
+                    "format": "aac", "bitrate_kbps": 192, "buffer_kbps": 384,
+                    "channels": 2, "sample_rate_hz": 48000,
+                    "normalize_loudness": false
+                },
+                "video": {
+                    "format": "h264", "bit_depth": 8,
+                    "width": 1920, "height": 1080,
+                    "bitrate_kbps": 2000, "buffer_kbps": 4000
+                },
+                "subtitle": { "mode": "burn" }
+            }
+        }))
+        .expect("the scaffolded channel config shape deserializes")
+    }
+
+    fn output_settings(realtime: bool, is_live: bool, still: bool) -> OutputSettings {
+        ChannelSession::build_output_settings(OutputSettingsPlan {
+            channel_config: &test_channel_config(),
+            accel: None,
+            output_file: String::from("/tmp/out/live.m3u8"),
+            output_segment_template: String::from("/tmp/out/live%06d.ts"),
+            troubleshoot: false,
+            pts_duration: Some(Duration::from_millis(1234)),
+            realtime,
+            is_live,
+            video_is_still_image: still,
+        })
+    }
+
+    /// A still image decodes as a single frame, so the encoder must be told
+    /// a rate to emit it at.
+    #[test]
+    fn a_still_image_forces_an_output_frame_rate() {
+        assert!(output_settings(true, false, true).frame_rate.is_some());
+        assert!(output_settings(true, false, false).frame_rate.is_none());
+    }
+
+    /// The scanned pts offset must reach the encoder unchanged; it is the
+    /// only thing keeping output timestamps monotonic across items.
+    #[test]
+    fn the_pts_offset_reaches_the_encoder() {
+        let settings = output_settings(true, false, false);
+        assert_eq!(
+            settings.pts_offset.expect("offset is declared").duration,
+            Duration::from_millis(1234)
+        );
+    }
+
+    /// Output pacing follows the caller alone.
+    #[test]
+    fn pacing_follows_the_caller() {
+        assert!(output_settings(true, false, false).realtime);
+        assert!(!output_settings(false, false, false).realtime);
+    }
+
+    /// A plain file item occupying an 11.021 second slot.
+    fn file_item() -> PlayoutItem {
+        serde_json::from_value(serde_json::json!({
+            "id": "file-item",
+            "start": "2026-08-15T12:00:00.000-04:00",
+            "finish": "2026-08-15T12:00:11.021-04:00",
+            "source": { "source_type": "local", "path": "/media/item.mp4" }
+        }))
+        .expect("a local file item deserializes")
+    }
+
+    fn plan_for(item: &PlayoutItem, start_at_zero: bool, realtime: bool) -> PlannedTimings {
+        let audio_source =
+            ChannelSession::resolve_source(item, |t| t.audio.as_ref()).expect("audio source");
+        let video_source =
+            ChannelSession::resolve_source(item, |t| t.video.as_ref()).expect("video source");
+        let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
+        ChannelSession::plan_timings(TimingPlan {
+            current_item: item,
+            audio_source: &audio_source,
+            video_source: &video_source,
+            subtitle_source: None,
+            start_at_zero,
+            realtime,
+            is_live,
+            transcoded_until: item.start,
+        })
+    }
+
+    /// A realtime pipeline covers its whole remaining slot in one
+    /// invocation, and both streams agree on the range.
+    #[test]
+    fn a_realtime_item_fills_its_slot_in_one_pipeline() {
+        let item = file_item();
+        let planned = plan_for(&item, true, true);
+        assert_eq!(planned.audio.in_point, Duration::ZERO);
+        assert_eq!(planned.audio.out_point, Duration::from_millis(11_021));
+        assert_eq!(planned.video.out_point, Duration::from_millis(11_021));
+        assert!(planned.video.is_complete);
+        assert_eq!(planned.video.finish, item.finish);
+    }
+
+    /// While working ahead, a long item is transcoded in chunks so the
+    /// buffer builds up quickly; the chunk boundary advances the schedule
+    /// by exactly the chunk.
+    #[test]
+    fn work_ahead_chunks_a_long_item() {
+        let item: PlayoutItem = serde_json::from_value(serde_json::json!({
+            "id": "long-item",
+            "start": "2026-08-15T12:00:00.000-04:00",
+            "finish": "2026-08-15T12:05:00.000-04:00",
+            "source": { "source_type": "local", "path": "/media/episode.mp4" }
+        }))
+        .expect("a local file item deserializes");
+
+        let limit = Duration::from_secs(SEGMENT_SECONDS as u64 * 11);
+        let planned = plan_for(&item, true, false);
+        assert_eq!(planned.video.in_point, Duration::ZERO);
+        assert_eq!(planned.video.out_point, limit);
+        assert!(!planned.video.is_complete);
+        assert_eq!(planned.video.finish, item.start + limit);
+    }
+
+    /// A live source never seeks, wherever the session is in the item: the
+    /// read position is the live edge, and only the remaining schedule
+    /// interval bounds the output.
+    #[test]
+    fn a_live_source_never_seeks() {
+        let item: PlayoutItem = serde_json::from_value(serde_json::json!({
+            "id": "live-item",
+            "start": "2026-08-15T12:00:00.000-04:00",
+            "finish": "2026-08-15T12:02:30.000-04:00",
+            "source": {
+                "source_type": "http",
+                "uri": "http://host:8000/live.ts",
+                "is_live": true
+            }
+        }))
+        .expect("a live http item deserializes");
+
+        let audio_source =
+            ChannelSession::resolve_source(&item, |t| t.audio.as_ref()).expect("audio source");
+        let video_source =
+            ChannelSession::resolve_source(&item, |t| t.video.as_ref()).expect("video source");
+        let planned = ChannelSession::plan_timings(TimingPlan {
+            current_item: &item,
+            audio_source: &audio_source,
+            video_source: &video_source,
+            subtitle_source: None,
+            start_at_zero: false,
+            realtime: true,
+            is_live: true,
+            // ninety seconds into the item
+            transcoded_until: item.start + Duration::from_secs(90),
+        });
+        assert_eq!(planned.video.in_point, Duration::ZERO);
+        assert_eq!(planned.video.out_point, Duration::from_secs(60));
+        assert!(planned.video.is_complete);
+        assert_eq!(planned.video.finish, item.finish);
     }
 }
