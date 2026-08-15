@@ -68,6 +68,7 @@ pub enum VideoFilter {
     ColorChannelMixer(ColorChannelMixerFilter),
     Fade(FadeFilter),
     Crop(CropFilter),
+    TPad(TPadFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
@@ -607,6 +608,30 @@ impl VideoFilterOp for ColorChannelMixerFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!("colorchannelmixer=aa={}", self.alpha))
+    }
+}
+
+/// Extends the video stream past its source's end by cloning the last frame,
+/// so an under-running source still fills its item's scheduled duration; the
+/// output -t clamp bounds the padding.
+#[derive(Debug, Clone)]
+pub struct TPadFilter;
+
+impl VideoFilterOp for TPadFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        Some(self.clone().into())
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {
+        // no change to state
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("tpad=stop=-1:stop_mode=clone"))
     }
 }
 

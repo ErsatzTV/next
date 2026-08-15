@@ -27,8 +27,8 @@ use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, FadeFilter,
     FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
-    SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
-    VideoFilter,
+    SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, TPadFilter,
+    ToneMapFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -394,6 +394,13 @@ impl Pipeline {
             PipelineFilter::Audio(AudioFilter::Resample),
             PipelineFilter::Audio(AudioFilter::Pad),
         ];
+
+        if final_output_settings.pad_to_duration {
+            // pad an under-running source to the output -t clamp by cloning
+            // its last frame, so the item still fills its scheduled duration
+            // (audio is always padded; see AudioFilter::Pad)
+            filters.push(PipelineFilter::Video(TPadFilter.into()));
+        }
 
         filters.extend([
             PipelineFilter::Video(LoopFilter { is_still_image }.into()),
@@ -969,7 +976,20 @@ pub fn generate_pipeline(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use time::OffsetDateTime;
+
     use super::*;
+    use crate::input::{LocalInputSource, ProbedInput};
+    use crate::output_format::OutputFormat;
+    use crate::output_settings::{
+        AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions,
+    };
+    use crate::probe::{
+        CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
+        ProbeResultVideoStream,
+    };
 
     #[test]
     fn device_name_returns_correct_ffmpeg_device_strings() {
@@ -983,5 +1003,127 @@ mod tests {
             Some("videotoolbox")
         );
         assert_eq!(FrameSurface::System.device_name(), None);
+    }
+
+    fn file_probe(media: Duration) -> ProbeResult {
+        ProbeResult {
+            path: String::from("/media/item.mp4"),
+            streams: vec![
+                ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
+                    stream_index: 0,
+                    codec: String::from("h264"),
+                    codec_type: CodecType::Video,
+                    profile: String::from("high"),
+                    height: Some(1080),
+                    width: Some(1920),
+                    frame_rate: FrameRate::parse("30"),
+                    sample_aspect_ratio: None,
+                    display_aspect_ratio: None,
+                    pix_fmt: String::from("yuv420p"),
+                    color_params: ProbeResultColorParams::default(),
+                    field_order: None,
+                    dv_profile: None,
+                })),
+                ProbeResultStream::Audio(ProbeResultAudioStream {
+                    stream_index: 1,
+                    codec: String::from("aac"),
+                    channels: 2,
+                }),
+            ],
+            duration: Some(media),
+            format_name: Some(String::from("mov,mp4,m4a")),
+        }
+    }
+
+    /// A software pipeline for a plain file item, with or without
+    /// `pad_to_duration`.
+    fn file_pipeline_args(pad_to_duration: bool) -> ArgVec {
+        let probe = file_probe(Duration::from_secs(10));
+        let input_source = InputSource::Local(LocalInputSource {
+            path: String::from("/media/item.mp4"),
+        });
+
+        let probed = |source: InputSource, probe: ProbeResult| ProbedInput {
+            input_source: source,
+            probe_result: probe,
+            in_point: Duration::ZERO,
+            out_point: Duration::from_millis(11_021),
+            stream_index: None,
+        };
+
+        let input_settings = InputSettings {
+            start: OffsetDateTime::UNIX_EPOCH,
+            playout_offset: Duration::ZERO,
+            audio_input: probed(input_source.clone(), probe.clone()),
+            video_input: probed(input_source, probe),
+            subtitle_input: None,
+            graphics_inputs: Vec::new(),
+        };
+
+        let output_settings = OutputSettings {
+            audio: AudioOutputSettings {
+                format: Some(AudioFormat::Aac),
+                bitrate: Some(Kbps(192)),
+                buffer: Some(Kbps(384)),
+                channels: Some(2),
+                sample_rate: Some(Hz(48000)),
+                loudness: None,
+            },
+            video_format: Some(VideoFormat::H264),
+            bit_depth: Some(8),
+            video_bitrate: Some(Kbps(5000)),
+            video_buffer: Some(Kbps(10000)),
+            video_size: None,
+            scaling_mode: ScalingMode::ScaleAndPad,
+            filter_options: VideoFilterOptions::default(),
+            deinterlace: false,
+            accel: None,
+            format: OutputFormat::Hls {
+                playlist: String::from("/session/live.m3u8"),
+                segment_template: String::from("/session/live%05d.ts"),
+                troubleshoot: false,
+            },
+            pts_offset: None,
+            pad_to_duration,
+            realtime: false,
+            is_live: false,
+            frame_rate: None,
+            subtitle_mode: SubtitleMode::Burn,
+            fonts_folder: None,
+            subtitle_force_style: None,
+            reports_folder: None,
+            report_id: None,
+        };
+
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: HashSet::new(),
+            video_filters: HashSet::new(),
+            preferred_filters: HashMap::new(),
+        };
+
+        let mut pipeline =
+            generate_pipeline(&ffmpeg_info, input_settings, output_settings).unwrap();
+        pipeline.optimize();
+        pipeline.args()
+    }
+
+    /// This guards the wiring rather than the arithmetic: the flag has to
+    /// reach the filter chain, and nothing else in these tests would notice
+    /// if it stopped.
+    #[test]
+    fn padding_to_duration_puts_tpad_in_the_chain() {
+        let has_tpad = |args: &ArgVec| args.iter().any(|a| a.as_ref().contains("tpad="));
+
+        let padded = file_pipeline_args(true);
+        let unpadded = file_pipeline_args(false);
+
+        assert!(
+            has_tpad(&padded),
+            "a padded pipeline must carry tpad, got {padded:?}"
+        );
+        assert!(
+            !has_tpad(&unpadded),
+            "an unpadded pipeline must not, got {unpadded:?}"
+        );
     }
 }

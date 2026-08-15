@@ -97,14 +97,19 @@ struct TimingPlan<'a> {
     realtime: bool,
     is_live: bool,
     transcoded_until: OffsetDateTime,
+    /// `last_segment_end - transcoded_until`: how far the stamp clock has
+    /// run past the schedule clock.
+    stamp_error_ms: i64,
 }
 
 /// What [`ChannelSession::plan_timings`] decided: the per-stream input
-/// timings for one pipeline invocation.
+/// timings for one pipeline invocation, with the emission trim already
+/// applied.
 struct PlannedTimings {
     audio: TimingResult,
     video: TimingResult,
     subtitle: Option<TimingResult>,
+    trim_ms: i64,
 }
 
 pub struct ChannelSession {
@@ -570,10 +575,25 @@ impl ChannelSession {
             ChannelSessionState::ZeroAndWorkAhead | ChannelSessionState::ZeroAndRealtime
         );
 
+        // measure how far the stamp clock has run past the schedule clock;
+        // plan_timings hands it back on this pipeline's output duration.
+        // update() first: the previous pipeline's final segments may not have
+        // been scanned yet, and an unscanned segment would hide exactly the
+        // error this is measuring
+        let stamp_error_ms = {
+            let mut playlist_manager = self.playlist_manager.lock().await;
+            playlist_manager.update().await?;
+            Self::stamp_error_ms(
+                playlist_manager.last_segment_end(),
+                self.transcoded_until,
+                self.start_time_offset,
+            )
+        };
         let PlannedTimings {
             audio: audio_timing,
             video: video_timing,
             subtitle: subtitle_timing,
+            trim_ms,
         } = Self::plan_timings(TimingPlan {
             current_item,
             audio_source: &audio_source,
@@ -583,7 +603,14 @@ impl ChannelSession {
             realtime,
             is_live,
             transcoded_until: self.transcoded_until,
+            stamp_error_ms,
         });
+        if trim_ms != 0 {
+            log::debug!(
+                "emission trim {trim_ms}ms for item {} (stamp clock is {stamp_error_ms}ms past the schedule)",
+                current_item.id
+            );
+        }
 
         let video_index = current_item
             .tracks
@@ -1040,6 +1067,24 @@ impl ChannelSession {
                 troubleshoot: plan.troubleshoot,
             },
             pts_offset: plan.pts_duration.map(|duration| PtsOffset { duration }),
+            // A file whose video stream ends before its container does books
+            // more slot than its video can fill, and the shortfall is lost
+            // permanently because last_segment_end only advances by emitted
+            // EXTINF; the schedule then runs ahead of the stamps forever.
+            // Padding every pipeline to its -t clamp closes that hole.
+            //
+            // Padding alone is not safe: with tpad in the chain the video
+            // stream never reaches EOF, so the output -t cut decides the
+            // emitted duration, and that cut is frame-quantized upward (the
+            // frame straddling it is emitted whole). Every item whose slot is
+            // not frame-aligned then emits up to one frame long, and that
+            // error accumulates instead. The emission trim (emission_trim_ms,
+            // applied by plan_timings) hands the measured error back on the
+            // next pipeline's output duration, which bounds the drift at
+            // about one frame. The flag and the trim only work as a pair: the
+            // trim assumes every pipeline is padded, because only a padded
+            // pipeline can extend to cover a negative error.
+            pad_to_duration: true,
             realtime: plan.realtime,
             is_live: plan.is_live,
             frame_rate: if plan.video_is_still_image {
@@ -1097,10 +1142,82 @@ impl ChannelSession {
             )
         });
 
+        let pipeline_ms = std::cmp::min(
+            audio.out_point.saturating_sub(audio.in_point),
+            video.out_point.saturating_sub(video.in_point),
+        )
+        .as_millis() as u64;
+        let trim_ms = Self::emission_trim_ms(plan.stamp_error_ms, pipeline_ms);
+        let audio = Self::apply_emission_trim(audio, trim_ms);
+        let video = Self::apply_emission_trim(video, trim_ms);
+
         PlannedTimings {
             audio,
             video,
             subtitle,
+            trim_ms,
+        }
+    }
+
+    /// How far the stamp clock has run past the schedule clock, in
+    /// milliseconds.
+    ///
+    /// The two clocks are seeded from the same reading at channel start, but
+    /// `transcoded_until` also carries `start_time_offset`, the distance to a
+    /// configured `virtual_start`. That offset is deliberate and permanent, so
+    /// it has to be added back before the two can be compared.
+    ///
+    /// Subtracting them raw would report the whole virtual start offset as
+    /// error. Since the correction below drives that error toward zero, a
+    /// channel with `virtual_start` set would have its content trimmed or
+    /// padded by the clamp on every item until the offset closed.
+    fn stamp_error_ms(
+        last_segment_end: OffsetDateTime,
+        transcoded_until: OffsetDateTime,
+        start_time_offset: time::Duration,
+    ) -> i64 {
+        (last_segment_end + start_time_offset - transcoded_until).whole_milliseconds() as i64
+    }
+
+    /// How much of this pipeline's output duration to give back to the
+    /// schedule, in milliseconds. Positive shortens the pipeline's -t,
+    /// negative lengthens it.
+    ///
+    /// `stamp_error_ms` is the same timeline position read on the stamp clock
+    /// and on the schedule clock, with the virtual start offset taken back out.
+    /// With every pipeline padded to its clamp, the -t cut is frame-quantized
+    /// upward (the frame straddling the cut is emitted whole), so each item
+    /// emits up to one frame more than its slot and the stamp clock
+    /// integrates that forever. Handing the measured error back to the next
+    /// pipeline's output duration bounds it at about one frame instead.
+    ///
+    /// The correction is clamped so a wild clock (a failed pipeline, a
+    /// corrupted playlist) slews back over several items instead of opening
+    /// one large hole, and it never eats more than half the pipeline it is
+    /// applied to.
+    fn emission_trim_ms(stamp_error_ms: i64, pipeline_ms: u64) -> i64 {
+        const MAX_CORRECTION_MS: i64 = 500;
+        stamp_error_ms
+            .clamp(-MAX_CORRECTION_MS, MAX_CORRECTION_MS)
+            .min((pipeline_ms / 2) as i64)
+    }
+
+    /// Applies an emission trim to one input's timing. Only the emitted
+    /// duration moves: `in_point` (where reading starts) and `finish` (how
+    /// far the schedule advances) are schedule-derived and stay untouched.
+    /// Output timing is measured, and measurement must never inform where a
+    /// source is read from.
+    fn apply_emission_trim(timing: TimingResult, trim_ms: i64) -> TimingResult {
+        let out_point = if trim_ms >= 0 {
+            timing
+                .out_point
+                .saturating_sub(Duration::from_millis(trim_ms as u64))
+        } else {
+            timing.out_point + Duration::from_millis(trim_ms.unsigned_abs())
+        };
+        TimingResult {
+            out_point,
+            ..timing
         }
     }
 
@@ -1541,6 +1658,57 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
 mod tests {
     use super::*;
 
+    fn at(seconds: i64) -> OffsetDateTime {
+        OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(seconds)
+    }
+
+    #[test]
+    fn stamp_error_measures_emission_against_the_schedule() {
+        // 25s more media emitted than the slot called for
+        assert_eq!(
+            ChannelSession::stamp_error_ms(at(1025), at(1000), time::Duration::ZERO),
+            25_000
+        );
+        assert_eq!(
+            ChannelSession::stamp_error_ms(at(995), at(1000), time::Duration::ZERO),
+            -5_000
+        );
+    }
+
+    #[test]
+    fn a_virtual_start_offset_is_not_a_stamp_error() {
+        // ChannelSession::new seeds last_segment_end at `now` and
+        // transcoded_until at `now + start_time_offset`, so the offset is
+        // present from the first pipeline and never goes away. reporting it
+        // as error would make emission_trim_ms claw back the whole virtual
+        // start offset, 500ms of content per item, for as long as it took
+        for offset_secs in [-604_800i64, -3600, -1, 1, 3600, 604_800] {
+            let offset = time::Duration::seconds(offset_secs);
+            assert_eq!(
+                ChannelSession::stamp_error_ms(at(1000), at(1000) + offset, offset),
+                0,
+                "a {offset_secs}s virtual start offset was measured as stamp error"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_error_is_still_measured_through_a_virtual_start_offset() {
+        let offset = time::Duration::hours(1);
+        assert_eq!(
+            ChannelSession::stamp_error_ms(at(1025), at(1000) + offset, offset),
+            25_000
+        );
+    }
+
+    #[test]
+    fn a_virtual_start_offset_produces_no_emission_trim() {
+        // the end to end shape of the bug: measurement into correction
+        let offset = time::Duration::hours(1);
+        let error = ChannelSession::stamp_error_ms(at(1000), at(1000) + offset, offset);
+        assert_eq!(ChannelSession::emission_trim_ms(error, 30_000), 0);
+    }
+
     /// The channel configuration exactly as the scaffolder writes it, which
     /// is the shape every deployment starts from.
     fn test_channel_config() -> ChannelConfig {
@@ -1604,6 +1772,23 @@ mod tests {
         assert!(!output_settings(false, false, false).realtime);
     }
 
+    /// Every pipeline is padded, whatever kind of item it is. The emission
+    /// trim depends on this: only a padded pipeline can extend to cover a
+    /// negative stamp clock error.
+    #[test]
+    fn every_pipeline_is_padded_to_its_clamp() {
+        for realtime in [false, true] {
+            for is_live in [false, true] {
+                for still in [false, true] {
+                    assert!(
+                        output_settings(realtime, is_live, still).pad_to_duration,
+                        "realtime={realtime} is_live={is_live} still={still} must be padded"
+                    );
+                }
+            }
+        }
+    }
+
     /// A plain file item occupying an 11.021 second slot.
     fn file_item() -> PlayoutItem {
         serde_json::from_value(serde_json::json!({
@@ -1615,7 +1800,12 @@ mod tests {
         .expect("a local file item deserializes")
     }
 
-    fn plan_for(item: &PlayoutItem, start_at_zero: bool, realtime: bool) -> PlannedTimings {
+    fn plan_for(
+        item: &PlayoutItem,
+        start_at_zero: bool,
+        realtime: bool,
+        stamp_error_ms: i64,
+    ) -> PlannedTimings {
         let audio_source =
             ChannelSession::resolve_source(item, |t| t.audio.as_ref()).expect("audio source");
         let video_source =
@@ -1630,6 +1820,7 @@ mod tests {
             realtime,
             is_live,
             transcoded_until: item.start,
+            stamp_error_ms,
         })
     }
 
@@ -1638,7 +1829,7 @@ mod tests {
     #[test]
     fn a_realtime_item_fills_its_slot_in_one_pipeline() {
         let item = file_item();
-        let planned = plan_for(&item, true, true);
+        let planned = plan_for(&item, true, true, 0);
         assert_eq!(planned.audio.in_point, Duration::ZERO);
         assert_eq!(planned.audio.out_point, Duration::from_millis(11_021));
         assert_eq!(planned.video.out_point, Duration::from_millis(11_021));
@@ -1660,11 +1851,88 @@ mod tests {
         .expect("a local file item deserializes");
 
         let limit = Duration::from_secs(SEGMENT_SECONDS as u64 * 11);
-        let planned = plan_for(&item, true, false);
+        let planned = plan_for(&item, true, false, 0);
         assert_eq!(planned.video.in_point, Duration::ZERO);
         assert_eq!(planned.video.out_point, limit);
         assert!(!planned.video.is_complete);
         assert_eq!(planned.video.finish, item.start + limit);
+    }
+
+    /// The steady state the trim exists for: each padded item overshoots its
+    /// slot by up to one frame, and the whole accumulated error comes back on
+    /// the very next pipeline.
+    #[test]
+    fn a_small_stamp_clock_error_is_returned_in_full() {
+        assert_eq!(ChannelSession::emission_trim_ms(27, 11_021), 27);
+        assert_eq!(ChannelSession::emission_trim_ms(-31, 11_021), -31);
+        assert_eq!(ChannelSession::emission_trim_ms(0, 11_021), 0);
+    }
+
+    /// A wild clock slews back over several items rather than opening one
+    /// large hole in a single pipeline.
+    #[test]
+    fn a_large_stamp_clock_error_is_clamped_in_both_directions() {
+        assert_eq!(ChannelSession::emission_trim_ms(6_500, 60_000), 500);
+        assert_eq!(ChannelSession::emission_trim_ms(-6_500, 60_000), -500);
+    }
+
+    /// A short pipeline gives back at most half of itself, so a short item can
+    /// never be trimmed into nothing.
+    #[test]
+    fn a_trim_never_eats_more_than_half_the_pipeline() {
+        assert_eq!(ChannelSession::emission_trim_ms(400, 600), 300);
+    }
+
+    /// Only the emitted duration moves. `in_point` is where reading starts
+    /// and `finish` is how far the schedule advances; a trim that touched
+    /// either would be a measurement driving a seek.
+    #[test]
+    fn a_trim_moves_only_the_out_point() {
+        let finish = OffsetDateTime::parse(
+            "2026-08-15T12:00:11.021-04:00",
+            &time::format_description::well_known::Iso8601::DEFAULT,
+        )
+        .unwrap();
+        let timing = TimingResult {
+            in_point: Duration::from_millis(2_000),
+            out_point: Duration::from_millis(13_021),
+            finish,
+            is_complete: true,
+        };
+
+        let trimmed = ChannelSession::apply_emission_trim(timing, 27);
+        assert_eq!(trimmed.in_point, Duration::from_millis(2_000));
+        assert_eq!(trimmed.out_point, Duration::from_millis(12_994));
+        assert_eq!(trimmed.finish, finish);
+        assert!(trimmed.is_complete);
+
+        let extended = ChannelSession::apply_emission_trim(
+            TimingResult {
+                in_point: Duration::from_millis(2_000),
+                out_point: Duration::from_millis(13_021),
+                finish,
+                is_complete: true,
+            },
+            -40,
+        );
+        assert_eq!(extended.in_point, Duration::from_millis(2_000));
+        assert_eq!(extended.out_point, Duration::from_millis(13_061));
+    }
+
+    /// The trim must land on what the -t actually consumes: both streams'
+    /// out points. A trim that was computed but not applied here is exactly
+    /// the wiring gap that would let the drift keep integrating while every
+    /// unit test stays green.
+    #[test]
+    fn the_trim_reaches_every_stream_the_t_reads() {
+        let item = file_item();
+        let planned = plan_for(&item, true, true, 27);
+        assert_eq!(planned.trim_ms, 27);
+        assert_eq!(planned.audio.out_point, Duration::from_millis(10_994));
+        assert_eq!(planned.video.out_point, Duration::from_millis(10_994));
+        assert_eq!(planned.audio.in_point, Duration::ZERO);
+        assert_eq!(planned.video.in_point, Duration::ZERO);
+        assert_eq!(planned.video.finish, item.finish);
     }
 
     /// A live source never seeks, wherever the session is in the item: the
@@ -1698,6 +1966,7 @@ mod tests {
             is_live: true,
             // ninety seconds into the item
             transcoded_until: item.start + Duration::from_secs(90),
+            stamp_error_ms: 0,
         });
         assert_eq!(planned.video.in_point, Duration::ZERO);
         assert_eq!(planned.video.out_point, Duration::from_secs(60));
