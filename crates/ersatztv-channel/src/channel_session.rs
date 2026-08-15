@@ -952,17 +952,27 @@ impl ChannelSession {
         let item_start = current_item.start;
         let item_finish = current_item.finish;
         let item_duration = current_item.finish - current_item.start;
+        let item_slot_ms = item_duration.whole_milliseconds().max(0) as u64;
         let item_in_point_base_ms = match source {
             PlayoutItemSource::Local { in_point_ms, .. }
             | PlayoutItemSource::Http { in_point_ms, .. } => in_point_ms.unwrap_or(0),
             _ => 0,
         };
-        let item_out_point_ms = match source {
+        let explicit_out_point_ms = match source {
             PlayoutItemSource::Local { out_point_ms, .. }
-            | PlayoutItemSource::Http { out_point_ms, .. } => out_point_ms
-                .unwrap_or(item_in_point_base_ms + item_duration.whole_milliseconds() as u64),
-            _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
+            | PlayoutItemSource::Http { out_point_ms, .. } => *out_point_ms,
+            _ => None,
         };
+        let (item_out_point_ms, overrun_ms) =
+            effective_out_point_ms(explicit_out_point_ms, item_in_point_base_ms, item_slot_ms);
+        if overrun_ms > 0 {
+            log::warn!(
+                "item {} out_point overruns its {}ms slot by {}ms; clamping to the slot",
+                current_item.id,
+                item_slot_ms,
+                overrun_ms
+            );
+        }
 
         let effective_now = if start_at_zero {
             item_start
@@ -1374,6 +1384,35 @@ fn playout_timing_to_pipeline(
     })
 }
 
+/// The out point this item will actually be read to, and how far the
+/// declared one overran its slot.
+///
+/// A declared out point may NARROW an item, so a scheduler can play less of
+/// a file than its slot would allow. It may not WIDEN one: the pipeline
+/// duration is `out_point - in_point`, so an out point past the end of the
+/// slot makes ffmpeg emit more media than the schedule booked, and
+/// `last_segment_end` only ever advances by emitted EXTINF. The surplus is
+/// never reconciled, so it becomes permanent drift between the stream and
+/// the schedule, growing with every airing of every such item.
+///
+/// The slot is the authority because it is what every other consumer of the
+/// playout already believes: the guide, the next item's start, and the
+/// session's own `transcoded_until`.
+fn effective_out_point_ms(
+    explicit_out_point_ms: Option<u64>,
+    in_point_base_ms: u64,
+    slot_ms: u64,
+) -> (u64, u64) {
+    let slot_out_point_ms = in_point_base_ms + slot_ms;
+    match explicit_out_point_ms {
+        Some(out_point_ms) if out_point_ms > slot_out_point_ms => {
+            (slot_out_point_ms, out_point_ms - slot_out_point_ms)
+        }
+        Some(out_point_ms) => (out_point_ms, 0),
+        None => (slot_out_point_ms, 0),
+    }
+}
+
 fn source_is_live(source: &PlayoutItemSource) -> bool {
     matches!(
         source,
@@ -1446,5 +1485,58 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The measured case this was written for: a filler item whose slot ran
+    /// 50.209s while the playout declared a 60.007s out point, taken from a
+    /// scheduler that reused a rejected candidate's duration. The pipeline
+    /// ran 9.798s long every time the item aired.
+    #[test]
+    fn an_out_point_past_the_slot_is_clamped_to_the_slot() {
+        assert_eq!(
+            effective_out_point_ms(Some(60_007), 0, 50_209),
+            (50_209, 9_798)
+        );
+    }
+
+    /// A declared out point inside the slot is honored: a scheduler may
+    /// play less of a file than the slot allows.
+    #[test]
+    fn an_out_point_inside_the_slot_is_honored() {
+        assert_eq!(effective_out_point_ms(Some(30_000), 0, 50_209), (30_000, 0));
+    }
+
+    /// With no declared out point the item plays its whole slot.
+    #[test]
+    fn no_declared_out_point_plays_the_whole_slot() {
+        assert_eq!(effective_out_point_ms(None, 0, 50_209), (50_209, 0));
+    }
+
+    /// The slot measures content, not position, so an item seeking into a
+    /// file gets its slot from the in point rather than from zero. Clamping
+    /// against the slot alone would cut every seeked item short.
+    #[test]
+    fn the_slot_is_measured_from_the_in_point() {
+        assert_eq!(
+            effective_out_point_ms(Some(600_000), 120_000, 50_209),
+            (170_209, 429_791)
+        );
+        assert_eq!(
+            effective_out_point_ms(Some(170_209), 120_000, 50_209),
+            (170_209, 0)
+        );
+        assert_eq!(effective_out_point_ms(None, 120_000, 50_209), (170_209, 0));
+    }
+
+    /// An out point exactly on the slot boundary is not an overrun, so a
+    /// correct scheduler never triggers the warning.
+    #[test]
+    fn an_out_point_exactly_on_the_boundary_is_not_an_overrun() {
+        assert_eq!(effective_out_point_ms(Some(50_209), 0, 50_209), (50_209, 0));
     }
 }
