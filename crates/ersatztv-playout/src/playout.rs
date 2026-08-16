@@ -226,7 +226,10 @@ pub enum PlayoutItemSource {
         probe_hint: Option<ProbeHint>,
     },
     Http {
-        /// URI template, e.g. "https://example.com/file.mkv?token={{MY_SECRET}}"
+        /// URI template, e.g. "https://example.com/file.mkv?token={{MY_SECRET}}".
+        /// A name with no namespace is an environment variable. A namespaced
+        /// name is resolved by the server: `{{channel:number}}` is the number
+        /// of the channel being transcoded. See [`crate::stream_variables`].
         uri: String,
         /// Whether the content is live and therefore cannot seek or work
         /// ahead (default: false)
@@ -259,6 +262,8 @@ pub enum PlayoutItemSource {
         probe_hint: Option<ProbeHint>,
     },
     Rtsp {
+        /// RTSP URI template, e.g. "rtsp://user:{{PASSWORD}}@camera.lan:554/stream".
+        /// Expanded the same way as the [`PlayoutItemSource::Http`] uri.
         uri: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_us: Option<u64>,
