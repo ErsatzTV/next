@@ -8,7 +8,7 @@ use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
 
-use crate::error::ChannelError;
+use crate::error::{ChannelError, IoContext};
 
 pub const PATH_FIELDS: &[&str] = &[
     "/playout/folder",
@@ -517,8 +517,14 @@ impl ChannelConfig {
                 let mut result = String::new();
                 let limit = 256 * 1024; // 256K
                 let mut reader = tokio::io::stdin().take(limit);
-                reader.read_to_string(&mut result).await?;
-                relative_to = std::env::current_dir()?;
+                reader
+                    .read_to_string(&mut result)
+                    .await
+                    .io_context_named("read the channel config from", "stdin")?;
+                relative_to = std::env::current_dir().io_context_named(
+                    "resolve the working directory for",
+                    "the channel config on stdin",
+                )?;
                 result
             } else {
                 relative_to = config_path
@@ -530,7 +536,7 @@ impl ChannelConfig {
 
                 tokio::fs::read_to_string(config_path)
                     .await
-                    .map_err(ChannelError::ChannelConfigIoFailure)?
+                    .io_context("read the channel config file", config_path)?
             };
 
             let mut v: Value = serde_json::from_str(config_string.as_str())
@@ -560,8 +566,9 @@ impl ChannelConfig {
         self.expanded_playout_folder = PathBuf::from(&self.playout.folder);
 
         // expand output folder
-        self.expanded_output_folder =
-            expand_tilde(output_folder).ok_or(ChannelError::ChannelConfigExpandOutputFolder)?;
+        self.expanded_output_folder = expand_tilde(output_folder).ok_or_else(|| {
+            ChannelError::ChannelConfigExpandOutputFolder(output_folder.display().to_string())
+        })?;
 
         self.number = number.to_owned();
 
@@ -605,5 +612,34 @@ fn deserialize_optional_accel<'de, D: Deserializer<'de>>(
             HardwareAccel::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(v))
                 .map(Some)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `from_sources` merges several files, so an unreadable one has to name
+    /// itself or the operator cannot tell which source is at fault.
+    #[tokio::test]
+    async fn a_config_file_that_cannot_be_read_is_named() {
+        let folder = tempfile::tempdir().unwrap();
+        let missing = folder.path().join("no-such-channel.json");
+        let output = folder.path().join("out");
+        let sources = [missing.clone()];
+
+        let message = ChannelConfig::from_sources(&sources, &output, "5")
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            message.contains("read the channel config file"),
+            "message does not name the operation: {message}"
+        );
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "message does not name the file: {message}"
+        );
     }
 }

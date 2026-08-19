@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ersatztv_channel::config::ChannelConfig;
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use tokio::process::Command;
 
 pub struct PtsTime {
@@ -27,7 +27,10 @@ impl PtsScanner {
 
         // find last segment file in output folder
         let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(&self.output_folder).await?;
+        let mut dir = tokio::fs::read_dir(&self.output_folder).await.io_context(
+            "scan the output folder for the last segment",
+            &self.output_folder,
+        )?;
         while let Ok(Some(entry)) = dir.next_entry().await {
             if entry
                 .path()
@@ -44,7 +47,9 @@ impl PtsScanner {
                 .path()
                 .into_os_string()
                 .into_string()
-                .map_err(|_| ChannelError::PtsScannerFailure)?;
+                .map_err(|p| {
+                    ChannelError::PtsScannerPathNotUtf8(p.to_string_lossy().into_owned())
+                })?;
 
             let output = Command::new("ffprobe")
                 .args([
@@ -58,7 +63,7 @@ impl PtsScanner {
                 ])
                 .output()
                 .await
-                .map_err(|_| ChannelError::PtsScannerFailure)?;
+                .io_context("run ffprobe on the last segment", &path)?;
 
             // parse output line by line for largest pts time
             let stdout = String::from_utf8_lossy(&output.stdout);
