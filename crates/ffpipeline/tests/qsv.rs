@@ -71,10 +71,6 @@ async fn pipeline(
     }
 }
 
-/// On Windows this suite is the only coverage of the d3d11va frames-context patches:
-/// QSV hwupload pools are built with `extra_hw_frames=64` (pool size 66, above
-/// MAX_ARRAY_SIZE) and carry D3D11_BIND_RENDER_TARGET, the combination those patches
-/// handle. On Linux QSV goes through VAAPI and never reaches that code.
 #[rstest]
 #[tokio::test]
 #[ignore]
