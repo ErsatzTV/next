@@ -382,27 +382,22 @@ impl ChannelSession {
         let current_item = match current_item_result {
             Ok(playout_item) => playout_item,
             Err(ChannelError::PlayoutJsonNoItem { next_start }) => {
-                // filling a schedule gap with black is normal; log it so black
-                // air is explainable
-                match next_start {
-                    Some(start) => {
-                        let gap = start - self.transcoded_until;
-                        log::debug!(
-                            "no playout item covers {}; filling with black/silence for {}m {}s until the next item",
-                            self.transcoded_until,
-                            gap.whole_minutes(),
-                            gap.whole_seconds() % 60
-                        );
-                    }
-                    None => log::debug!(
-                        "no playout item covers {} and none is scheduled after it; filling with black/silence",
-                        self.transcoded_until
-                    ),
-                }
+                log::debug!(
+                    "no playout item covers {}, replacing with black/silence until {}",
+                    self.transcoded_until,
+                    next_start.map_or_else(
+                        || String::from("the next reload"),
+                        |start| start.to_string()
+                    )
+                );
                 self.fake_playout_item(next_start)
             }
             Err(err) => {
-                log::error!("{}", err);
+                log::error!(
+                    "no item could be selected for {}, replacing with black/silence: {}",
+                    self.transcoded_until,
+                    err
+                );
                 self.fake_playout_item(None)
             }
         };
@@ -419,7 +414,13 @@ impl ChannelSession {
             Err(e @ ChannelError::Stalled(_)) => return Err(e),
             Err(e) if troubleshoot => return Err(e),
             Err(e) => {
-                log::error!("item failed, replacing with black/silence: {e}");
+                log::error!(
+                    "item {} ({} .. {}) failed, replacing with black/silence: {}",
+                    current_item.id,
+                    current_item.start,
+                    current_item.finish,
+                    e
+                );
                 let fake_item = self.fake_playout_item(Some(current_item.finish));
                 self.transcode_item(&fake_item, realtime, troubleshoot, pts_duration)
                     .await?
