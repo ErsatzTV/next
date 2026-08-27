@@ -150,10 +150,7 @@ impl VideoFilterOp for HwUploadFilter {
             FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
             FrameSurface::Rkmpp => Some(format!("{format_filter}hwupload")),
 
-            #[cfg(target_os = "windows")]
-            FrameSurface::Qsv => Some(format!("{format_filter}hwupload=extra_hw_frames=64")),
-
-            #[cfg(not(target_os = "windows"))]
+            // don't pass extra_hw_frames here; it triggers bugs with filter graph reinit
             FrameSurface::Qsv => Some(format!("{format_filter}hwupload")),
 
             FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
