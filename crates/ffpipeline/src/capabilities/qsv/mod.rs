@@ -10,6 +10,12 @@ use crate::pipeline::{PixelFormat, VideoFormat};
     any(target_os = "linux", target_os = "windows"),
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
+pub(crate) mod legacy;
+
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 pub(crate) mod vpl;
 
 #[cfg(not(all(

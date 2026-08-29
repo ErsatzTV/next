@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use libvpl_sys::*;
 
-use crate::capabilities::qsv::{QsvCapabilities, QsvPixelFormat};
+use crate::capabilities::qsv::{QsvCapabilities, QsvPixelFormat, legacy};
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
 
@@ -98,6 +98,18 @@ impl QsvCapabilities {
             }
 
             (vpl.MFXUnload)(loader);
+        }
+
+        // the dispatcher reports a legacy runtime with an empty capability tree,
+        // because MFXQueryImplsDescription exists only in API 2.x runtimes
+        if supported_decoders.is_empty() && supported_encoders.is_empty() {
+            log::debug!(
+                "[qsv] VPL reported no codecs; falling back to a legacy Media SDK capability query"
+            );
+
+            if let Some(capabilities) = legacy::probe(&vpl) {
+                return Ok(capabilities);
+            }
         }
 
         Ok(QsvCapabilities {
