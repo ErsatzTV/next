@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ersatztv_channel::config::ChannelConfig;
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
     AudioHint, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, ProbeHint,
@@ -113,25 +113,37 @@ impl ChannelSession {
             .join("live.m3u8")
             .into_os_string()
             .into_string()
-            .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+            .map_err(|p| ChannelError::OutputPathNotUtf8 {
+                file: "live.m3u8",
+                path: p.to_string_lossy().into_owned(),
+            })?;
 
         let generated_subtitle_output_file = output_folder
             .join("live_sub.m3u8")
             .into_os_string()
             .into_string()
-            .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+            .map_err(|p| ChannelError::OutputPathNotUtf8 {
+                file: "live_sub.m3u8",
+                path: p.to_string_lossy().into_owned(),
+            })?;
 
         let ffmpeg_output_file = output_folder
             .join("ffmpeg.m3u8")
             .into_os_string()
             .into_string()
-            .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+            .map_err(|p| ChannelError::OutputPathNotUtf8 {
+                file: "ffmpeg.m3u8",
+                path: p.to_string_lossy().into_owned(),
+            })?;
 
         let output_segment_template = output_folder
             .join("live%06d.ts")
             .into_os_string()
             .into_string()
-            .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+            .map_err(|p| ChannelError::OutputPathNotUtf8 {
+                file: "live%06d.ts",
+                path: p.to_string_lossy().into_owned(),
+            })?;
 
         let ready_file = output_folder.join(READY_FILE_NAME);
 
@@ -283,19 +295,21 @@ impl ChannelSession {
         let output_folder = self.channel_config.expanded_output_folder();
 
         if self.ready_file.exists() {
-            tokio::fs::remove_file(&self.ready_file).await?;
+            tokio::fs::remove_file(&self.ready_file)
+                .await
+                .io_context("remove the stale ready file", &self.ready_file)?;
         }
 
         if output_folder.exists() {
             if !troubleshoot {
                 empty_folder(output_folder)
                     .await
-                    .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+                    .io_context("empty the output folder", output_folder)?;
             }
         } else {
             tokio::fs::create_dir(output_folder)
                 .await
-                .map_err(|_| ChannelError::ChannelConfigOutputFolderRequired)?;
+                .io_context("create the output folder", output_folder)?;
         }
 
         Ok(())
@@ -345,7 +359,7 @@ impl ChannelSession {
         let mut pts_time: Option<PtsTime> = None;
         match self.pts_scanner.get_last_pts().await {
             Ok(scanned_pts_time) => pts_time = Some(scanned_pts_time),
-            Err(e) => log::debug!("failed to scan pts time: {e}"),
+            Err(e) => log::debug!("{e}"),
         }
 
         let mut current_item_result = self
