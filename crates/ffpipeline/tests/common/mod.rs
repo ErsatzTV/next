@@ -289,6 +289,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
             troubleshoot: false,
         },
         pts_offset: None,
+        pad_to_duration: false,
         realtime: false,
         is_live: false,
         frame_rate: params.frame_rate,

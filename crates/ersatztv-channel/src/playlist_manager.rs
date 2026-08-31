@@ -112,6 +112,14 @@ impl PlaylistManager {
         &self.last_progress
     }
 
+    /// Where the next segment's program date time will land: the end of all
+    /// media emitted so far, on the stamp clock. Against `transcoded_until`
+    /// (the same position on the schedule clock) this measures how far the
+    /// two clocks have drifted apart.
+    pub fn last_segment_end(&self) -> OffsetDateTime {
+        self.last_segment_end
+    }
+
     pub fn is_ready(&self) -> &bool {
         &self.ready
     }
