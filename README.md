@@ -30,7 +30,7 @@ This project contains the following crates:
 
 Finally, there are configuration examples under [examples](examples):
 
-- [playout.json](examples/playout/playout.json): an example playout JSON file, demonstrating some of the possible fields.
+- [playout.json](examples/playout/playout.json): an example playout JSON file, demonstrating some of the possible fields, including adjacent source ranges that omit a scene without creating a new media file.
 - [channel.json](examples/channel.json): an example channel configuration, linking a channel to its playout JSON files, and describing how to normalize the content.
 - [lineup.json](examples/lineup.json): an example lineup configuration, linking to all channels, and describing where to write the normalized content and how to serve it over HTTP.
 

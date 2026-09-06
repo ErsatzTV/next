@@ -4,12 +4,14 @@
   "generated_at": "2026-02-23T18:02:00-05:00",
   "items": [
     {
-      "id": "1",
+      "id": "1-safe-before",
       "start": "2026-02-23T20:00:00.000-05:00",
-      "finish": "2026-02-23T20:09:56.460-05:00",
+      "finish": "2026-02-23T20:04:00.000-05:00",
       "source": {
         "source_type": "local",
-        "path": "~/Videos/movies/Big Buck Bunny (2008)/Big Buck Bunny (2008).mov"
+        "path": "~/Videos/movies/Big Buck Bunny (2008)/Big Buck Bunny (2008).mov",
+        "in_point_ms": 0,
+        "out_point_ms": 240000
       },
       "tracks": {
         "audio": {
@@ -38,9 +40,25 @@
       }
     },
     {
+      "id": "1-safe-after",
+      "start": "2026-02-23T20:04:00.000-05:00",
+      "finish": "2026-02-23T20:09:26.460-05:00",
+      "source": {
+        "source_type": "local",
+        "path": "~/Videos/movies/Big Buck Bunny (2008)/Big Buck Bunny (2008).mov",
+        "in_point_ms": 270000,
+        "out_point_ms": 596460
+      },
+      "tracks": {
+        "audio": {
+          "stream_index": 1
+        }
+      }
+    },
+    {
       "id": "2",
-      "start": "2026-02-23T20:09:56.460-05:00",
-      "finish": "2026-02-23T20:10:06.460-05:00",
+      "start": "2026-02-23T20:09:26.460-05:00",
+      "finish": "2026-02-23T20:09:36.460-05:00",
       "tracks": {
         "audio": {
           "source": {
