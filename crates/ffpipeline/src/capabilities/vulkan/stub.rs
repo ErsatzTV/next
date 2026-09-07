@@ -11,4 +11,10 @@ impl VulkanCapabilities {
             supported_encoders: HashMap::new(),
         })
     }
+
+    pub fn probe_for_nvidia(
+        _device_uuid: Option<[u8; 16]>,
+    ) -> Result<VulkanCapabilities, FFPipelineError> {
+        Self::probe()
+    }
 }

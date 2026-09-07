@@ -23,6 +23,7 @@ pub struct OutputSettings {
     pub frame_rate: Option<FrameRate>,
     pub subtitle_mode: SubtitleMode,
     pub fonts_folder: Option<String>,
+    pub subtitle_force_style: Option<String>,
     pub reports_folder: Option<String>,
     pub report_id: Option<String>,
 }

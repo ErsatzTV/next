@@ -14,7 +14,9 @@ use libvulkan_sys::{
     VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
     VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
     VK_STRUCTURE_TYPE_APPLICATION_INFO, VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-    VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR, VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR,
+    VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PROFILE_INFO_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR,
@@ -34,13 +36,14 @@ use libvulkan_sys::{
     VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR, VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR,
     VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
     VkApplicationInfo, VkExtensionProperties, VkInstanceCreateInfo, VkLib, VkPhysicalDevice,
-    VkPhysicalDeviceProperties, VkResult, VkVideoCapabilitiesKHR, VkVideoDecodeAV1ProfileInfoKHR,
-    VkVideoDecodeH264ProfileInfoKHR, VkVideoDecodeH265ProfileInfoKHR,
-    VkVideoEncodeAV1ProfileInfoKHR, VkVideoEncodeH264ProfileInfoKHR,
-    VkVideoEncodeH265ProfileInfoKHR, VkVideoProfileInfoKHR, vk_make_api_version,
+    VkPhysicalDeviceIDProperties, VkPhysicalDeviceProperties2, VkResult, VkVideoCapabilitiesKHR,
+    VkVideoDecodeAV1ProfileInfoKHR, VkVideoDecodeH264ProfileInfoKHR,
+    VkVideoDecodeH265ProfileInfoKHR, VkVideoEncodeAV1ProfileInfoKHR,
+    VkVideoEncodeH264ProfileInfoKHR, VkVideoEncodeH265ProfileInfoKHR, VkVideoProfileInfoKHR,
+    vk_make_api_version,
 };
 
-use crate::capabilities::vulkan::VulkanCapabilities;
+use crate::capabilities::vulkan::{VulkanCapabilities, format_uuid};
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
 
@@ -75,6 +78,13 @@ struct CapsBuf {
     _data: [u8; 240],
 }
 
+struct DeviceIdentity {
+    name: String,
+    device_type: u32,
+    vendor_id: u32,
+    device_uuid: Option<[u8; 16]>,
+}
+
 impl CapsBuf {
     fn new(s_type: u32) -> Self {
         Self {
@@ -86,17 +96,49 @@ impl CapsBuf {
     }
 }
 
+#[derive(Clone, Copy)]
+enum DeviceTarget {
+    /// Highest scoring device; its index is meaningful as `vulkan:{index}`
+    Best,
+    /// The device backing a CUDA device, which ffmpeg reaches via `vulkan=vk@nv`
+    Nvidia([u8; 16]),
+}
+
 impl VulkanCapabilities {
     pub fn probe() -> Result<VulkanCapabilities, FFPipelineError> {
-        let vk = VkLib::load().map_err(|e| {
-            FFPipelineError::VulkanCapabilitiesError(format!("failed to load libvulkan: {e}"))
+        probe_target(DeviceTarget::Best)
+    }
+
+    /// Probe the Vulkan device that backs the CUDA device. `device_uuid` comes from
+    /// `cuDeviceGetUuid`, the same call ffmpeg makes to derive `vulkan=vk@nv`, matched
+    /// against the same `deviceUUID`. Without it ffmpeg cannot derive the device either,
+    /// so there is nothing to report.
+    pub fn probe_for_nvidia(
+        device_uuid: Option<[u8; 16]>,
+    ) -> Result<VulkanCapabilities, FFPipelineError> {
+        let device_uuid = device_uuid.ok_or_else(|| {
+            FFPipelineError::VulkanCapabilitiesError(
+                "CUDA device uuid unavailable; ffmpeg cannot derive a Vulkan device from CUDA"
+                    .into(),
+            )
         })?;
 
-        unsafe { probe_vulkan(&vk) }
+        probe_target(DeviceTarget::Nvidia(device_uuid))
     }
 }
 
-unsafe fn probe_vulkan(vk: &VkLib) -> Result<VulkanCapabilities, FFPipelineError> {
+fn probe_target(target: DeviceTarget) -> Result<VulkanCapabilities, FFPipelineError> {
+    let vk = VkLib::load().map_err(|e| {
+        FFPipelineError::VulkanCapabilitiesError(format!("failed to load libvulkan: {e}"))
+    })?;
+
+    unsafe { probe_vulkan(&vk, target) }
+}
+
+unsafe fn probe_vulkan(
+    vk: &VkLib,
+    target: DeviceTarget,
+) -> Result<VulkanCapabilities, FFPipelineError> {
     unsafe {
         let app_name = b"ersatztv\0";
         let app_info = VkApplicationInfo {
@@ -128,7 +170,7 @@ unsafe fn probe_vulkan(vk: &VkLib) -> Result<VulkanCapabilities, FFPipelineError
             )));
         }
 
-        let caps = probe_with_instance(vk, instance);
+        let caps = probe_with_instance(vk, instance, target);
 
         (vk.vkDestroyInstance)(instance, ptr::null());
 
@@ -136,21 +178,64 @@ unsafe fn probe_vulkan(vk: &VkLib) -> Result<VulkanCapabilities, FFPipelineError
     }
 }
 
-unsafe fn get_device_name(vk: &VkLib, device: VkPhysicalDevice) -> String {
+unsafe fn get_device_identity(vk: &VkLib, device: VkPhysicalDevice) -> DeviceIdentity {
     unsafe {
-        let mut props: VkPhysicalDeviceProperties = std::mem::zeroed();
-        (vk.vkGetPhysicalDeviceProperties)(device, &mut props);
-        CStr::from_ptr(props.device_name.as_ptr())
-            .to_string_lossy()
-            .into_owned()
+        let mut id_props: VkPhysicalDeviceIDProperties = std::mem::zeroed();
+        id_props.s_type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+
+        let mut props2: VkPhysicalDeviceProperties2 = std::mem::zeroed();
+        props2.s_type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.p_next = &raw mut id_props as *mut c_void;
+
+        (vk.vkGetPhysicalDeviceProperties2)(device, &mut props2);
+
+        DeviceIdentity {
+            name: CStr::from_ptr(props2.properties.device_name.as_ptr())
+                .to_string_lossy()
+                .into_owned(),
+            device_type: props2.properties.device_type,
+            vendor_id: props2.properties.vendor_id,
+            device_uuid: (id_props.device_uuid != [0u8; 16]).then_some(id_props.device_uuid),
+        }
     }
 }
 
-unsafe fn get_device_type(vk: &VkLib, device: VkPhysicalDevice) -> u32 {
-    unsafe {
-        let mut props: VkPhysicalDeviceProperties = std::mem::zeroed();
-        (vk.vkGetPhysicalDeviceProperties)(device, &mut props);
-        props.device_type
+fn select_device(
+    target: DeviceTarget,
+    identities: &[DeviceIdentity],
+    extensions: &[HashSet<String>],
+) -> Result<usize, FFPipelineError> {
+    match target {
+        DeviceTarget::Best => {
+            let mut best: Option<(usize, i32)> = None;
+
+            for (i, (identity, ext_names)) in identities.iter().zip(extensions).enumerate() {
+                let mut score = VIDEO_EXTENSIONS
+                    .iter()
+                    .filter(|e| ext_names.contains(**e))
+                    .count() as i32;
+                if identity.device_type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU {
+                    score += 100;
+                }
+
+                if best.is_none_or(|(_, best_score)| score > best_score) {
+                    best = Some((i, score));
+                }
+            }
+
+            best.map(|(i, _)| i).ok_or_else(|| {
+                FFPipelineError::VulkanCapabilitiesError("no Vulkan physical devices found".into())
+            })
+        }
+        DeviceTarget::Nvidia(uuid) => identities
+            .iter()
+            .position(|identity| identity.device_uuid == Some(uuid))
+            .ok_or_else(|| {
+                FFPipelineError::VulkanCapabilitiesError(format!(
+                    "no Vulkan device matches CUDA device {}",
+                    format_uuid(uuid)
+                ))
+            }),
     }
 }
 
@@ -168,6 +253,7 @@ fn device_type_name(device_type: u32) -> &'static str {
 unsafe fn probe_with_instance(
     vk: &VkLib,
     instance: libvulkan_sys::VkInstance,
+    target: DeviceTarget,
 ) -> Result<VulkanCapabilities, FFPipelineError> {
     unsafe {
         let mut device_count: u32 = 0;
@@ -183,12 +269,11 @@ unsafe fn probe_with_instance(
 
         log::debug!("[vulkan] found {} physical device(s)", device_count);
 
-        let mut best_device = None;
-        let mut best_score: i32 = -1;
+        let mut identities = Vec::with_capacity(devices.len());
+        let mut extensions = Vec::with_capacity(devices.len());
 
         for (i, &device) in devices.iter().enumerate() {
-            let name = get_device_name(vk, device);
-            let device_type = get_device_type(vk, device);
+            let identity = get_device_identity(vk, device);
             let ext_names = enumerate_device_extensions(vk, device)?;
             let video_ext_count = VIDEO_EXTENSIONS
                 .iter()
@@ -196,10 +281,12 @@ unsafe fn probe_with_instance(
                 .count();
 
             log::debug!(
-                "[vulkan]   device {}: \"{}\" ({}), {} video extension(s)",
+                "[vulkan]   device {}: \"{}\" ({}), vendor 0x{:04x}, uuid {}, {} video extension(s)",
                 i,
-                name,
-                device_type_name(device_type),
+                identity.name,
+                device_type_name(identity.device_type),
+                identity.vendor_id,
+                identity.device_uuid.map_or("none".into(), format_uuid),
                 video_ext_count,
             );
 
@@ -209,22 +296,19 @@ unsafe fn probe_with_instance(
                 }
             }
 
-            let mut score = video_ext_count as i32;
-            if device_type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU {
-                score += 100;
-            }
-
-            if score > best_score {
-                best_score = score;
-                best_device = Some((i as u32, device, name, ext_names));
-            }
+            identities.push(identity);
+            extensions.push(ext_names);
         }
 
-        let (device_index, physical_device, device_name, ext_names) = best_device.unwrap();
+        let selected = select_device(target, &identities, &extensions)?;
+        let device_index = selected as u32;
+        let physical_device = devices[selected];
+        let ext_names = &extensions[selected];
+
         log::debug!(
             "[vulkan] selected device {}: \"{}\"",
             device_index,
-            device_name
+            identities[selected].name
         );
 
         let get_video_caps = (vk.vkGetInstanceProcAddr)(
@@ -240,13 +324,13 @@ unsafe fn probe_with_instance(
 
             probe_decoders(
                 physical_device,
-                &ext_names,
+                ext_names,
                 get_video_caps,
                 &mut supported_decoders,
             );
             probe_encoders(
                 physical_device,
-                &ext_names,
+                ext_names,
                 get_video_caps,
                 &mut supported_encoders,
             );

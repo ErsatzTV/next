@@ -22,7 +22,8 @@ pub(crate) struct FilterChain {
     surfaces: SurfaceSet,
     audio_label: String,
     video_label: String,
-    complex_filter: String,
+    audio_complex_filter: String,
+    video_complex_filter: String,
 }
 
 impl FilterChain {
@@ -32,7 +33,8 @@ impl FilterChain {
             surfaces: SurfaceSet::new(),
             audio_label: String::new(),
             video_label: String::new(),
-            complex_filter: String::new(),
+            audio_complex_filter: String::new(),
+            video_complex_filter: String::new(),
         }
     }
 
@@ -194,7 +196,10 @@ impl FilterChain {
                         );
                     }
 
+                    best.kind.configure(&current_state);
+
                     // ensure main input matches overlay required pixel format
+                    let main_req = best.kind.main_input_state(&current_state);
                     if current_state.pixel_format != main_req.pixel_format {
                         Self::convert_pixel_format(
                             ffmpeg_info,
@@ -485,6 +490,18 @@ impl FilterChain {
             self.filters.swap(tonemap_index, tonemap_index + 1);
         }
 
+        // remove DV5 workaround with libplacebo
+        if self.filters.iter().any(|f| {
+            matches!(
+                f,
+                PipelineFilter::Video(VideoFilter::LibplaceboCuda(_))
+                    | PipelineFilter::Video(VideoFilter::LibplaceboVulkan(_))
+            )
+        }) {
+            self.filters
+                .retain(|f| !matches!(f, PipelineFilter::Video(VideoFilter::Dv5Workaround(_))));
+        }
+
         loop {
             let mut changed = false;
 
@@ -572,12 +589,15 @@ impl FilterChain {
         audio_label: &str,
         video_label: &str,
         subtitle_label: Option<&String>,
-        watermark_label: Option<&String>,
+        graphics_labels: &[Option<String>],
     ) {
         self.audio_label = audio_label.to_owned();
         self.video_label = video_label.to_owned();
 
-        let mut filter_chains: Vec<String> = Vec::new();
+        self.audio_complex_filter.clear();
+        self.video_complex_filter.clear();
+
+        let mut video_filter_chains: Vec<String> = Vec::new();
 
         // build filter chain
         let audio_filter_count = self
@@ -606,7 +626,7 @@ impl FilterChain {
             self.audio_label = String::from("[a]");
             filter_chain.push_str(&self.audio_label);
 
-            filter_chains.push(filter_chain);
+            self.audio_complex_filter = filter_chain;
         }
 
         let video_filter_count = self
@@ -636,7 +656,9 @@ impl FilterChain {
                     PipelineFilter::Overlay(overlay) => {
                         let sec_label = match overlay.secondary_source {
                             OverlaySource::Subtitle => subtitle_label,
-                            OverlaySource::Watermark => watermark_label,
+                            OverlaySource::Graphics(layer_index) => {
+                                graphics_labels.get(layer_index).and_then(Option::as_ref)
+                            }
                         };
 
                         let Some(sec_in) = sec_label else {
@@ -645,7 +667,12 @@ impl FilterChain {
 
                         let main_label = format!("v_m{}", overlay_num);
                         if !pending.is_empty() {
-                            flush(&mut filter_chains, &mut pending, &current_in, &main_label);
+                            flush(
+                                &mut video_filter_chains,
+                                &mut pending,
+                                &current_in,
+                                &main_label,
+                            );
                             current_in = main_label;
                         }
 
@@ -658,7 +685,7 @@ impl FilterChain {
                             sec_in.to_owned()
                         } else {
                             let sec_label = format!("v_s{}", overlay_num);
-                            filter_chains.push(format!(
+                            video_filter_chains.push(format!(
                                 "[{}]{}[{}]",
                                 sec_in,
                                 sec_args.join(","),
@@ -669,7 +696,7 @@ impl FilterChain {
 
                         let out_label = format!("v_o{}", overlay_num);
                         if let Some(arg) = overlay.kind.as_arg(overlay.location.clone()) {
-                            filter_chains.push(format!(
+                            video_filter_chains.push(format!(
                                 "[{}][{}]{}[{}]",
                                 current_in, sec_ref, arg, out_label
                             ));
@@ -682,14 +709,14 @@ impl FilterChain {
             }
 
             if !pending.is_empty() {
-                flush(&mut filter_chains, &mut pending, &current_in, "v");
+                flush(&mut video_filter_chains, &mut pending, &current_in, "v");
                 self.video_label = String::from("[v]");
             } else if overlay_num > 0 {
                 self.video_label = format!("[{}]", current_in);
             }
         }
 
-        self.complex_filter = filter_chains.join(";");
+        self.video_complex_filter = video_filter_chains.join(";");
     }
 
     pub(crate) fn audio_label(&self) -> &str {
@@ -701,11 +728,23 @@ impl FilterChain {
     }
 
     pub(crate) fn as_arg(&self) -> ArgVec {
-        if self.complex_filter.is_empty() {
-            Vec::new()
-        } else {
-            args!["-filter_complex", self.complex_filter.to_owned(),]
+        let mut result = Vec::new();
+
+        if !self.audio_complex_filter.is_empty() {
+            result.extend(args![
+                "-filter_complex",
+                self.audio_complex_filter.to_owned()
+            ]);
         }
+
+        if !self.video_complex_filter.is_empty() {
+            result.extend(args![
+                "-filter_complex",
+                self.video_complex_filter.to_owned()
+            ]);
+        }
+
+        result
     }
 }
 
@@ -722,7 +761,8 @@ mod tests {
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
     use crate::output_settings::ScalingMode;
-    use crate::pipeline::HwPixelFormat;
+    use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
+    use crate::pipeline::{HdrFormat, HwPixelFormat};
     use crate::video_filter::{
         FormatFilter, HwMapFilter, HwUploadFilter, PadFilter, ScaleFilter, ToneMapFilter,
     };
@@ -742,6 +782,36 @@ mod tests {
             },
             opencl_capabilities: OpenCLCapabilities::default(),
         })
+    }
+
+    #[test]
+    fn graphics_overlays_bind_indexed_labels_in_layer_order() {
+        let state = hdr_vaapi_state();
+        let overlay = |layer_index| {
+            PipelineFilter::Overlay(OverlayFilter {
+                kind: SoftwareOverlay::default().into(),
+                secondary: Vec::new(),
+                secondary_initial_state: state.clone(),
+                secondary_source: OverlaySource::Graphics(layer_index),
+                location: None,
+            })
+        };
+        let mut chain = FilterChain::new(vec![overlay(0), overlay(1)]);
+
+        chain.build(
+            "0:a",
+            "0:v",
+            None,
+            &[Some(String::from("2:0")), Some(String::from("3:0"))],
+        );
+
+        let filter_complex = &chain.as_arg()[1];
+        let lower = filter_complex.find("[2:0]overlay").unwrap();
+        let upper = filter_complex.find("[3:0]overlay").unwrap();
+        assert!(
+            lower < upper,
+            "layers must be composited from first to last"
+        );
     }
 
     fn vaapi_accel_with_tonemap(
@@ -802,7 +872,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
-            is_hdr: true,
+            hdr_format: HdrFormat::Pq,
         }
     }
 
@@ -898,7 +968,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None, None);
+        chain.build("0:a", "0:v", None, &[]);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1194,7 +1264,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None, None);
+        chain.build("0:a", "0:v", None, &[]);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1245,7 +1315,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         }
     }
 
@@ -1496,7 +1566,7 @@ mod tests {
             &FrameSurface::Vaapi,
             &Some(PixelFormat::Nv12),
         );
-        chain.build("0:a", "0:v", None, None);
+        chain.build("0:a", "0:v", None, &[]);
 
         let args = chain.as_arg();
         assert_eq!(args.len(), 2);
@@ -1536,7 +1606,7 @@ mod tests {
         assert!(upload.as_arg().is_none());
 
         let mut chain = FilterChain::new(vec![PipelineFilter::Video(upload)]);
-        chain.build("0:1", "0:0", None, None);
+        chain.build("0:1", "0:0", None, &[]);
 
         assert_eq!(chain.video_label(), "0:0");
         let args = chain.as_arg();
@@ -1566,7 +1636,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::P010le,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1643,7 +1713,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Nv12,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1696,7 +1766,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1763,7 +1833,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1829,7 +1899,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
-            is_hdr: false,
+            hdr_format: HdrFormat::None,
         };
 
         let mut chain = FilterChain::new(Vec::new());

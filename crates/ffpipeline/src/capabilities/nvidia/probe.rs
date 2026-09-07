@@ -23,6 +23,7 @@ impl NvidiaCapabilities {
     pub fn probe() -> Result<NvidiaCapabilities, FFPipelineError> {
         let mut supported_decoders = HashMap::new();
         let mut supported_encoders = HashMap::new();
+        let device_uuid: Option<[u8; 16]>;
 
         let cuda = CudaLib::load().map_err(|e| {
             FFPipelineError::NvidiaCapabilitiesError(format!("failed to load libcuda: {e}"))
@@ -41,6 +42,10 @@ impl NvidiaCapabilities {
                     "cuDeviceGet failed".into(),
                 ));
             }
+
+            let mut uuid = [0u8; 16];
+            device_uuid =
+                ((cuda.cu_device_get_uuid)(&mut uuid, device) == CUDA_SUCCESS).then_some(uuid);
 
             let mut ctx: *mut c_void = std::ptr::null_mut();
             if (cuda.cu_ctx_create)(&mut ctx, 0, device) != CUDA_SUCCESS {
@@ -67,6 +72,7 @@ impl NvidiaCapabilities {
         Ok(NvidiaCapabilities {
             supported_decoders,
             supported_encoders,
+            device_uuid,
         })
     }
 }

@@ -17,9 +17,8 @@ use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{
-    FfmpegInputArgs, HttpInputOptions, HttpInputSource, InputSettings, InputSource,
+    FfmpegInputArgs, GraphicsInput, HttpInputOptions, HttpInputSource, InputSettings, InputSource,
     LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
-    WatermarkInput,
 };
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings, SubtitleMode};
 use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
@@ -29,6 +28,7 @@ use ffpipeline::probe::{
 };
 use ffpipeline::web_vtt::Cue;
 use ffpipeline::{pipeline, probe};
+use futures_util::future::try_join_all;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use time::OffsetDateTime;
 use tokio::io::AsyncBufReadExt;
@@ -42,6 +42,8 @@ use crate::pts_scanner::{PtsScanner, PtsTime};
 
 const STDERR_RING_LINES: usize = 2_000;
 const STALL_THRESHOLD: Duration = Duration::from_secs(60);
+const PLAYLIST_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+const PLAYLIST_UPDATE_INTERVAL_STARTUP: Duration = Duration::from_millis(200);
 
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
@@ -222,8 +224,13 @@ impl ChannelSession {
                     tn.notify_one();
                     break;
                 }
+                let interval = if *playlist_manager.is_ready() {
+                    PLAYLIST_UPDATE_INTERVAL
+                } else {
+                    PLAYLIST_UPDATE_INTERVAL_STARTUP
+                };
                 drop(playlist_manager);
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(interval).await;
             }
         });
 
@@ -361,10 +368,22 @@ impl ChannelSession {
         let current_item = match current_item_result {
             Ok(playout_item) => playout_item,
             Err(ChannelError::PlayoutJsonNoItem { next_start }) => {
+                log::debug!(
+                    "no playout item covers {}, replacing with black/silence until {}",
+                    self.transcoded_until,
+                    next_start.map_or_else(
+                        || String::from("the next reload"),
+                        |start| start.to_string()
+                    )
+                );
                 self.fake_playout_item(next_start)
             }
             Err(err) => {
-                log::error!("{}", err);
+                log::error!(
+                    "no item could be selected for {}, replacing with black/silence: {}",
+                    self.transcoded_until,
+                    err
+                );
                 self.fake_playout_item(None)
             }
         };
@@ -381,7 +400,13 @@ impl ChannelSession {
             Err(e @ ChannelError::Stalled(_)) => return Err(e),
             Err(e) if troubleshoot => return Err(e),
             Err(e) => {
-                log::error!("item failed, replacing with black/silence: {e}");
+                log::error!(
+                    "item {} ({} .. {}) failed, replacing with black/silence: {}",
+                    current_item.id,
+                    current_item.start,
+                    current_item.finish,
+                    e
+                );
                 let fake_item = self.fake_playout_item(Some(current_item.finish));
                 self.transcode_item(&fake_item, realtime, troubleshoot, pts_duration)
                     .await?
@@ -432,12 +457,14 @@ impl ChannelSession {
                 .and_then(|s| self.playout_source_to_input_source(s.clone()).ok())
         };
 
-        let audio_fut = self.resolve_probe(&audio_source, &audio_input_source);
+        let session: &ChannelSession = self;
+        let audio_fut = session.resolve_probe(&audio_source, &audio_input_source);
         let video_fut = async {
             if audio_source_is_video_source {
                 Ok::<_, ChannelError>(None)
             } else {
-                self.resolve_probe(&video_source, &video_input_source)
+                session
+                    .resolve_probe(&video_source, &video_input_source)
                     .await
                     .map(Some)
             }
@@ -448,38 +475,36 @@ impl ChannelSession {
             } else if let (Some(src), Some(s)) =
                 (subtitle_source.as_ref(), subtitle_input_source.as_ref())
             {
-                self.resolve_probe(src, s).await.map(Some)
+                session.resolve_probe(src, s).await.map(Some)
             } else {
                 Ok(None)
             }
         };
 
-        let watermark_fut = async {
-            if let Some(w) = current_item.watermark.as_ref() {
-                let input_source = self.playout_source_to_input_source(w.source.clone())?;
-                let location = playout_location_to_pipeline(&w.location);
-                let timing = playout_timing_to_pipeline(w.timing.as_ref());
-
-                let probe_result = self.resolve_probe(&w.source, &input_source).await?;
-                Ok(Some(WatermarkInput {
+        let graphics_fut = try_join_all(current_item.effective_graphics().enumerate().map(
+            |(layer_index, layer)| async move {
+                let input_source = session.playout_source_to_input_source(layer.source.clone())?;
+                let location = playout_location_to_pipeline(&layer.location);
+                let timing = playout_timing_to_pipeline(layer.timing.as_ref());
+                let probe_result = session.resolve_probe(&layer.source, &input_source).await?;
+                Ok::<_, ChannelError>(GraphicsInput {
+                    layer_index,
                     input_source,
                     probe_result,
-                    stream_index: w.stream_index,
+                    stream_index: layer.stream_index,
                     location,
-                    width_percent: w.width_percent,
-                    within_source_content: w.within_source_content,
-                    horizontal_margin_percent: w.horizontal_margin_percent,
-                    vertical_margin_percent: w.vertical_margin_percent,
-                    opacity_percent: w.opacity_percent,
+                    width_percent: layer.width_percent,
+                    within_source_content: layer.within_source_content,
+                    horizontal_margin_percent: layer.horizontal_margin_percent,
+                    vertical_margin_percent: layer.vertical_margin_percent,
+                    opacity_percent: layer.opacity_percent,
                     timing,
-                }))
-            } else {
-                Ok(None)
-            }
-        };
+                })
+            },
+        ));
 
-        let (audio_probe_result, video_probe_opt, subtitle_probe_opt, watermark_input) =
-            tokio::try_join!(audio_fut, video_fut, subtitle_fut, watermark_fut)?;
+        let (audio_probe_result, video_probe_opt, subtitle_probe_opt, graphics_inputs) =
+            tokio::try_join!(audio_fut, video_fut, subtitle_fut, graphics_fut)?;
 
         let video_probe_result = video_probe_opt.unwrap_or_else(|| audio_probe_result.clone());
         let subtitle_probe_result = if subtitle_source_is_video_source {
@@ -549,6 +574,12 @@ impl ChannelSession {
                 .subtitle
                 .fonts_folder
                 .clone(),
+            subtitle_force_style: self
+                .channel_config
+                .normalization
+                .subtitle
+                .force_style
+                .clone(),
             reports_folder: self.channel_config.ffmpeg.reports_folder.clone(),
             report_id: Some(self.channel_config.number().to_owned()),
         };
@@ -611,6 +642,15 @@ impl ChannelSession {
 
         let mut input_settings = InputSettings {
             start: current_item.start,
+            playout_offset: if start_at_zero {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(
+                    (self.transcoded_until - current_item.start)
+                        .whole_milliseconds()
+                        .max(0) as u64,
+                )
+            },
             audio_input: ProbedInput {
                 input_source: audio_input_source,
                 in_point: audio_timing.in_point,
@@ -630,7 +670,7 @@ impl ChannelSession {
                 stream_index: video_index,
             },
             subtitle_input,
-            watermark_input,
+            graphics_inputs,
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
@@ -925,21 +965,24 @@ impl ChannelSession {
             _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
         };
 
-        // live content never seeks and is always a complete transcode
-        if is_live {
-            return TimingResult {
-                in_point: Duration::ZERO,
-                out_point: Duration::from_millis(item_duration.whole_milliseconds() as u64),
-                finish: item_finish,
-                is_complete: true,
-            };
-        }
-
         let effective_now = if start_at_zero {
             item_start
         } else {
             self.transcoded_until
         };
+
+        // live content never seeks. limit it to the remaining schedule interval
+        // so pipeline duration and graphics timing end at the same point.
+        if is_live {
+            return TimingResult {
+                in_point: Duration::ZERO,
+                out_point: Duration::from_millis(
+                    (item_finish - effective_now).whole_milliseconds().max(0) as u64,
+                ),
+                finish: item_finish,
+                is_complete: true,
+            };
+        }
 
         let progress_ms = if start_at_zero {
             0
@@ -1035,6 +1078,7 @@ impl ChannelSession {
                 subtitle: None,
             }),
             watermark: None,
+            graphics: Vec::new(),
         }
     }
 
@@ -1172,6 +1216,14 @@ impl ChannelSession {
 
         if let Some(watermark) = &item.watermark
             && let PlayoutItemSource::Dynamic { .. } = watermark.source
+        {
+            return Err(ChannelError::DynamicSourceCannotRecurse);
+        }
+
+        if item
+            .graphics
+            .iter()
+            .any(|layer| matches!(layer.source, PlayoutItemSource::Dynamic { .. }))
         {
             return Err(ChannelError::DynamicSourceCannotRecurse);
         }
@@ -1342,6 +1394,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
             stream_index: v.stream_index,
             codec: v.codec.to_lowercase(),
             codec_type: CodecType::Video,
+            dv_profile: v.dv_profile,
             profile: v.profile.clone().unwrap_or_default().to_lowercase(),
             height: Some(v.height),
             width: Some(v.width),
@@ -1376,6 +1429,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
             stream_index: s.stream_index,
             codec: s.codec.to_lowercase(),
             codec_type: CodecType::Subtitle,
+            dv_profile: None,
             profile: String::new(),
             height: None,
             width: None,

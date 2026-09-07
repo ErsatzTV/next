@@ -10,6 +10,7 @@ pub struct CudaLib {
     pub cu_device_get: unsafe extern "C" fn(device: *mut i32, ordinal: i32) -> i32,
     pub cu_ctx_create: unsafe extern "C" fn(pctx: *mut *mut c_void, flags: u32, dev: i32) -> i32,
     pub cu_ctx_destroy: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
+    pub cu_device_get_uuid: unsafe extern "C" fn(uuid: *mut [u8; 16], dev: i32) -> i32,
 }
 
 impl CudaLib {
@@ -24,12 +25,14 @@ impl CudaLib {
             let cu_device_get = *lib.get(b"cuDeviceGet\0")?;
             let cu_ctx_create = *lib.get(b"cuCtxCreate_v2\0")?;
             let cu_ctx_destroy = *lib.get(b"cuCtxDestroy_v2\0")?;
+            let cu_device_get_uuid = *lib.get(b"cuDeviceGetUuid\0")?;
             Ok(Self {
                 _lib: lib,
                 cu_init,
                 cu_device_get,
                 cu_ctx_create,
                 cu_ctx_destroy,
+                cu_device_get_uuid,
             })
         }
     }

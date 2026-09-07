@@ -1,6 +1,6 @@
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::frame_size::FrameSize;
-use crate::pipeline::{FrameState, FrameSurface, HwPixelFormat};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, HwPixelFormat};
 use crate::video_filter::{VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone)]
@@ -21,7 +21,7 @@ impl VideoFilterOp for TonemapOpencl {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.output_format.into();
-        state.is_hdr = false;
+        state.hdr_format = HdrFormat::None;
         state.surface = FrameSurface::OpenCL;
     }
 

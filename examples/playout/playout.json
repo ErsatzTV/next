@@ -1,6 +1,6 @@
 {
   "$schema": "../../schema/playout.json",
-  "version": "https://ersatztv.org/playout/version/0.0.1",
+  "version": "https://ersatztv.org/playout/version/0.0.3",
   "generated_at": "2026-02-23T18:02:00-05:00",
   "items": [
     {

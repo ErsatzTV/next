@@ -14,6 +14,8 @@ pub const VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: u32 = 2;
 // Structure types
 pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: u32 = 0;
 pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: u32 = 1;
+pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2: u32 = 1000059001;
+pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES: u32 = 1000071004;
 pub const VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR: u32 = 1000023000;
 pub const VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR: u32 = 1000023001;
 pub const VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR: u32 = 1000024001;
@@ -108,6 +110,17 @@ pub struct VkExtent2D {
 }
 
 #[repr(C)]
+pub struct VkPhysicalDeviceIDProperties {
+    pub s_type: u32,
+    pub p_next: *mut c_void,
+    pub device_uuid: [u8; 16],
+    pub driver_uuid: [u8; 16],
+    pub device_luid: [u8; 8],
+    pub device_node_mask: u32,
+    pub device_luid_valid: u32,
+}
+
+#[repr(C)]
 pub struct VkPhysicalDeviceProperties {
     pub api_version: u32,
     pub driver_version: u32,
@@ -121,13 +134,20 @@ pub struct VkPhysicalDeviceProperties {
 }
 
 #[repr(C)]
+pub struct VkPhysicalDeviceProperties2 {
+    pub s_type: u32,
+    pub p_next: *mut c_void,
+    pub properties: VkPhysicalDeviceProperties,
+}
+
+#[repr(C, align(8))]
 pub struct VkPhysicalDeviceLimits {
     _data: [u8; 504],
 }
 
 #[repr(C)]
 pub struct VkPhysicalDeviceSparseProperties {
-    _data: [u8; 20],
+    _data: [u32; 5],
 }
 
 #[repr(C)]

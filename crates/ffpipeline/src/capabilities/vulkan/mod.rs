@@ -16,6 +16,19 @@ pub(crate) mod probe;
 )))]
 pub(crate) mod stub;
 
+/// Same textual form `nvidia-smi -L` prints, so the two can be compared by eye
+pub fn format_uuid(uuid: [u8; 16]) -> String {
+    let hex: String = uuid.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct VulkanCapabilities {
     pub(crate) device_index: u32,

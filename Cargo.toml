@@ -29,6 +29,7 @@ ersatztv-playout = { path = "crates/ersatztv-playout" }
 ffpipeline = { path = "crates/ffpipeline" }
 filetime = "0.2"
 futures-core = "0.3.32"
+futures-util = "0.3.32"
 libloading = "0.9"
 libcl-sys = { path = "crates/libcl-sys" }
 libmpp-sys = { path = "crates/libmpp-sys" }

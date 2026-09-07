@@ -26,6 +26,7 @@ pub struct EncoderCapability {
 pub struct NvidiaCapabilities {
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) supported_encoders: HashMap<VideoFormat, EncoderCapability>,
+    pub(crate) device_uuid: Option<[u8; 16]>,
 }
 
 impl NvidiaCapabilities {
@@ -49,5 +50,9 @@ impl NvidiaCapabilities {
 
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
         matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::P010le)
+    }
+
+    pub fn device_uuid(&self) -> Option<[u8; 16]> {
+        self.device_uuid
     }
 }

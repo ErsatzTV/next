@@ -8,6 +8,7 @@ use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{
     InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput, WatermarkLocation,
+    WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
@@ -43,6 +44,7 @@ pub struct TestWatermark {
     pub location: WatermarkLocation,
     pub width_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
+    pub timing: Option<WatermarkTiming>,
 }
 
 impl Default for TestWatermark {
@@ -52,6 +54,7 @@ impl Default for TestWatermark {
             location: WatermarkLocation::TopLeft,
             width_percent: Some(10.0),
             opacity_percent: Some(90.0),
+            timing: None,
         }
     }
 }
@@ -175,6 +178,7 @@ pub async fn build_watermark_input(
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
 
     WatermarkInput {
+        layer_index: 0,
         input_source: InputSource::Local(LocalInputSource {
             path: path.to_string_lossy().into_owned(),
         }),
@@ -186,7 +190,7 @@ pub async fn build_watermark_input(
         horizontal_margin_percent: Some(5.0),
         vertical_margin_percent: Some(5.0),
         opacity_percent: watermark.opacity_percent,
-        timing: None,
+        timing: watermark.timing.clone(),
     }
 }
 
@@ -199,6 +203,7 @@ pub fn build_input(
     let path_str = path.to_string_lossy().into_owned();
     InputSettings {
         start: OffsetDateTime::now_utc(),
+        playout_offset: Duration::ZERO,
         audio_input: ProbedInput {
             input_source: InputSource::Local(LocalInputSource {
                 path: path_str.clone(),
@@ -216,7 +221,7 @@ pub fn build_input(
             stream_index: None,
         },
         subtitle_input: None,
-        watermark_input: watermark,
+        graphics_inputs: watermark.into_iter().collect(),
     }
 }
 
@@ -289,6 +294,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
         fonts_folder: None,
+        subtitle_force_style: None,
         reports_folder: None,
         report_id: None,
     }

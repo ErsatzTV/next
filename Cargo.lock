@@ -444,6 +444,7 @@ dependencies = [
  "ersatztv-playout",
  "ffpipeline",
  "futures-core",
+ "futures-util",
  "log",
  "reqwest",
  "schemars",

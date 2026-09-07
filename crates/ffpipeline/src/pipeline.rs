@@ -16,7 +16,7 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
-use crate::input::{FfmpegInputArgs, InputSettings, InputSource, WatermarkInput};
+use crate::input::{FfmpegInputArgs, GraphicsInput, InputSettings, InputSource};
 use crate::output_option::OutputOption;
 use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
@@ -25,9 +25,10 @@ use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, FadeFilter, FormatFilter, LoopFilter,
-    PadFilter, ScaleFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions,
-    SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter, VideoFilter,
+    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, FadeFilter,
+    FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
+    SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
+    VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -181,6 +182,14 @@ impl PixelFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HdrFormat {
+    None,
+    Pq,
+    Hlg,
+    Dv5,
+}
+
 #[derive(Clone, Debug, derive_more::Display)]
 #[display(
     "FrameState(size={},is_anamorphic={},surface={})",
@@ -196,7 +205,7 @@ pub struct FrameState {
     pub(crate) display_aspect_ratio: Option<String>,
     pub(crate) surface: FrameSurface,
     pub(crate) pixel_format: PixelFormat,
-    pub(crate) is_hdr: bool,
+    pub(crate) hdr_format: HdrFormat,
 }
 
 pub enum PipelineInput {
@@ -222,8 +231,9 @@ pub enum PipelineInput {
         path: String,
         seek: Duration,
     },
-    Watermark {
-        input: WatermarkInput,
+    Graphics {
+        input: GraphicsInput,
+        layer_index: usize,
         index: u32,
         path: String,
         extra_input_args: ArgVec,
@@ -231,12 +241,12 @@ pub enum PipelineInput {
 }
 
 impl PipelineInput {
-    fn sort_order(&self) -> u8 {
+    fn sort_order(&self) -> usize {
         match self {
             PipelineInput::Video { .. } => 0,
             PipelineInput::Audio { .. } => 1,
             PipelineInput::Subtitle { .. } => 2,
-            PipelineInput::Watermark { .. } => 3,
+            PipelineInput::Graphics { layer_index, .. } => 3 + *layer_index,
         }
     }
 }
@@ -294,7 +304,11 @@ impl Pipeline {
         let video_stream = input_settings.select_video_stream()?;
         let audio_stream = input_settings.select_audio_stream()?;
         let subtitle_stream = input_settings.select_subtitle_stream();
-        let watermark_stream = input_settings.select_watermark_stream();
+        let graphics_streams: Vec<_> = input_settings
+            .graphics_inputs
+            .iter()
+            .map(|input| input_settings.select_graphics_stream(input))
+            .collect();
 
         // TODO: add target profile to config
         let video_codec = match (
@@ -326,6 +340,16 @@ impl Pipeline {
             &final_output_settings,
         );
 
+        let hdr = match (
+            video_stream.dv_profile,
+            video_stream.color_params.color_transfer.as_deref(),
+        ) {
+            (Some(5), _) => HdrFormat::Dv5,
+            (_, Some("smpte2084")) => HdrFormat::Pq,
+            (_, Some("arib-std-b67")) => HdrFormat::Hlg,
+            _ => HdrFormat::None,
+        };
+
         let initial_state = FrameState {
             size: FrameSize {
                 width: video_stream
@@ -343,7 +367,7 @@ impl Pipeline {
             surface: video_decoder.output_surface(),
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
-            is_hdr: video_stream.color_params.is_hdr(),
+            hdr_format: hdr,
         };
 
         let preferred_pixel_format = match final_output_settings.bit_depth {
@@ -373,6 +397,7 @@ impl Pipeline {
 
         filters.extend([
             PipelineFilter::Video(LoopFilter { is_still_image }.into()),
+            PipelineFilter::Video(Dv5WorkaroundFilter.into()),
             PipelineFilter::Video(
                 ToneMapFilter {
                     algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
@@ -468,7 +493,7 @@ impl Pipeline {
                     } else {
                         PixelFormat::parse(&subtitle_stream.pix_fmt)
                     },
-                    is_hdr: false,
+                    hdr_format: HdrFormat::None,
                 };
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
@@ -481,32 +506,46 @@ impl Pipeline {
             } else if !subtitle_stream.is_subtitle_image()
                 && final_output_settings.subtitle_mode == SubtitleMode::Burn
             {
+                // only use force_style with SRT, which doesn't have any styling of its own
+                let mut final_force_style = None;
+                if subtitle_stream.codec == "srt" || subtitle_stream.codec == "subrip" {
+                    final_force_style = final_output_settings.subtitle_force_style;
+                }
+
                 filters.push(PipelineFilter::Video(
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),
                         seek: subtitle_input.in_point,
                         fonts_folder: final_output_settings.fonts_folder.to_owned(),
+                        force_style: final_force_style,
                     }
                     .into(),
                 ))
             }
         }
 
-        if let Some(watermark_stream) = watermark_stream
-            && let Some(watermark_input) = input_settings.watermark_input.as_ref()
-            && let Some(height) = watermark_stream.height
-            && let Some(width) = watermark_stream.width
+        for (graphics_input, graphics_stream) in
+            input_settings.graphics_inputs.iter().zip(graphics_streams)
         {
-            let extra_input_args = if watermark_stream.is_still_image() {
+            let Some(graphics_stream) = graphics_stream else {
+                return Err(FFPipelineError::GraphicsStreamNotFound(
+                    graphics_input.layer_index,
+                ));
+            };
+            let (Some(height), Some(width)) = (graphics_stream.height, graphics_stream.width)
+            else {
+                return Err(FFPipelineError::GraphicsStreamNotFound(
+                    graphics_input.layer_index,
+                ));
+            };
+            let extra_input_args = if graphics_stream.is_still_image() {
+                // decode a single frame; the loop filter below repeats it *after* scaling, so
+                // decode and scale happen once instead of once per output frame
                 args![
-                    "-loop",
-                    "1",
                     "-framerate",
-                    output_context.media_frame_rate.r_frame_rate.clone(),
-                    "-t",
-                    format!("{}ms", duration.as_millis())
+                    output_context.media_frame_rate.r_frame_rate.clone()
                 ]
-            } else if watermark_stream.codec == "gif" || watermark_stream.codec == "apng" {
+            } else if graphics_stream.codec == "gif" || graphics_stream.codec == "apng" {
                 args![
                     "-ignore_loop",
                     "0",
@@ -522,10 +561,11 @@ impl Pipeline {
                 ]
             };
 
-            inputs.push(PipelineInput::Watermark {
-                input: watermark_input.clone(),
-                index: watermark_stream.stream_index,
-                path: watermark_input.probe_result.path.to_owned(),
+            inputs.push(PipelineInput::Graphics {
+                input: graphics_input.clone(),
+                layer_index: graphics_input.layer_index,
+                index: graphics_stream.stream_index,
+                path: graphics_input.probe_result.path.to_owned(),
                 extra_input_args,
             });
 
@@ -536,12 +576,12 @@ impl Pipeline {
                 sample_aspect_ratio: Some(String::from("1:1")),
                 display_aspect_ratio: None,
                 surface: FrameSurface::System,
-                pixel_format: if watermark_stream.pix_fmt.is_empty() {
+                pixel_format: if graphics_stream.pix_fmt.is_empty() {
                     PixelFormat::Bgra
                 } else {
-                    PixelFormat::parse(&watermark_stream.pix_fmt)
+                    PixelFormat::parse(&graphics_stream.pix_fmt)
                 },
-                is_hdr: false,
+                hdr_format: HdrFormat::None,
             };
 
             let video_size = final_output_settings
@@ -554,20 +594,24 @@ impl Pipeline {
                 ScalingMode::Crop | ScalingMode::Stretch => *video_size,
             };
 
-            let scaled_size = watermark_input.scaled_size(
+            let scaled_size = graphics_input.scaled_size(
                 FrameSize { width, height },
                 final_output_settings.video_size,
             );
 
-            let location = Some(watermark_input.frame_location(
-                &source_content_size,
-                &scaled_size,
-                video_size,
-            ));
+            let location =
+                Some(graphics_input.frame_location(&source_content_size, &scaled_size, video_size));
+
+            let fade_filters = FadeFilter::for_graphics(
+                graphics_input.timing.as_ref(),
+                input_settings.start,
+                input_settings.playout_offset,
+                duration,
+            );
 
             let mut secondary_filters: Vec<VideoFilter> = vec![
                 ColorChannelMixerFilter {
-                    alpha: watermark_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
+                    alpha: graphics_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
                 }
                 .into(),
                 FormatFilter {
@@ -586,12 +630,17 @@ impl Pipeline {
                 .into(),
             ];
 
-            let fade_filters = FadeFilter::for_watermark(
-                watermark_input.timing.as_ref(),
-                input_settings.start,
-                input_settings.video_input.in_point,
-                input_settings.video_input.out_point,
-            );
+            // a still image is decoded as a single frame; only fades need it repeated (they act on
+            // frame timestamps). otherwise the overlay's repeatlast holds it, which keeps the
+            // per-frame format conversion and hwupload out of the chain entirely
+            if !fade_filters.is_empty() {
+                secondary_filters.push(
+                    LoopFilter {
+                        is_still_image: graphics_stream.is_still_image(),
+                    }
+                    .into(),
+                );
+            }
 
             secondary_filters.extend(fade_filters.iter().map(|f| f.clone().into()));
 
@@ -599,7 +648,7 @@ impl Pipeline {
                 kind: SoftwareOverlay::default().into(),
                 secondary: secondary_filters,
                 secondary_initial_state,
-                secondary_source: OverlaySource::Watermark,
+                secondary_source: OverlaySource::Graphics(graphics_input.layer_index),
                 location,
             }));
         }
@@ -759,9 +808,19 @@ impl Pipeline {
         let mut audio_label = String::from("0:a");
         let mut video_label = String::from("0:v");
         let mut subtitle_label = None;
-        let mut watermark_label = None;
+        let mut graphics_labels = vec![
+            None;
+            self.inputs
+                .iter()
+                .filter_map(|i| match i {
+                    PipelineInput::Graphics { layer_index, .. } => Some(*layer_index),
+                    _ => None,
+                })
+                .max()
+                .map_or(0, |i| i + 1)
+        ];
 
-        let mut distinct_paths: Vec<&str> = Vec::new();
+        let mut input_paths: Vec<&str> = Vec::new();
 
         let mut sorted_inputs: Vec<&PipelineInput> = self.inputs.iter().collect();
         sorted_inputs.sort_by_key(|i| i.sort_order());
@@ -779,12 +838,11 @@ impl Pipeline {
                     decoder,
                     ..
                 } => {
-                    distinct_paths.push(path.as_str());
+                    input_paths.push(path.as_str());
 
                     result.extend(decoder.as_arg());
 
-                    let video_input_index =
-                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
+                    let video_input_index = input_paths.iter().position(|p| p == path).unwrap_or(0);
                     video_label = format!("{}:{}", video_input_index, index);
 
                     if !seek.is_zero() {
@@ -808,8 +866,8 @@ impl Pipeline {
                     ..
                 } => {
                     // if we haven't yet used this input, add it
-                    if !distinct_paths.contains(&path.as_str()) {
-                        distinct_paths.push(path.as_str());
+                    if !input_paths.contains(&path.as_str()) {
+                        input_paths.push(path.as_str());
 
                         result.extend(decoder.as_arg());
 
@@ -819,8 +877,7 @@ impl Pipeline {
                         result.extend(args!["-i", path.to_owned()]);
                     }
 
-                    let audio_input_index =
-                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
+                    let audio_input_index = input_paths.iter().position(|p| p == path).unwrap_or(0);
                     audio_label = format!("{}:{}", audio_input_index, index);
                 }
                 PipelineInput::Subtitle {
@@ -830,8 +887,8 @@ impl Pipeline {
                     seek,
                     ..
                 } => {
-                    if !distinct_paths.contains(&path.as_str()) {
-                        distinct_paths.push(path.as_str());
+                    if !input_paths.contains(&path.as_str()) {
+                        input_paths.push(path.as_str());
 
                         if !seek.is_zero() {
                             result.extend(args!["-ss", format!("{}ms", seek.as_millis())]);
@@ -842,26 +899,23 @@ impl Pipeline {
                     }
 
                     let subtitle_input_index =
-                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
+                        input_paths.iter().position(|p| p == path).unwrap_or(0);
                     subtitle_label = Some(format!("{}:{}", subtitle_input_index, index));
                 }
-                PipelineInput::Watermark {
+                PipelineInput::Graphics {
                     input,
+                    layer_index,
                     index,
                     path,
                     extra_input_args,
                 } => {
-                    if !distinct_paths.contains(&path.as_str()) {
-                        distinct_paths.push(path.as_str());
-
-                        result.extend(input.input_source.args_for_input());
-                        result.extend(extra_input_args.clone());
-                        result.extend(args!["-i", path.to_owned()]);
-                    }
-
-                    let watermark_input_index =
-                        distinct_paths.iter().position(|p| p == path).unwrap_or(0);
-                    watermark_label = Some(format!("{}:{}", watermark_input_index, index))
+                    input_paths.push(path.as_str());
+                    result.extend(input.input_source.args_for_input());
+                    result.extend(extra_input_args.clone());
+                    result.extend(args!["-i", path.to_owned()]);
+                    let graphics_input_index = input_paths.len() - 1;
+                    graphics_labels[*layer_index] =
+                        Some(format!("{}:{}", graphics_input_index, index));
                 }
             }
         }
@@ -871,7 +925,7 @@ impl Pipeline {
             &audio_label,
             &video_label,
             subtitle_label.as_ref(),
-            watermark_label.as_ref(),
+            &graphics_labels,
         );
 
         result.extend(filter_chain.as_arg());

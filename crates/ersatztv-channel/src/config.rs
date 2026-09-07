@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ffpipeline::capabilities::vulkan::VulkanCapabilities;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -322,8 +323,14 @@ impl HardwareAccel {
                 match capabilities {
                     Ok(capabilities) => {
                         log::debug!("detected NVIDIA capabilities: {:?}", capabilities);
+                        let vulkan =
+                            VulkanCapabilities::probe_for_nvidia(capabilities.device_uuid())
+                                .inspect_err(|e| {
+                                    log::debug!("Vulkan unavailable for CUDA tonemapping: {e}")
+                                })
+                                .ok();
                         Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
-                            ffpipeline::accel::cuda::Cuda::new(capabilities),
+                            ffpipeline::accel::cuda::Cuda::new(capabilities, vulkan),
                         ))
                     }
                     Err(e) => {
@@ -463,6 +470,8 @@ pub struct SubtitleNormalizationConfig {
     pub mode: SubtitleMode,
     #[serde(default)]
     pub fonts_folder: Option<String>,
+    #[serde(default)]
+    pub force_style: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default, Copy)]

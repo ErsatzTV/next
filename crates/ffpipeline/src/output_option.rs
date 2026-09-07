@@ -89,7 +89,7 @@ impl OutputOption {
                 args!["-map_metadata", "-1"]
             }
             OutputOption::FrameRate(Some(frame_rate)) => {
-                args!["-r", frame_rate.r_frame_rate.to_owned(), "-vsync", "cfr",]
+                args!["-r", frame_rate.r_frame_rate.to_owned(), "-fps_mode", "cfr",]
             }
             OutputOption::FrameRate(_) => Vec::new(),
         }

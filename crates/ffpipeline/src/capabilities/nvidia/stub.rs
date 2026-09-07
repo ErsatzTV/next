@@ -8,6 +8,7 @@ impl NvidiaCapabilities {
         Ok(NvidiaCapabilities {
             supported_decoders: HashMap::new(),
             supported_encoders: HashMap::new(),
+            device_uuid: None,
         })
     }
 }
