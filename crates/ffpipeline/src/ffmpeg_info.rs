@@ -20,9 +20,8 @@ static KNOWN_FILTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         .collect::<Vec<&str>>()
 });
 
-/// Filters whose AVOptions are probed at load time, so pipeline builders can
-/// gate on options that only exist in patched or newer ffmpeg builds (e.g.
-/// vpp_qsv pad_w/pad_h).
+/// filter presence alone cannot tell a patched build from upstream, so these
+/// filters also get their options probed
 static OPTION_PROBED_FILTERS: &[KnownVideoFilter] = &[KnownVideoFilter::VppQsv];
 
 #[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
@@ -147,10 +146,8 @@ impl FfmpegInfo {
         self.video_filters.contains(&filter.to_string())
     }
 
-    /// Returns true when the filter is present AND advertises the named
-    /// AVOption. Only filters in [`OPTION_PROBED_FILTERS`] have their options
-    /// probed; all other filters always return false.
-    pub fn video_filter_has_option(&self, filter: &KnownVideoFilter, option: &str) -> bool {
+    /// always false for filters not in [`OPTION_PROBED_FILTERS`]
+    pub fn has_video_filter_option(&self, filter: &KnownVideoFilter, option: &str) -> bool {
         self.video_filter_options
             .get(&filter.to_string())
             .is_some_and(|options| options.contains(option))
@@ -257,10 +254,8 @@ impl FfmpegInfo {
         )))
     }
 
-    /// Parses `ffmpeg -h filter=NAME` output into the set of AVOption names.
-    /// Option lines look like `   pad_w   <int>   ..FV....... description`;
-    /// the `<type>` in the second column is what distinguishes them from the
-    /// surrounding header lines.
+    /// only option lines have a `<type>` in the second column; header lines and
+    /// enum constant lines (`bob  1  ..FV`) do not
     fn parse_filter_options(help_text: &str) -> HashSet<String> {
         let mut options = HashSet::new();
 
@@ -398,7 +393,7 @@ vpp_qsv AVOptions:
     }
 
     #[test]
-    fn test_video_filter_has_option() {
+    fn test_has_video_filter_option() {
         let mut video_filters = HashSet::new();
         video_filters.insert(KnownVideoFilter::VppQsv.to_string());
 
@@ -414,9 +409,9 @@ vpp_qsv AVOptions:
             ..Default::default()
         };
 
-        assert!(info.video_filter_has_option(&KnownVideoFilter::VppQsv, "pad_w"));
-        assert!(!info.video_filter_has_option(&KnownVideoFilter::VppQsv, "does_not_exist"));
-        assert!(!info.video_filter_has_option(&KnownVideoFilter::PadVaapi, "pad_w"));
+        assert!(info.has_video_filter_option(&KnownVideoFilter::VppQsv, "pad_w"));
+        assert!(!info.has_video_filter_option(&KnownVideoFilter::VppQsv, "does_not_exist"));
+        assert!(!info.has_video_filter_option(&KnownVideoFilter::PadVaapi, "pad_w"));
     }
 
     #[test]

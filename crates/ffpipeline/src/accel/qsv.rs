@@ -11,6 +11,8 @@ use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{DeinterlaceFilter, PadFilter, ScaleFilter, VideoFilter, VideoFilterOp};
 
+const VPP_QSV_PAD_OPTION: &str = "pad_w";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Qsv {
     pub capabilities: QsvCapabilities,
@@ -42,11 +44,10 @@ impl HwAccel for Qsv {
                 }
                 .into()
             }
-            // vpp_qsv only supports padding in patched/newer ffmpeg builds, so
-            // gate on the pad_w option rather than filter presence; otherwise
-            // fall through to the software pad (hwdownload round-trip).
+            // upstream vpp_qsv has no pad options, only the patched ErsatzTV builds do
             VideoFilter::Pad(PadFilter { size, .. })
-                if ffmpeg_info.video_filter_has_option(&KnownVideoFilter::VppQsv, "pad_w") =>
+                if ffmpeg_info
+                    .has_video_filter_option(&KnownVideoFilter::VppQsv, VPP_QSV_PAD_OPTION) =>
             {
                 PadQsv {
                     size: *size,
@@ -159,6 +160,21 @@ pub struct ScaleQsv {
     pub(crate) input_is_anamorphic: bool,
 }
 
+impl ScaleQsv {
+    fn as_arg_with(&self, extra_options: &str) -> Option<String> {
+        let size = self.size?;
+        let prescale = if self.input_is_anamorphic {
+            "vpp_qsv=w=iw*sar:h=ih,"
+        } else {
+            ""
+        };
+        Some(format!(
+            "{prescale}vpp_qsv=w={}:h={}{extra_options},setsar=1",
+            size.width, size.height
+        ))
+    }
+}
+
 impl VideoFilterOp for ScaleQsv {
     fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
@@ -179,34 +195,25 @@ impl VideoFilterOp for ScaleQsv {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "vpp_qsv=w=iw*sar:h=ih,vpp_qsv=w={}:h={},setsar=1",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!(
-                    "vpp_qsv=w={}:h={},setsar=1",
-                    size.width, size.height
-                ))
-            }
-        } else {
-            None
-        }
+        self.as_arg_with("")
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PadQsv {
     pub(crate) size: Option<FrameSize>,
-    /// When a `ScaleQsv` immediately precedes this pad in the resolved chain,
-    /// the optimize pass folds the scale into this field so we emit a single
-    /// combined `vpp_qsv` instance (scale + pad) rather than two chained ones.
-    /// Chaining two `vpp_qsv` scales drops the final frame at EOF on real
-    /// hardware (measured on Intel B50); a single instance delivers every frame
-    /// and uses one VPP session. `None` means pad-only (no fused scale).
+    /// scale and pad share one vpp_qsv instance: one VPP pass, and two chained
+    /// vpp_qsv instances were measured to drop the last frame at EOF
     pub(crate) scale: Option<ScaleQsv>,
+}
+
+impl PadQsv {
+    fn pad_options(size: &FrameSize) -> String {
+        format!(
+            "pad_w={}:pad_h={}:pad_x=-1:pad_y=-1:pad_color=black",
+            size.width, size.height
+        )
+    }
 }
 
 impl VideoFilterOp for PadQsv {
@@ -215,6 +222,9 @@ impl VideoFilterOp for PadQsv {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
+        if let Some(scale) = &self.scale {
+            scale.apply_to(state);
+        }
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Qsv;
@@ -226,33 +236,11 @@ impl VideoFilterOp for PadQsv {
     }
 
     fn as_arg(&self) -> Option<String> {
-        let pad = self.size.as_ref()?;
-
-        // Fused scale + pad: emit a single vpp_qsv carrying both the scale
-        // (w/h) and pad (pad_*) options. Keep the trailing setsar=1 that the
-        // standalone ScaleQsv would have emitted; setsar is a metadata-only
-        // filter, not a second VPP session, so it doesn't reintroduce the
-        // EOF-frame-drop quirk.
-        if let Some(scale) = &self.scale
-            && let Some(size) = &scale.size
-        {
-            let combined = format!(
-                "vpp_qsv=w={}:h={}:pad_w={}:pad_h={}:pad_x=-1:pad_y=-1:pad_color=black",
-                size.width, size.height, pad.width, pad.height
-            );
-
-            return Some(if scale.input_is_anamorphic {
-                format!("vpp_qsv=w=iw*sar:h=ih,{combined},setsar=1")
-            } else {
-                format!("{combined},setsar=1")
-            });
-        }
-
-        // Pad-only (no fused scale): unchanged single-instance emission.
-        Some(format!(
-            "vpp_qsv=pad_w={}:pad_h={}:pad_x=-1:pad_y=-1:pad_color=black",
-            pad.width, pad.height
-        ))
+        let pad_options = Self::pad_options(self.size.as_ref()?);
+        self.scale
+            .as_ref()
+            .and_then(|scale| scale.as_arg_with(&format!(":{pad_options}")))
+            .or_else(|| Some(format!("vpp_qsv={pad_options}")))
     }
 }
 
@@ -310,8 +298,9 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::*;
-    use crate::output_settings::{ScalingMode, VideoFilterOptions};
-    use crate::video_filter::PadFilter;
+    use crate::filter_chain::{FilterChain, PipelineFilter};
+    use crate::hw_accel::HardwareAccel;
+    use crate::output_settings::ScalingMode;
 
     fn make_qsv() -> Qsv {
         Qsv {
@@ -412,7 +401,6 @@ mod tests {
 
     #[test]
     fn pad_qsv_arg_and_state() {
-        // pad-only (no fused scale): unchanged single-instance emission
         let pad = PadQsv {
             size: Some(FrameSize {
                 width: 1920,
@@ -435,7 +423,6 @@ mod tests {
 
     #[test]
     fn pad_qsv_fused_scale_emits_single_instance() {
-        // scale 1440x1080 + pad 1920x1080 must collapse to ONE vpp_qsv
         let pad = PadQsv {
             size: Some(FrameSize {
                 width: 1920,
@@ -450,23 +437,24 @@ mod tests {
             }),
         };
 
-        let arg = pad.as_arg().expect("fused pad should emit an arg");
         assert_eq!(
-            arg,
-            "vpp_qsv=w=1440:h=1080:pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black,setsar=1"
+            pad.as_arg().as_deref(),
+            Some(
+                "vpp_qsv=w=1440:h=1080:pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black,setsar=1"
+            )
         );
-        // exactly one vpp_qsv instance
-        assert_eq!(
-            arg.matches("vpp_qsv").count(),
-            1,
-            "expected a single vpp_qsv: {arg}"
-        );
+
+        let mut state = make_frame_state();
+        state.is_anamorphic = true;
+        pad.apply_to(&mut state);
+        assert_eq!(state.size.width, 1920);
+        assert_eq!(state.size.height, 1080);
+        assert!(!state.is_anamorphic);
+        assert_eq!(state.sample_aspect_ratio.as_deref(), Some("1:1"));
     }
 
     #[test]
     fn pad_qsv_fused_anamorphic_scale_prescales_then_combines() {
-        // anamorphic input keeps the sar pre-scale as its own vpp_qsv, but the
-        // pad still fuses into the second (square-pixel) scale instance.
         let pad = PadQsv {
             size: Some(FrameSize {
                 width: 1920,
@@ -490,39 +478,37 @@ mod tests {
     }
 
     #[test]
-    fn scale_qsv_arg_unchanged() {
-        // scale-only emission must be byte-identical to before the pad-fusion work
+    fn scale_qsv_arg() {
+        let size = Some(FrameSize {
+            width: 1440,
+            height: 1080,
+        });
+
         let scale = ScaleQsv {
-            size: Some(FrameSize {
-                width: 1440,
-                height: 1080,
-            }),
+            size,
             input_is_anamorphic: false,
         };
         assert_eq!(
             scale.as_arg().as_deref(),
             Some("vpp_qsv=w=1440:h=1080,setsar=1")
         );
+
+        let anamorphic = ScaleQsv {
+            size,
+            input_is_anamorphic: true,
+        };
+        assert_eq!(
+            anamorphic.as_arg().as_deref(),
+            Some("vpp_qsv=w=iw*sar:h=ih,vpp_qsv=w=1440:h=1080,setsar=1")
+        );
     }
 
     #[test]
     fn optimize_fuses_scale_then_pad_into_single_vpp_qsv() {
-        use crate::filter_chain::{FilterChain, PipelineFilter};
-        use crate::hw_accel::HardwareAccel;
-
         let accel = HardwareAccel::Qsv(make_qsv());
         let ffmpeg_info = make_ffmpeg_info(true);
         let filter_options = VideoFilterOptions::default();
-
-        // source is 1920x1080 anamorphic-free but at 4:3 content that needs
-        // letterboxing to 1920x1080; drive it through Scale + Pad video filters.
-        let initial_state = FrameState {
-            size: FrameSize {
-                width: 1440,
-                height: 1080,
-            },
-            ..make_frame_state()
-        };
+        let initial_state = make_frame_state();
 
         let scale: VideoFilter = ScaleFilter {
             size: Some(FrameSize {
@@ -564,6 +550,29 @@ mod tests {
             filter_complex.matches("vpp_qsv").count(),
             1,
             "scale+pad must collapse to exactly one vpp_qsv: {filter_complex}"
+        );
+    }
+
+    #[test]
+    fn optimize_leaves_pad_only_when_scale_is_not_adjacent() {
+        let pad: VideoFilter = PadQsv {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scale: None,
+        }
+        .into();
+
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(pad)]);
+        chain.optimize();
+        chain.build("0:a", "0:v", None, None);
+
+        let args = chain.as_arg();
+        assert!(
+            args[1].contains("vpp_qsv=pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black"),
+            "expected a pad-only vpp_qsv: {}",
+            args[1]
         );
     }
 }
