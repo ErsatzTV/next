@@ -13,8 +13,7 @@ use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceS
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, ForceOriginalAspectRatio, PadFilter, ScaleFilter, ToneMapFilter,
-    VideoFilter, VideoFilterOp,
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,19 +60,13 @@ impl HwAccel for Cuda {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                force_original_aspect_ratio,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
-                && !current_state.pixel_format.has_alpha() =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
+                    && !current_state.pixel_format.has_alpha() =>
             {
                 ScaleCuda {
                     format: None,
                     size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
                 }
                 .into()
             }
@@ -266,8 +259,6 @@ impl HwAccel for Cuda {
 pub struct ScaleCuda {
     pub(crate) format: Option<PixelFormat>,
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
-    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleCuda {
@@ -295,27 +286,15 @@ impl VideoFilterOp for ScaleCuda {
 
     fn as_arg(&self) -> Option<String> {
         if let Some(size) = &self.size {
-            let aspect_ratio = self
-                .force_original_aspect_ratio
-                .as_ref()
-                .map_or(String::new(), |f| f.as_arg());
-
             let format = self
                 .format
                 .as_ref()
                 .map_or(String::new(), |f| format!(":format={}", f.as_arg()));
 
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_cuda=iw*sar:ih,scale_cuda={}:{}{}{},setsar=1",
-                    size.width, size.height, aspect_ratio, format
-                ))
-            } else {
-                Some(format!(
-                    "scale_cuda={}:{}{}{},setsar=1",
-                    size.width, size.height, aspect_ratio, format
-                ))
-            }
+            Some(format!(
+                "scale_cuda={}:{}{},setsar=1",
+                size.width, size.height, format
+            ))
         } else {
             None
         }

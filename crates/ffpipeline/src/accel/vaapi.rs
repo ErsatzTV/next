@@ -16,8 +16,8 @@ use crate::pipeline::{
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter,
-    ToneMapFilter, VideoFilter, VideoFilterOp,
+    DeinterlaceFilter, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter,
+    VideoFilterOp,
 };
 
 #[derive(Debug, Clone, PartialEq, strum::Display, Serialize)]
@@ -47,23 +47,14 @@ impl HwAccel for Vaapi {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                force_original_aspect_ratio,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi)
-                && !current_state.pixel_format.has_alpha()
-                && self
-                    .capabilities
-                    .vpp_supports_format(&current_state.pixel_format) =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi)
+                    && !current_state.pixel_format.has_alpha()
+                    && self
+                        .capabilities
+                        .vpp_supports_format(&current_state.pixel_format) =>
             {
-                ScaleVaapi {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
-                }
-                .into()
+                ScaleVaapi { size: *size }.into()
             }
             VideoFilter::Pad(PadFilter { size, .. }) => {
                 let mut pad_options = vec![KnownVideoFilter::PadVaapi];
@@ -346,8 +337,6 @@ impl HwAccel for Vaapi {
 #[derive(Debug, Clone)]
 pub struct ScaleVaapi {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
-    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleVaapi {
@@ -370,26 +359,12 @@ impl VideoFilterOp for ScaleVaapi {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            let aspect_ratio = self
-                .force_original_aspect_ratio
-                .as_ref()
-                .map_or(String::new(), |f| f.as_arg());
-
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_vaapi=iw*sar:ih,scale_vaapi={}:{}{}:force_divisible_by=2,setsar=1",
-                    size.width, size.height, aspect_ratio
-                ))
-            } else {
-                Some(format!(
-                    "scale_vaapi={}:{}{}:force_divisible_by=2,setsar=1",
-                    size.width, size.height, aspect_ratio
-                ))
-            }
-        } else {
-            None
-        }
+        self.size.map(|size| {
+            format!(
+                "scale_vaapi={}:{}:force_divisible_by=2,setsar=1",
+                size.width, size.height
+            )
+        })
     }
 }
 

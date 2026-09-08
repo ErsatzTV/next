@@ -25,18 +25,11 @@ impl HwAccel for Vulkan {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
-                && current_state.pixel_format.bit_depth() == 8 =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
+                    && current_state.pixel_format.bit_depth() == 8 =>
             {
-                ScaleVulkan {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                }
-                .into()
+                ScaleVulkan { size: *size }.into()
             }
             VideoFilter::ToneMap(ToneMapFilter {
                 output_format: format,
@@ -195,7 +188,6 @@ impl VideoFilterOp for LibplaceboVulkan {
 #[derive(Debug, Clone)]
 pub struct ScaleVulkan {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
 }
 
 impl VideoFilterOp for ScaleVulkan {
@@ -218,20 +210,8 @@ impl VideoFilterOp for ScaleVulkan {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_vulkan=iw*sar:ih,setsar=1,scale_vulkan={}:{}",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!(
-                    "scale_vulkan={}:{},setsar=1",
-                    size.width, size.height
-                ))
-            }
-        } else {
-            None
-        }
+        self.size
+            .as_ref()
+            .map(|size| format!("scale_vulkan={}:{},setsar=1", size.width, size.height))
     }
 }

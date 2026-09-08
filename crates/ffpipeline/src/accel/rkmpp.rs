@@ -27,18 +27,11 @@ impl HwAccel for Rkmpp {
         _filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleRkrga)
-                && current_state.pixel_format.bit_depth() == 8 =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleRkrga)
+                    && current_state.pixel_format.bit_depth() == 8 =>
             {
-                ScaleRkrga {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                }
-                .into()
+                ScaleRkrga { size: *size }.into()
             }
             _ => video_filter.clone(),
         }
@@ -145,7 +138,6 @@ impl HwAccel for Rkmpp {
 #[derive(Debug, Clone)]
 pub struct ScaleRkrga {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
 }
 
 impl VideoFilterOp for ScaleRkrga {
@@ -168,21 +160,12 @@ impl VideoFilterOp for ScaleRkrga {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_rkrga=w=iw*sar:h=ih,scale_rkrga=w={}:h={}:force_original_aspect_ratio=0,setsar=1",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!(
-                    "scale_rkrga=w={}:h={}:force_original_aspect_ratio=0,setsar=1",
-                    size.width, size.height
-                ))
-            }
-        } else {
-            None
-        }
+        self.size.as_ref().map(|size| {
+            format!(
+                "scale_rkrga=w={}:h={}:force_original_aspect_ratio=0,setsar=1",
+                size.width, size.height
+            )
+        })
     }
 }
 
