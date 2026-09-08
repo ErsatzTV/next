@@ -346,7 +346,7 @@ impl VideoFilterOp for ToneMapFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!(
-            "zscale=t=linear,zscale=p=bt709,tonemap={},zscale=p=bt709:t=bt709:m=bt709:r=tv,format={}",
+            "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap={}:desat=0,zscale=t=bt709:m=bt709:r=tv,format={}",
             self.algorithm.as_deref().unwrap_or("linear"),
             self.output_format.as_arg()
         ))
