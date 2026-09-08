@@ -466,11 +466,11 @@ impl VideoFilterOp for DeinterlaceCuda {
     fn as_arg(&self) -> Option<String> {
         match &self.filter {
             CudaDeinterlaceFilter::Bwdif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("bwdif_cuda={mode}"))
             }
             CudaDeinterlaceFilter::Yadif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("yadif_cuda={mode}"))
             }
         }
