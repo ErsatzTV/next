@@ -820,6 +820,13 @@ impl Pipeline {
 
         let mut input_paths: Vec<&str> = Vec::new();
 
+        // audio decoder options must come before their input's `-i`.
+        // the video input writes that `-i` when both share a file.
+        let audio_decoder_args: Option<(&str, ArgVec)> = self.inputs.iter().find_map(|i| match i {
+            PipelineInput::Audio { path, decoder, .. } => Some((path.as_str(), decoder.as_arg())),
+            _ => None,
+        });
+
         let mut sorted_inputs: Vec<&PipelineInput> = self.inputs.iter().collect();
         sorted_inputs.sort_by_key(|i| i.sort_order());
 
@@ -840,6 +847,12 @@ impl Pipeline {
 
                     result.extend(decoder.as_arg());
 
+                    if let Some((audio_path, audio_args)) = &audio_decoder_args
+                        && *audio_path == path.as_str()
+                    {
+                        result.extend(audio_args.to_owned());
+                    }
+
                     let video_input_index = input_paths.iter().position(|p| p == path).unwrap_or(0);
                     video_label = format!("{}:{}", video_input_index, index);
 
@@ -852,7 +865,6 @@ impl Pipeline {
                     }
 
                     result.extend(input_source.args_for_input());
-                    // TODO: if audio has same input and args, should use here
 
                     result.extend(args!["-i", path.to_owned()]);
                 }
@@ -981,5 +993,114 @@ mod tests {
             Some("videotoolbox")
         );
         assert_eq!(FrameSurface::System.device_name(), None);
+    }
+
+    fn multichannel_ac3_input(path: &str) -> InputSettings {
+        let probe_result = crate::probe::ProbeResult {
+            path: path.to_owned(),
+            streams: vec![
+                crate::probe::ProbeResultStream::Video(Box::new(
+                    crate::probe::ProbeResultVideoStream {
+                        stream_index: 0,
+                        codec: "h264".to_owned(),
+                        codec_type: crate::probe::CodecType::Video,
+                        dv_profile: None,
+                        profile: "main".to_owned(),
+                        height: Some(480),
+                        width: Some(720),
+                        frame_rate: FrameRate::parse("30000/1001"),
+                        sample_aspect_ratio: None,
+                        display_aspect_ratio: None,
+                        pix_fmt: "yuv420p".to_owned(),
+                        color_params: Default::default(),
+                        field_order: None,
+                    },
+                )),
+                crate::probe::ProbeResultStream::Audio(crate::probe::ProbeResultAudioStream {
+                    stream_index: 1,
+                    codec: "ac3".to_owned(),
+                    channels: 6,
+                }),
+            ],
+            duration: Some(Duration::from_secs(60)),
+            format_name: Some("matroska".to_owned()),
+        };
+
+        let probed_input = |probe_result: crate::probe::ProbeResult| crate::input::ProbedInput {
+            input_source: InputSource::Local(crate::input::LocalInputSource {
+                path: path.to_owned(),
+            }),
+            probe_result,
+            in_point: Duration::ZERO,
+            out_point: Duration::from_secs(30),
+            stream_index: None,
+        };
+
+        InputSettings {
+            start: time::OffsetDateTime::now_utc(),
+            playout_offset: Duration::ZERO,
+            audio_input: probed_input(probe_result.clone()),
+            video_input: probed_input(probe_result),
+            subtitle_input: None,
+            graphics_inputs: Vec::new(),
+        }
+    }
+
+    fn stereo_output() -> OutputSettings {
+        OutputSettings {
+            audio: crate::output_settings::AudioOutputSettings {
+                format: Some(AudioFormat::Aac),
+                bitrate: Some(Kbps(320)),
+                buffer: Some(Kbps(640)),
+                channels: Some(2),
+                sample_rate: Some(Hz(48000)),
+                loudness: None,
+            },
+            video_format: Some(VideoFormat::H264),
+            bit_depth: Some(8),
+            video_bitrate: Some(Kbps(2000)),
+            video_buffer: Some(Kbps(4000)),
+            video_size: Some(FrameSize {
+                width: 1280,
+                height: 720,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+            filter_options: VideoFilterOptions::default(),
+            deinterlace: true,
+            accel: None,
+            format: crate::output_format::OutputFormat::Hls {
+                playlist: "out.m3u8".to_owned(),
+                segment_template: "live%06d.ts".to_owned(),
+                troubleshoot: false,
+            },
+            pts_offset: None,
+            realtime: false,
+            is_live: false,
+            frame_rate: None,
+            subtitle_mode: SubtitleMode::Burn,
+            fonts_folder: None,
+            subtitle_force_style: None,
+            reports_folder: None,
+            report_id: None,
+        }
+    }
+
+    #[test]
+    fn ac3_downmix_is_emitted_when_audio_shares_the_video_input() {
+        let path = "/tmp/shared.mkv";
+        let pipeline = Pipeline::full(
+            &FfmpegInfo::default(),
+            multichannel_ac3_input(path),
+            stereo_output(),
+        )
+        .unwrap();
+
+        let args = pipeline.args();
+        let downmix = args.iter().position(|a| a == "-downmix").expect("-downmix");
+        let input = args.iter().position(|a| a == "-i").expect("-i");
+
+        assert_eq!(args[downmix + 1], "stereo");
+        assert!(downmix < input, "-downmix must precede -i: {args:?}");
+        assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1);
     }
 }
