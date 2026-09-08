@@ -412,15 +412,15 @@ impl VideoFilterOp for DeinterlaceFilter {
     fn as_arg(&self) -> Option<String> {
         match &self.filter {
             SoftwareDeinterlaceFilter::Yadif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("yadif={mode}"))
             }
             SoftwareDeinterlaceFilter::Bwdif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("bwdif={mode}"))
             }
             SoftwareDeinterlaceFilter::W3fdif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("w3fdif=mode={mode}"))
             }
         }
