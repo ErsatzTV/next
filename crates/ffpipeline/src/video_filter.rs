@@ -10,25 +10,6 @@ use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
 use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat};
 
-#[derive(Debug, Clone)]
-pub enum ForceOriginalAspectRatio {
-    Increase,
-    Decrease,
-}
-
-impl ForceOriginalAspectRatio {
-    pub(crate) fn as_arg(&self) -> String {
-        match self {
-            ForceOriginalAspectRatio::Increase => {
-                String::from(":force_original_aspect_ratio=increase")
-            }
-            ForceOriginalAspectRatio::Decrease => {
-                String::from(":force_original_aspect_ratio=decrease")
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct SoftwareDeinterlaceOptions {
     pub bwdif: BwdifOptions,
@@ -194,7 +175,6 @@ pub struct ScaleFilter {
     pub size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,
     pub input_is_anamorphic: bool,
-    pub force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleFilter {
@@ -212,14 +192,10 @@ impl VideoFilterOp for ScaleFilter {
             return None;
         }
 
-        let (size, force) = match self.scaling_mode {
-            ScalingMode::ScaleAndPad => {
-                let actual = target.square_pixel_size_contain(state);
-                let force = (actual != target).then_some(ForceOriginalAspectRatio::Decrease);
-                (actual, force)
-            }
-            ScalingMode::Stretch => (target, None),
-            ScalingMode::Crop => (target.square_pixel_size_cover(state), None),
+        let size = match self.scaling_mode {
+            ScalingMode::ScaleAndPad => target.square_pixel_size_contain(state),
+            ScalingMode::Stretch => target,
+            ScalingMode::Crop => target.square_pixel_size_cover(state),
         };
 
         Some(
@@ -227,7 +203,6 @@ impl VideoFilterOp for ScaleFilter {
                 size: Some(size),
                 scaling_mode: self.scaling_mode,
                 input_is_anamorphic: state.is_anamorphic,
-                force_original_aspect_ratio: force,
             }
             .into(),
         )
@@ -247,26 +222,13 @@ impl VideoFilterOp for ScaleFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            let aspect_ratio = self
-                .force_original_aspect_ratio
-                .as_ref()
-                .map_or(String::new(), |f| f.as_arg());
-
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale=iw*sar:ih,scale={}:{}:flags=fast_bilinear{},setsar=1",
-                    size.width, size.height, aspect_ratio
-                ))
-            } else {
-                Some(format!(
-                    "scale={}:{}:flags=fast_bilinear{},setsar=1",
-                    size.width, size.height, aspect_ratio
-                ))
-            }
-        } else {
-            None
-        }
+        // force_original_aspect_ratio must not be used because it ignores sar
+        self.size.map(|size| {
+            format!(
+                "scale={}:{}:flags=fast_bilinear,setsar=1",
+                size.width, size.height
+            )
+        })
     }
 }
 

@@ -31,15 +31,11 @@ impl HwAccel for VideoToolbox {
         _filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVt) => ScaleVt {
-                size: *size,
-                input_is_anamorphic: *input_is_anamorphic,
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVt) =>
+            {
+                ScaleVt { size: *size }.into()
             }
-            .into(),
             _ => video_filter.clone(),
         }
     }
@@ -121,7 +117,6 @@ impl HwAccel for VideoToolbox {
 #[derive(Debug, Clone)]
 pub struct ScaleVt {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
 }
 
 impl VideoFilterOp for ScaleVt {
@@ -144,17 +139,8 @@ impl VideoFilterOp for ScaleVt {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_vt=iw*sar:ih,scale_vt={}:{},setsar=1",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!("scale_vt={}:{},setsar=1", size.width, size.height))
-            }
-        } else {
-            None
-        }
+        self.size
+            .as_ref()
+            .map(|size| format!("scale_vt={}:{},setsar=1", size.width, size.height))
     }
 }

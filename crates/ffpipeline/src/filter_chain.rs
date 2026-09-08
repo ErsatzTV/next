@@ -1600,7 +1600,6 @@ mod tests {
             size: None,
             scaling_mode: ScalingMode::Stretch,
             input_is_anamorphic: false,
-            force_original_aspect_ratio: None,
         }
         .into();
         assert!(upload.as_arg().is_none());

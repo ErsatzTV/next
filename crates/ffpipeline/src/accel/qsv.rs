@@ -28,18 +28,11 @@ impl HwAccel for Qsv {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
-                && !current_state.pixel_format.has_alpha() =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                    && !current_state.pixel_format.has_alpha() =>
             {
-                ScaleQsv {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                }
-                .into()
+                ScaleQsv { size: *size }.into()
             }
             VideoFilter::Deinterlace(DeinterlaceFilter { .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceQsv) =>
@@ -191,19 +184,13 @@ impl HwAccel for Qsv {
 #[derive(Debug, Clone)]
 pub struct ScaleQsv {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
 }
 
 impl ScaleQsv {
     fn as_arg_with(&self, extra_options: &str) -> Option<String> {
         let size = self.size?;
-        let prescale = if self.input_is_anamorphic {
-            "vpp_qsv=w=iw*sar:h=ih,"
-        } else {
-            ""
-        };
         Some(format!(
-            "{prescale}vpp_qsv=w={}:h={}{extra_options},setsar=1",
+            "vpp_qsv=w={}:h={}{extra_options},setsar=1",
             size.width, size.height
         ))
     }
@@ -502,7 +489,6 @@ mod tests {
                     width: 1440,
                     height: 1080,
                 }),
-                input_is_anamorphic: false,
             }),
         };
 
@@ -523,52 +509,16 @@ mod tests {
     }
 
     #[test]
-    fn pad_qsv_fused_anamorphic_scale_prescales_then_combines() {
-        let pad = PadQsv {
-            size: Some(FrameSize {
-                width: 1920,
-                height: 1080,
-            }),
-            scale: Some(ScaleQsv {
-                size: Some(FrameSize {
-                    width: 1440,
-                    height: 1080,
-                }),
-                input_is_anamorphic: true,
-            }),
-        };
-
-        assert_eq!(
-            pad.as_arg().as_deref(),
-            Some(
-                "vpp_qsv=w=iw*sar:h=ih,vpp_qsv=w=1440:h=1080:pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black,setsar=1"
-            )
-        );
-    }
-
-    #[test]
     fn scale_qsv_arg() {
         let size = Some(FrameSize {
             width: 1440,
             height: 1080,
         });
 
-        let scale = ScaleQsv {
-            size,
-            input_is_anamorphic: false,
-        };
+        let scale = ScaleQsv { size };
         assert_eq!(
             scale.as_arg().as_deref(),
             Some("vpp_qsv=w=1440:h=1080,setsar=1")
-        );
-
-        let anamorphic = ScaleQsv {
-            size,
-            input_is_anamorphic: true,
-        };
-        assert_eq!(
-            anamorphic.as_arg().as_deref(),
-            Some("vpp_qsv=w=iw*sar:h=ih,vpp_qsv=w=1440:h=1080,setsar=1")
         );
     }
 
@@ -586,7 +536,6 @@ mod tests {
             }),
             scaling_mode: ScalingMode::ScaleAndPad,
             input_is_anamorphic: false,
-            force_original_aspect_ratio: None,
         }
         .into();
 

@@ -425,7 +425,6 @@ impl Pipeline {
                     size: final_output_settings.video_size,
                     scaling_mode: final_output_settings.scaling_mode,
                     input_is_anamorphic: initial_state.is_anamorphic,
-                    force_original_aspect_ratio: None,
                 }
                 .into(),
             ),
@@ -625,7 +624,6 @@ impl Pipeline {
                     size: Some(scaled_size),
                     scaling_mode: ScalingMode::ScaleAndPad,
                     input_is_anamorphic: false,
-                    force_original_aspect_ratio: None,
                 }
                 .into(),
             ];
