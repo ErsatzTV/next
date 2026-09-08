@@ -95,8 +95,15 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+    let source_frame_rate = probe_avg_frame_rate(&test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
+    // without frame rate normalization, output must keep the source frame rate
+    let expected_frame_rate = test_case
+        .params
+        .frame_rate
+        .clone()
+        .unwrap_or(source_frame_rate);
     let watermark = match test_case.params.watermark.take() {
         Some(watermark) => Some(build_watermark_input(test_env, &watermark).await),
         None => None,
@@ -117,6 +124,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
         &test_case.expected_video_codec,
         test_case.expected_video_size.width,
         test_case.expected_video_size.height,
+        &expected_frame_rate,
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
@@ -329,6 +337,26 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
     (output.status.success(), stderr)
 }
 
+/// r_frame_rate is guessed from timestamp deltas and is wrong for irregular fixtures
+/// (480p_h264_sps_change.ts reports 240/1 for 30 fps content), so the expected source
+/// rate comes from avg_frame_rate instead
+pub async fn probe_avg_frame_rate(ffprobe: &Path, path: &Path) -> FrameRate {
+    let output = tokio::process::Command::new(ffprobe)
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to spawn ffprobe");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text
+        .lines()
+        .next()
+        .expect("no avg_frame_rate in source")
+        .trim();
+    FrameRate::parse(line)
+}
+
 pub fn find_first_segment(dir: &Path) -> PathBuf {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .expect("failed to read output dir")
@@ -352,6 +380,7 @@ pub fn assert_video(
     codec: &str,
     width: u32,
     height: u32,
+    frame_rate: &FrameRate,
     accel: Option<HardwareAccel>,
 ) {
     let video = probe
@@ -365,6 +394,12 @@ pub fn assert_video(
     assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
     assert_eq!(video.width, Some(width), "unexpected video width");
     assert_eq!(video.height, Some(height), "unexpected video height");
+    assert!(
+        frame_rates_equal(&video.frame_rate, frame_rate),
+        "unexpected video frame rate: expected {}, got {}",
+        frame_rate.r_frame_rate,
+        video.frame_rate.r_frame_rate
+    );
 
     // RKMPP encoders don't seem to set SAR
     if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) {
@@ -373,6 +408,22 @@ pub fn assert_video(
             Some(String::from("1:1")),
             "unexpected SAR"
         );
+    }
+}
+
+/// Compares frame rates as exact rationals so 30000/1001 != 30 and 60/2 == 30/1
+fn frame_rates_equal(a: &FrameRate, b: &FrameRate) -> bool {
+    fn rational(frame_rate: &FrameRate) -> Option<(u64, u64)> {
+        let text = frame_rate.r_frame_rate.trim();
+        match text.split_once('/') {
+            Some((num, den)) => Some((num.parse().ok()?, den.parse().ok()?)),
+            None => Some((text.parse().ok()?, 1)),
+        }
+    }
+
+    match (rational(a), rational(b)) {
+        (Some((an, ad)), Some((bn, bd))) => an * bd == bn * ad,
+        _ => a.parsed_frame_rate == b.parsed_frame_rate,
     }
 }
 
