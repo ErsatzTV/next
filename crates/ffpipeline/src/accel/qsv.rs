@@ -7,10 +7,14 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{DeinterlaceFilter, PadFilter, ScaleFilter, VideoFilter, VideoFilterOp};
+use crate::video_filter::{
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp,
+};
 
 const VPP_QSV_PAD_OPTION: &str = "pad_w";
 
@@ -50,6 +54,18 @@ impl HwAccel for Qsv {
                 PadQsv {
                     size: *size,
                     scale: None,
+                }
+                .into()
+            }
+            VideoFilter::ToneMap(ToneMapFilter {
+                output_format: format,
+                ..
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                && self.capabilities.can_tonemap()
+                && current_state.hdr_format == HdrFormat::Hdr10 =>
+            {
+                TonemapQsv {
+                    output_format: self.output_format(format),
                 }
                 .into()
             }
@@ -345,6 +361,31 @@ impl OverlayKindOp for QsvOverlay {
         } else {
             Some(String::from("overlay_qsv=x=(W-w)/2:y=(H-h)/2"))
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TonemapQsv {
+    pub output_format: HwPixelFormat,
+}
+
+impl VideoFilterOp for TonemapQsv {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.hdr_format = HdrFormat::None;
+        state.pixel_format = self.output_format.into();
+        state.surface = FrameSurface::Qsv;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Qsv)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        format!("vpp_qsv=tonemap=1:format={}", self.output_format.as_arg()).into()
     }
 }
 

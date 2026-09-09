@@ -74,6 +74,7 @@ pub enum VideoFilter {
     PadQsv(accel::qsv::PadQsv),
     FormatQsv(accel::qsv::FormatQsv),
     DeinterlaceQsv(accel::qsv::DeinterlaceQsv),
+    TonemapQsv(accel::qsv::TonemapQsv),
     // Vulkan hardware filters
     ScaleVulkan(accel::vulkan::ScaleVulkan),
     FormatVulkan(accel::vulkan::FormatVulkan),
