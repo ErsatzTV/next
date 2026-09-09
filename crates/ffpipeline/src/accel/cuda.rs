@@ -89,6 +89,8 @@ impl HwAccel for Cuda {
                         PixelFormat::Yuv420p10le => PixelFormat::P010le,
                         _ => PixelFormat::Nv12,
                     },
+                    input_size: current_state.size,
+                    size: None,
                 }
                 .into()
             }
@@ -384,6 +386,9 @@ pub struct LibplaceboCuda {
     /// algorithm to use for tonemapping
     pub(crate) algorithm: Option<String>,
     pub(crate) format: PixelFormat,
+    /// frame size entering the filter, used to decide whether fusing a scale is worthwhile
+    pub(crate) input_size: FrameSize,
+    pub(crate) size: Option<FrameSize>,
 }
 
 impl VideoFilterOp for LibplaceboCuda {
@@ -395,6 +400,14 @@ impl VideoFilterOp for LibplaceboCuda {
         state.pixel_format = self.format;
         state.hdr_format = HdrFormat::None;
         state.surface = FrameSurface::Cuda;
+
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::Cuda;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -412,11 +425,18 @@ impl VideoFilterOp for LibplaceboCuda {
             _ => "",
         };
 
+        let (size, setsar) = match &self.size {
+            Some(size) => (format!(":w={}:h={}", size.width, size.height), ",setsar=1"),
+            None => (String::new(), ""),
+        };
+
         Some(format!(
-            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={},hwupload_cuda{}",
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}{},hwupload_cuda{}{}",
             self.algorithm.as_deref().unwrap_or("linear"),
             vulkan_format.as_arg(),
-            cuda_format
+            size,
+            cuda_format,
+            setsar
         ))
     }
 }
