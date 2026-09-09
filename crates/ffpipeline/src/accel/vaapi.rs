@@ -110,7 +110,7 @@ impl HwAccel for Vaapi {
 
                 let mut tonemap_options = vec![];
 
-                if current_state.hdr_format == HdrFormat::Pq {
+                if matches!(current_state.hdr_format, HdrFormat::Pq | HdrFormat::Hdr10) {
                     tonemap_options.push(KnownVideoFilter::TonemapVaapi);
                 }
 
