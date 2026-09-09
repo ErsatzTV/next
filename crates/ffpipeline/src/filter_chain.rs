@@ -477,19 +477,6 @@ impl FilterChain {
     }
 
     pub(crate) fn optimize(&mut self) {
-        // swap software scale before software tone map to reduce
-        // the amount of data that needs to be tone mapped
-        if let Some(tonemap_index) = self
-            .filters
-            .iter()
-            .position(|f| matches!(f, PipelineFilter::Video(VideoFilter::ToneMap(_))))
-            && let Some(PipelineFilter::Video(VideoFilter::Scale(_))) =
-                self.filters.get(tonemap_index + 1)
-        {
-            log::debug!("swapping software scale filter before software tonemap filter");
-            self.filters.swap(tonemap_index, tonemap_index + 1);
-        }
-
         // remove DV5 workaround with libplacebo
         if self.filters.iter().any(|f| {
             matches!(

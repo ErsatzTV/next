@@ -398,16 +398,28 @@ impl Pipeline {
         filters.extend([
             PipelineFilter::Video(LoopFilter { is_still_image }.into()),
             PipelineFilter::Video(Dv5WorkaroundFilter.into()),
-            PipelineFilter::Video(
-                ToneMapFilter {
-                    algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
-                    output_format: match final_output_settings.bit_depth {
-                        Some(10) => PixelFormat::Yuv420p10le,
-                        _ => PixelFormat::Yuv420p,
-                    },
-                }
-                .into(),
-            ),
+        ]);
+
+        // tonemap first when decoded with vulkan (for libplacebo), or when not downscaling
+        let source = initial_state.size;
+        let tonemap_first = video_decoder.output_surface() == FrameSurface::Vulkan
+            || final_output_settings.video_size.is_none_or(|target| {
+                u64::from(target.width) * u64::from(target.height)
+                    >= u64::from(source.width) * u64::from(source.height)
+            });
+
+        let tonemap = PipelineFilter::Video(
+            ToneMapFilter {
+                algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
+                output_format: match final_output_settings.bit_depth {
+                    Some(10) => PixelFormat::Yuv420p10le,
+                    _ => PixelFormat::Yuv420p,
+                },
+            }
+            .into(),
+        );
+
+        let geometry_filters = [
             PipelineFilter::Video(
                 DeinterlaceFilter {
                     filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
@@ -442,7 +454,15 @@ impl Pipeline {
                 }
                 .into(),
             ),
-        ]);
+        ];
+
+        if tonemap_first {
+            filters.push(tonemap);
+            filters.extend(geometry_filters);
+        } else {
+            filters.extend(geometry_filters);
+            filters.push(tonemap);
+        }
 
         let mut inputs = vec![
             PipelineInput::Audio {
