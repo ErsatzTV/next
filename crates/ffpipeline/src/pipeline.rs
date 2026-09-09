@@ -409,10 +409,9 @@ impl Pipeline {
         // tonemap first when decoded with vulkan (for libplacebo), or when not downscaling
         let source = initial_state.size;
         let tonemap_first = video_decoder.output_surface() == FrameSurface::Vulkan
-            || final_output_settings.video_size.is_none_or(|target| {
-                u64::from(target.width) * u64::from(target.height)
-                    >= u64::from(source.width) * u64::from(source.height)
-            });
+            || final_output_settings
+                .video_size
+                .is_none_or(|target| target.pixel_count() >= source.pixel_count());
 
         let tonemap = PipelineFilter::Video(
             ToneMapFilter {

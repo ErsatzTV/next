@@ -532,7 +532,7 @@ impl FilterChain {
 
     /// try to fuse consecutive scale_cuda (format, resize) into a single scale_cuda kernel
     fn try_fuse_cuda(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
-        use VideoFilter::{FormatCuda, ScaleCuda};
+        use VideoFilter::{FormatCuda, LibplaceboCuda, ScaleCuda};
         let (PipelineFilter::Video(va), PipelineFilter::Video(vb)) = (a, b) else {
             return None;
         };
@@ -550,6 +550,19 @@ impl FilterChain {
                     ..s.clone()
                 }),
             )),
+            // only fuse a tonemap followed by a downscale
+            (LibplaceboCuda(l), ScaleCuda(s))
+                if s.size
+                    .is_some_and(|size| size.pixel_count() < l.input_size.pixel_count())
+                    && s.format.is_none_or(|f| f == l.format) =>
+            {
+                Some(PipelineFilter::Video(LibplaceboCuda(
+                    crate::accel::cuda::LibplaceboCuda {
+                        size: s.size,
+                        ..l.clone()
+                    },
+                )))
+            }
             _ => None,
         }
     }
