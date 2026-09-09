@@ -98,6 +98,10 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let source_frame_rate = probe_avg_frame_rate(&test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
+    let source_is_hdr = probe.streams.iter().any(|s| match s {
+        ProbeResultStream::Video(v) => v.color_params.is_hdr() || v.dv_profile == Some(5),
+        _ => false,
+    });
     // without frame rate normalization, output must keep the source frame rate
     let expected_frame_rate = test_case
         .params
@@ -128,6 +132,9 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if source_is_hdr {
+        assert_sdr_output(&output_probe);
+    }
 }
 
 pub fn find_ffmpeg() -> Option<PathBuf> {
@@ -437,4 +444,27 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
         })
         .expect("no audio stream found in output");
     assert_eq!(audio.codec, codec, "unexpected audio codec");
+}
+
+// this helps catch cases where e.g. vpp_qsv=tonemap=1 silently no-ops
+pub fn assert_sdr_output(probe: &ProbeResult) {
+    let video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v),
+            _ => None,
+        })
+        .expect("no video stream found in output");
+    assert!(
+        !video.color_params.is_hdr(),
+        "output is still tagged HDR: {:?}",
+        video.color_params
+    );
+    assert_eq!(
+        video.color_params.color_transfer.as_deref(),
+        Some("bt709"),
+        "tonemapped output should be tagged bt709: {:?}",
+        video.color_params
+    );
 }

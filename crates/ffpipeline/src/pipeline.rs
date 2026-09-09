@@ -185,7 +185,10 @@ impl PixelFormat {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HdrFormat {
     None,
+    /// PQ without metadata
     Pq,
+    /// PQ with metadata
+    Hdr10,
     Hlg,
     Dv5,
 }
@@ -345,6 +348,9 @@ impl Pipeline {
             video_stream.color_params.color_transfer.as_deref(),
         ) {
             (Some(5), _) => HdrFormat::Dv5,
+            (_, Some("smpte2084")) if video_stream.color_params.has_hdr10_metadata => {
+                HdrFormat::Hdr10
+            }
             (_, Some("smpte2084")) => HdrFormat::Pq,
             (_, Some("arib-std-b67")) => HdrFormat::Hlg,
             _ => HdrFormat::None,
