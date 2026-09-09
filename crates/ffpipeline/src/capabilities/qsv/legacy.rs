@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use libvpl_sys::*;
 
-use crate::capabilities::qsv::{QsvCapabilities, QsvPixelFormat};
+use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
 use crate::pipeline::VideoFormat;
 
 const CODECS: &[(VideoFormat, u32)] = &[
@@ -162,7 +162,7 @@ impl<'a> Session<'a> {
             if self.can_vpp((*fourcc, *bit_depth), (MFX_FOURCC_NV12, 8))
                 || self.can_vpp((MFX_FOURCC_NV12, 8), (*fourcc, *bit_depth))
             {
-                vpp_pixel_formats.insert(QsvPixelFormat(*fourcc));
+                vpp_pixel_formats.insert(QsvFourCC(*fourcc));
             }
         }
 
@@ -170,7 +170,16 @@ impl<'a> Session<'a> {
             supported_decoders,
             supported_encoders,
             vpp_pixel_formats,
+            // 1.x runtime does not provide a filter list
+            vpp_filters: HashSet::new(),
+            runtime_api: self.api_version(),
         }
+    }
+
+    fn api_version(&self) -> Option<(u16, u16)> {
+        let mut version = mfxVersion::default();
+        let status = unsafe { (self.vpl.MFXQueryVersion)(self.handle, &mut version) };
+        (status == MFX_ERR_NONE).then_some((version.Major, version.Minor))
     }
 
     fn can_decode(&self, codec_id: u32, bit_depth: u8) -> bool {

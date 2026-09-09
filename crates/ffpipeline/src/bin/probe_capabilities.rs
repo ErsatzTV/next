@@ -192,6 +192,19 @@ fn print_qsv() -> Result<(), String> {
     println!();
     print_vpp_table(|pf| caps.vpp_supports_format(pf));
 
+    println!();
+    match caps.runtime_api() {
+        Some((major, minor)) => println!("Runtime API: {major}.{minor}"),
+        None => println!("Runtime API: unknown"),
+    }
+    let filters = caps.vpp_filters();
+    if filters.is_empty() {
+        println!("VPP Filters: (none reported; legacy Media SDK runtimes cannot list them)");
+    } else {
+        println!("VPP Filters: {}", filters.join(" "));
+    }
+    println!("Can Tonemap: {}", caps.can_tonemap());
+
     Ok(())
 }
 

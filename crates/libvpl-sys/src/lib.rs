@@ -45,6 +45,9 @@ pub const MFX_FOURCC_NV12: u32 = u32::from_ne_bytes(*b"NV12");
 pub const MFX_FOURCC_P010: u32 = u32::from_ne_bytes(*b"P010");
 pub const MFX_FOURCC_RGB4: u32 = u32::from_ne_bytes(*b"RGB4");
 
+pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN: u32 = u32::from_ne_bytes(*b"VSII");
+pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT: u32 = u32::from_ne_bytes(*b"VSIO");
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union mfxVariantValue {
