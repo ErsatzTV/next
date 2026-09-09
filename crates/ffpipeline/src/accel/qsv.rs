@@ -364,6 +364,8 @@ mod tests {
                 supported_decoders: HashMap::new(),
                 supported_encoders: HashMap::new(),
                 vpp_pixel_formats: HashSet::new(),
+                vpp_filters: HashSet::new(),
+                runtime_api: None,
             },
         }
     }
