@@ -98,6 +98,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let source_frame_rate = probe_avg_frame_rate(&test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
+    let deinterlace = test_case.params.deinterlace;
     let source_is_hdr = probe.streams.iter().any(|s| match s {
         ProbeResultStream::Video(v) => v.color_params.is_hdr() || v.dv_profile == Some(5),
         _ => false,
@@ -132,9 +133,95 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if deinterlace {
+        let video = output_probe
+            .streams
+            .iter()
+            .find_map(|s| match s {
+                ProbeResultStream::Video(v) => Some(v),
+                _ => None,
+            })
+            .expect("no output video");
+        // HEVC may omit field_order even for progressive output. This rejects
+        // explicit interlace tags; the motion fixture also checks actual pixels.
+        assert!(
+            !video.is_interlaced(),
+            "deinterlaced output is still tagged interlaced: {:?}",
+            video.field_order
+        );
+        if test_case.fixture_name == "480i_h264_motion.ts" {
+            let score =
+                motion_combing_score(&test_env.ffmpeg, &segment, test_case.expected_video_size)
+                    .await;
+            assert!(
+                score < 1.0,
+                "deinterlacing left alternating scanlines: score={score}"
+            );
+        }
+    }
     if source_is_hdr {
         assert_sdr_output(&output_probe);
     }
+}
+
+/// Only for 480i_h264_motion.ts: a vertical moving bar has identical rows after
+/// deinterlacing. Different field times leave alternating bar positions otherwise.
+/// Sample the middle third to exclude letterboxing, and ignore encoder field tags.
+pub async fn motion_combing_score(ffmpeg: &Path, path: &Path, size: FrameSize) -> f64 {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(ffmpeg)
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-an",
+                "-vf",
+                "crop=iw:trunc(ih/3):0:trunc(ih/3),format=gray",
+                "-frames:v",
+                "30",
+                "-f",
+                "rawvideo",
+                "-",
+            ])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("pixel check timed out")
+    .expect("failed to decode motion fixture");
+    assert!(
+        output.status.success(),
+        "pixel check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let width = size.width as usize;
+    // crop rounds subsampled input dimensions down to even values.
+    let height = (size.height as usize / 3) & !1;
+    let frame_bytes = width * height;
+    assert!(
+        output.stdout.len() >= frame_bytes * 20,
+        "too few decoded frames for pixel check"
+    );
+    assert_eq!(
+        output.stdout.len() % frame_bytes,
+        0,
+        "unexpected decoded dimensions"
+    );
+    let mut difference = 0u64;
+    let mut samples = 0u64;
+    for frame in output.stdout.chunks_exact(frame_bytes) {
+        assert!(
+            frame.iter().max().unwrap() - frame.iter().min().unwrap() > 64,
+            "motion fixture lost its foreground/background contrast"
+        );
+        for (a, b) in frame[..frame_bytes - width].iter().zip(&frame[width..]) {
+            difference += u64::from(a.abs_diff(*b));
+            samples += 1;
+        }
+    }
+    difference as f64 / samples as f64
 }
 
 pub fn find_ffmpeg() -> Option<PathBuf> {

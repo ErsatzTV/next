@@ -567,23 +567,16 @@ impl FilterChain {
         }
     }
 
-    /// try to fuse a vpp_qsv scale followed by a vpp_qsv pad into a single vpp_qsv instance
     fn try_fuse_qsv(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
-        use VideoFilter::{PadQsv, ScaleQsv};
-        let (PipelineFilter::Video(va), PipelineFilter::Video(vb)) = (a, b) else {
+        let (
+            PipelineFilter::Video(VideoFilter::VppQsv(va)),
+            PipelineFilter::Video(VideoFilter::VppQsv(vb)),
+        ) = (a, b)
+        else {
             return None;
         };
-        match (va, vb) {
-            (ScaleQsv(s), PadQsv(p))
-                if s.size.is_some() && p.size.is_some() && p.scale.is_none() =>
-            {
-                Some(PipelineFilter::Video(PadQsv(crate::accel::qsv::PadQsv {
-                    scale: Some(s.clone()),
-                    ..p.clone()
-                })))
-            }
-            _ => None,
-        }
+        va.fuse(vb)
+            .map(|fused| PipelineFilter::Video(VideoFilter::VppQsv(fused)))
     }
 
     pub(crate) fn build(

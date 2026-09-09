@@ -70,11 +70,7 @@ pub enum VideoFilter {
     FormatRkrga(accel::rkmpp::FormatRkrga),
     ScaleRkrga(accel::rkmpp::ScaleRkrga),
     // QSV hardware filters
-    ScaleQsv(accel::qsv::ScaleQsv),
-    PadQsv(accel::qsv::PadQsv),
-    FormatQsv(accel::qsv::FormatQsv),
-    DeinterlaceQsv(accel::qsv::DeinterlaceQsv),
-    TonemapQsv(accel::qsv::TonemapQsv),
+    VppQsv(accel::qsv::VppQsv),
     // Vulkan hardware filters
     ScaleVulkan(accel::vulkan::ScaleVulkan),
     FormatVulkan(accel::vulkan::FormatVulkan),

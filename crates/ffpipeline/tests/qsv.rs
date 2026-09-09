@@ -168,14 +168,15 @@ async fn watermark_periodic(
 #[tokio::test]
 #[ignore]
 async fn tonemap_hdr(
-    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+    #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
     #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;
     if let Ok(vf) = VideoFormat::from_str(vf_str) {
         run_qsv_test_case(TestCase {
-            fixture_name: "1080p_hevc_10_hdr.ts",
+            fixture_name: src,
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
@@ -251,4 +252,26 @@ async fn run_qsv_test_case(mut test_case: TestCase) {
         test_case.params.accel = Some(accel.clone());
         run_test_case(env, test_case).await;
     }
+}
+
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn deinterlace_motion(
+    #[values("640x480", "854x480", "1920x1080")] res: FrameSize,
+    #[values(VideoFormat::H264, VideoFormat::Hevc)] vf: VideoFormat,
+) {
+    run_qsv_test_case(TestCase {
+        fixture_name: "480i_h264_motion.ts",
+        params: TestOutputParams {
+            video_size: Some(res),
+            video_format: Some(vf),
+            deinterlace: true,
+            ..TestOutputParams::default()
+        },
+        expected_video_codec: vf.to_string(),
+        expected_video_size: res,
+        expected_audio_codec: String::from("aac"),
+    })
+    .await;
 }
