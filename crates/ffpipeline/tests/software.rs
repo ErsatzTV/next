@@ -114,14 +114,15 @@ async fn custom_frame_rate() {
 #[tokio::test]
 #[ignore]
 async fn tonemap_hdr(
-    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+    #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
     #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;
     if let Ok(vf) = VideoFormat::from_str(vf_str) {
         run_software_test_case(TestCase {
-            fixture_name: "1080p_hevc_10_hdr.ts",
+            fixture_name: src,
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
@@ -306,4 +307,70 @@ async fn run_software_test_case(test_case: TestCase) {
     if let Some(env) = test_env().await {
         run_test_case(env, test_case).await;
     }
+}
+
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn deinterlace_motion(
+    #[values("640x480", "854x480", "1920x1080")] res: FrameSize,
+    #[values(VideoFormat::H264, VideoFormat::Hevc)] vf: VideoFormat,
+) {
+    run_software_test_case(TestCase {
+        fixture_name: "480i_h264_motion.ts",
+        params: TestOutputParams {
+            video_size: Some(res),
+            video_format: Some(vf),
+            deinterlace: true,
+            ..TestOutputParams::default()
+        },
+        expected_video_codec: vf.to_string(),
+        expected_video_size: res,
+        expected_audio_codec: String::from("aac"),
+    })
+    .await;
+}
+
+// Negative control: progressive encoder metadata does not prove deinterlacing.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn motion_check_rejects_missing_deinterlace(
+    #[values("640x480", "854x480", "1920x1080")] res: FrameSize,
+) {
+    let env = test_env().await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let output_path = dir.path().join("combed.ts");
+    let filter = format!(
+        "scale={}:{}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+        res.width, res.height, res.width, res.height,
+    );
+    let output = tokio::process::Command::new(&env.ffmpeg)
+        .args(["-v", "error", "-i"])
+        .arg(fixture_path("480i_h264_motion.ts"))
+        .args(["-t", "1", "-an", "-vf", &filter, "-c:v", "libx264"])
+        .arg(&output_path)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let probe = probe_file(&env.ffmpeg, &env.ffprobe, &output_path).await;
+    let video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ffpipeline::probe::ProbeResultStream::Video(v) => Some(v),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(video.field_order.as_deref(), Some("progressive"));
+    let score = motion_combing_score(&env.ffmpeg, &output_path, res).await;
+    assert!(
+        score >= 1.0,
+        "negative control failed to detect combing: {score}"
+    );
 }

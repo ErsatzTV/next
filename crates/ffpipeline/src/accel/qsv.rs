@@ -522,6 +522,45 @@ mod tests {
     }
 
     #[test]
+    fn fused_deinterlace_scale_keeps_deinterlace_option() {
+        let fused = VppQsv::deinterlace(None)
+            .fuse(&VppQsv::scale(FrameSize {
+                width: 1440,
+                height: 1080,
+            }))
+            .unwrap();
+        assert_eq!(
+            fused.as_arg().as_deref(),
+            Some("vpp_qsv=deinterlace=2:w=1440:h=1080,setsar=1")
+        );
+    }
+
+    #[test]
+    fn pad_keeps_deinterlace_and_tonemap_in_separate_passes() {
+        let pad = VppQsv::pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+        for incompatible in [
+            VppQsv::deinterlace(None),
+            VppQsv {
+                tonemap: true,
+                ..VppQsv::default()
+            },
+        ] {
+            assert!(pad.fuse(&incompatible).is_none());
+            assert!(incompatible.fuse(&pad).is_none());
+            let scaled = incompatible
+                .fuse(&VppQsv::scale(FrameSize {
+                    width: 1440,
+                    height: 1080,
+                }))
+                .unwrap();
+            assert!(scaled.fuse(&pad).is_none());
+        }
+    }
+
+    #[test]
     fn scale_qsv_arg() {
         let scale = VppQsv::scale(FrameSize {
             width: 1440,
