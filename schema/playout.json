@@ -787,6 +787,13 @@
           ],
           "minimum": 0,
           "description": "Dolby Vision profile from the stream's DOVI configuration record (e.g. 5, 7, 8). Profile 5 has no backward-compatible base layer and is not described by the color_* fields; profiles 4, 7 and 8 do, so those are handled from color_transfer alone. Omit for non-Dolby Vision streams."
+        },
+        "has_hdr10_metadata": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether the stream carries HDR10 static metadata (mastering display colour volume or content light level), at the container level or in per-frame SEI. Hardware tonemappers that read that metadata (Intel vpp_qsv) are only used when this is true; omitting it is treated as false and falls back to software tonemapping for \"smpte2084\" content."
         }
       }
     },

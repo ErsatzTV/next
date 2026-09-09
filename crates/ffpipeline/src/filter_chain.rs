@@ -4,7 +4,7 @@ use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp, OverlaySource};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
 };
@@ -105,10 +105,12 @@ impl FilterChain {
         let mut surfaces = SurfaceSet::new();
 
         // eagerly convert to 8-bit if it allows us to use a hardware overlay
+        // skip hdr input because tonemap needs 10-bit frames and outputs 8-bit frames
         if let Some(a) = accel.as_ref()
             && let Some(pf) = encoder_pixel_format
             && pf.bit_depth() == 8
             && initial_state.pixel_format.bit_depth() > 8
+            && initial_state.hdr_format == HdrFormat::None
         {
             let initial_state_8bit = FrameState {
                 pixel_format: *pf,

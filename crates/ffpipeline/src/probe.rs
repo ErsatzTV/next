@@ -30,6 +30,8 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
 static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
 
 static DOLBY_VISION_SIDE_DATA: &str = "DOVI configuration record";
+static HDR10_SIDE_DATA: &[&str] = &["Mastering display metadata", "Content light level metadata"];
+static PQ_TRANSFER: &str = "smpte2084";
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ProbeResultColorParams {
@@ -37,13 +39,18 @@ pub struct ProbeResultColorParams {
     pub color_space: Option<String>,
     pub color_transfer: Option<String>,
     pub color_primaries: Option<String>,
+    pub has_hdr10_metadata: bool,
 }
 
 impl ProbeResultColorParams {
     pub fn is_hdr(&self) -> bool {
         self.color_transfer
             .as_ref()
-            .is_some_and(|ct| ct == "arib-std-b67" || ct == "smpte2084")
+            .is_some_and(|ct| ct == "arib-std-b67" || ct == PQ_TRANSFER)
+    }
+
+    pub fn is_pq(&self) -> bool {
+        self.color_transfer.as_deref() == Some(PQ_TRANSFER)
     }
 }
 
@@ -239,6 +246,12 @@ struct ProbeOutputStream {
 struct StreamSideData {
     side_data_type: String,
     dv_profile: Option<u32>,
+}
+
+fn has_hdr10_side_data(side_data_list: &[StreamSideData]) -> bool {
+    side_data_list
+        .iter()
+        .any(|sd| HDR10_SIDE_DATA.contains(&sd.side_data_type.as_str()))
 }
 
 #[derive(Deserialize)]
@@ -467,6 +480,7 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 color_space: output_stream.color_space.clone(),
                 color_transfer: output_stream.color_transfer.clone(),
                 color_primaries: output_stream.color_primaries.clone(),
+                has_hdr10_metadata: has_hdr10_side_data(&output_stream.side_data_list),
             },
             field_order: output_stream.field_order.clone(),
             frame_rate: FrameRate::parse(&output_stream.r_frame_rate.clone()?),

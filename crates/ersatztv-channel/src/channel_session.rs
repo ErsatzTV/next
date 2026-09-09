@@ -1404,6 +1404,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
                 color_space: v.color_space.clone(),
                 color_transfer: v.color_transfer.clone(),
                 color_primaries: v.color_primaries.clone(),
+                has_hdr10_metadata: v.has_hdr10_metadata.unwrap_or(false),
             },
             field_order: v.field_order.clone(),
             frame_rate: v
