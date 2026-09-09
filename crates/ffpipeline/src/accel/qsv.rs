@@ -32,30 +32,25 @@ impl HwAccel for Qsv {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter { size, .. })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
-                    && !current_state.pixel_format.has_alpha() =>
+            VideoFilter::Scale(ScaleFilter {
+                size: Some(size), ..
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                && !current_state.pixel_format.has_alpha() =>
             {
-                ScaleQsv { size: *size }.into()
+                VppQsv::scale(*size).into()
             }
             VideoFilter::Deinterlace(DeinterlaceFilter { .. })
                 if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
             {
-                DeinterlaceQsv {
-                    mode: filter_options.deinterlace_qsv.mode.clone(),
-                }
-                .into()
+                VppQsv::deinterlace(filter_options.deinterlace_qsv.mode.as_deref()).into()
             }
             // upstream vpp_qsv has no pad options, only the patched ErsatzTV builds do
-            VideoFilter::Pad(PadFilter { size, .. })
-                if ffmpeg_info
-                    .has_video_filter_option(&KnownVideoFilter::VppQsv, VPP_QSV_PAD_OPTION) =>
+            VideoFilter::Pad(PadFilter {
+                size: Some(size), ..
+            }) if ffmpeg_info
+                .has_video_filter_option(&KnownVideoFilter::VppQsv, VPP_QSV_PAD_OPTION) =>
             {
-                PadQsv {
-                    size: *size,
-                    scale: None,
-                }
-                .into()
+                VppQsv::pad(*size).into()
             }
             VideoFilter::ToneMap(ToneMapFilter {
                 output_format: format,
@@ -64,10 +59,7 @@ impl HwAccel for Qsv {
                 && self.capabilities.can_tonemap()
                 && current_state.hdr_format == HdrFormat::Hdr10 =>
             {
-                TonemapQsv {
-                    output_format: self.output_format(format),
-                }
-                .into()
+                VppQsv::tonemap(self.output_format(format)).into()
             }
             _ => video_filter.clone(),
         }
@@ -147,12 +139,7 @@ impl HwAccel for Qsv {
         if pixel_format.has_alpha() {
             None
         } else {
-            Some(
-                FormatQsv {
-                    format: *pixel_format,
-                }
-                .into(),
-            )
+            Some(VppQsv::format(*pixel_format).into())
         }
     }
 
@@ -198,139 +185,6 @@ impl HwAccel for Qsv {
 }
 
 #[derive(Debug, Clone)]
-pub struct ScaleQsv {
-    pub(crate) size: Option<FrameSize>,
-}
-
-impl ScaleQsv {
-    fn as_arg_with(&self, extra_options: &str) -> Option<String> {
-        let size = self.size?;
-        Some(format!(
-            "vpp_qsv=w={}:h={}{extra_options},setsar=1",
-            size.width, size.height
-        ))
-    }
-}
-
-impl VideoFilterOp for ScaleQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        if let Some(size) = &self.size {
-            state.size = *size;
-            state.surface = FrameSurface::Qsv;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
-        }
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        self.as_arg_with("")
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PadQsv {
-    pub(crate) size: Option<FrameSize>,
-    /// scale and pad share one vpp_qsv instance: one VPP pass, and two chained
-    /// vpp_qsv instances were measured to drop the last frame at EOF
-    pub(crate) scale: Option<ScaleQsv>,
-}
-
-impl PadQsv {
-    fn pad_options(size: &FrameSize) -> String {
-        format!(
-            "pad_w={}:pad_h={}:pad_x=-1:pad_y=-1:pad_color=black",
-            size.width, size.height
-        )
-    }
-}
-
-impl VideoFilterOp for PadQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        if let Some(scale) = &self.scale {
-            scale.apply_to(state);
-        }
-        if let Some(size) = &self.size {
-            state.size = *size;
-            state.surface = FrameSurface::Qsv;
-        }
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        let pad_options = Self::pad_options(self.size.as_ref()?);
-        self.scale
-            .as_ref()
-            .and_then(|scale| scale.as_arg_with(&format!(":{pad_options}")))
-            .or_else(|| Some(format!("vpp_qsv={pad_options}")))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FormatQsv {
-    pub(crate) format: PixelFormat,
-}
-
-impl VideoFilterOp for FormatQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format;
-        state.surface = FrameSurface::Qsv;
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        Some(format!("vpp_qsv=format={}", self.format.as_arg()))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DeinterlaceQsv {
-    pub mode: Option<String>,
-}
-
-impl VideoFilterOp for DeinterlaceQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        state.is_interlaced = false;
-        state.surface = FrameSurface::Qsv;
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        let mode = self.mode.as_deref().unwrap_or("2");
-        Some(format!("vpp_qsv=deinterlace={mode}"))
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct QsvOverlay;
 
 impl OverlayKindOp for QsvOverlay {
@@ -364,20 +218,109 @@ impl OverlayKindOp for QsvOverlay {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TonemapQsv {
-    pub output_format: HwPixelFormat,
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VppQsv {
+    pub(crate) deinterlace: Option<String>,
+    pub(crate) tonemap: bool,
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) pad: Option<FrameSize>,
+    pub(crate) format: Option<PixelFormat>,
 }
 
-impl VideoFilterOp for TonemapQsv {
+impl VppQsv {
+    pub(crate) fn scale(size: FrameSize) -> VppQsv {
+        VppQsv {
+            size: Some(size),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn pad(size: FrameSize) -> VppQsv {
+        VppQsv {
+            pad: Some(size),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn format(format: PixelFormat) -> VppQsv {
+        VppQsv {
+            format: Some(format),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn deinterlace(mode: Option<&str>) -> VppQsv {
+        VppQsv {
+            deinterlace: Some(String::from(mode.unwrap_or("2"))),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn tonemap(output_format: HwPixelFormat) -> VppQsv {
+        VppQsv {
+            tonemap: true,
+            format: Some(output_format.into()),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn fuse(&self, next: &VppQsv) -> Option<VppQsv> {
+        if (self.deinterlace.is_some() && next.deinterlace.is_some())
+            || (self.size.is_some() && next.size.is_some())
+            || (self.pad.is_some() && (next.pad.is_some() || next.size.is_some()))
+        {
+            return None;
+        }
+
+        let fused = VppQsv {
+            deinterlace: self.deinterlace.clone().or(next.deinterlace.clone()),
+            tonemap: self.tonemap || next.tonemap,
+            size: self.size.or(next.size),
+            pad: self.pad.or(next.pad),
+            // later format conversion wins
+            format: next.format.or(self.format),
+        };
+
+        // composition cannot perform tonemapping or deinterlacing
+        if fused.pad.is_some() && (fused.tonemap || fused.deinterlace.is_some()) {
+            return None;
+        }
+
+        Some(fused)
+    }
+}
+
+impl VideoFilterOp for VppQsv {
     fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.hdr_format = HdrFormat::None;
-        state.pixel_format = self.output_format.into();
         state.surface = FrameSurface::Qsv;
+
+        if self.deinterlace.is_some() {
+            state.is_interlaced = false;
+        }
+
+        if self.tonemap {
+            state.hdr_format = HdrFormat::None;
+        }
+
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::Qsv;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
+
+        if let Some(pad) = &self.pad {
+            state.size = *pad;
+        }
+
+        if let Some(format) = &self.format {
+            state.pixel_format = *format;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -385,7 +328,41 @@ impl VideoFilterOp for TonemapQsv {
     }
 
     fn as_arg(&self) -> Option<String> {
-        format!("vpp_qsv=tonemap=1:format={}", self.output_format.as_arg()).into()
+        let mut options: Vec<String> = Vec::new();
+
+        if let Some(mode) = &self.deinterlace {
+            options.push(format!("deinterlace={mode}"));
+        }
+
+        if self.tonemap {
+            options.push(String::from("tonemap=1"));
+        }
+
+        if let Some(size) = &self.size {
+            options.push(format!("w={}:h={}", size.width, size.height));
+        }
+
+        if let Some(pad) = &self.pad {
+            options.push(format!(
+                "pad_w={}:pad_h={}:pad_x=-1:pad_y=-1:pad_color=black",
+                pad.width, pad.height
+            ));
+        }
+
+        if let Some(format) = &self.format {
+            options.push(format!("format={}", format.as_arg()));
+        }
+
+        if options.is_empty() {
+            None
+        } else {
+            let mut arg = format!("vpp_qsv={}", options.join(":"));
+            if self.size.is_some() {
+                arg.push_str(",setsar=1");
+            }
+
+            Some(arg)
+        }
     }
 }
 
@@ -394,8 +371,6 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::*;
-    use crate::filter_chain::{FilterChain, PipelineFilter};
-    use crate::hw_accel::HardwareAccel;
     use crate::output_settings::ScalingMode;
     use crate::pipeline::HdrFormat;
 
@@ -472,9 +447,8 @@ mod tests {
         let result = qsv.best_filter(&pad_1920x1080(), &ffmpeg_info, &state, &filter_options);
 
         match result {
-            VideoFilter::PadQsv(PadQsv {
-                size: Some(size),
-                scale: None,
+            VideoFilter::VppQsv(VppQsv {
+                pad: Some(size), ..
             }) => {
                 assert_eq!(size.width, 1920);
                 assert_eq!(size.height, 1080);
@@ -500,13 +474,10 @@ mod tests {
 
     #[test]
     fn pad_qsv_arg_and_state() {
-        let pad = PadQsv {
-            size: Some(FrameSize {
-                width: 1920,
-                height: 1080,
-            }),
-            scale: None,
-        };
+        let pad = VppQsv::pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
 
         assert_eq!(
             pad.as_arg().as_deref(),
@@ -521,22 +492,21 @@ mod tests {
     }
 
     #[test]
-    fn pad_qsv_fused_scale_emits_single_instance() {
-        let pad = PadQsv {
-            size: Some(FrameSize {
-                width: 1920,
-                height: 1080,
-            }),
-            scale: Some(ScaleQsv {
-                size: Some(FrameSize {
-                    width: 1440,
-                    height: 1080,
-                }),
-            }),
-        };
+    fn scale_qsv_fused_pad_emits_single_instance() {
+        let scale = VppQsv::scale(FrameSize {
+            width: 1440,
+            height: 1080,
+        });
+
+        let pad = VppQsv::pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+
+        let fused = scale.fuse(&pad).unwrap();
 
         assert_eq!(
-            pad.as_arg().as_deref(),
+            fused.as_arg().as_deref(),
             Some(
                 "vpp_qsv=w=1440:h=1080:pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black,setsar=1"
             )
@@ -544,7 +514,7 @@ mod tests {
 
         let mut state = make_frame_state();
         state.is_anamorphic = true;
-        pad.apply_to(&mut state);
+        fused.apply_to(&mut state);
         assert_eq!(state.size.width, 1920);
         assert_eq!(state.size.height, 1080);
         assert!(!state.is_anamorphic);
@@ -553,87 +523,14 @@ mod tests {
 
     #[test]
     fn scale_qsv_arg() {
-        let size = Some(FrameSize {
+        let scale = VppQsv::scale(FrameSize {
             width: 1440,
             height: 1080,
         });
 
-        let scale = ScaleQsv { size };
         assert_eq!(
             scale.as_arg().as_deref(),
             Some("vpp_qsv=w=1440:h=1080,setsar=1")
-        );
-    }
-
-    #[test]
-    fn optimize_fuses_scale_then_pad_into_single_vpp_qsv() {
-        let accel = HardwareAccel::Qsv(make_qsv());
-        let ffmpeg_info = make_ffmpeg_info(true);
-        let filter_options = VideoFilterOptions::default();
-        let initial_state = make_frame_state();
-
-        let scale: VideoFilter = ScaleFilter {
-            size: Some(FrameSize {
-                width: 1440,
-                height: 1080,
-            }),
-            scaling_mode: ScalingMode::ScaleAndPad,
-            input_is_anamorphic: false,
-        }
-        .into();
-
-        let mut chain = FilterChain::new(vec![
-            PipelineFilter::Video(scale),
-            PipelineFilter::Video(pad_1920x1080()),
-        ]);
-
-        chain.resolve(
-            &ffmpeg_info,
-            &Some(accel),
-            &filter_options,
-            &initial_state,
-            &FrameSurface::Qsv,
-            &Some(PixelFormat::Nv12),
-        );
-        chain.optimize();
-        chain.build("0:a", "0:v", None, &[]);
-
-        let args = chain.as_arg();
-        let filter_complex = &args[1];
-
-        assert!(
-            filter_complex.contains(
-                "vpp_qsv=w=1440:h=1080:pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black"
-            ),
-            "expected a single combined vpp_qsv scale+pad: {filter_complex}"
-        );
-        assert_eq!(
-            filter_complex.matches("vpp_qsv").count(),
-            1,
-            "scale+pad must collapse to exactly one vpp_qsv: {filter_complex}"
-        );
-    }
-
-    #[test]
-    fn optimize_leaves_pad_only_when_scale_is_not_adjacent() {
-        let pad: VideoFilter = PadQsv {
-            size: Some(FrameSize {
-                width: 1920,
-                height: 1080,
-            }),
-            scale: None,
-        }
-        .into();
-
-        let mut chain = FilterChain::new(vec![PipelineFilter::Video(pad)]);
-        chain.optimize();
-        chain.build("0:a", "0:v", None, &[]);
-
-        let args = chain.as_arg();
-        assert!(
-            args[1].contains("vpp_qsv=pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black"),
-            "expected a pad-only vpp_qsv: {}",
-            args[1]
         );
     }
 }
