@@ -13,7 +13,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 3,
+    compatible: 4,
 };
 const VERSION_URI_PREFIX: &str = "https://ersatztv.org/playout/version/0.";
 
@@ -137,6 +137,8 @@ pub struct GraphicsLayer {
     pub source: PlayoutItemSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<GraphicsLayerKind>,
     pub location: GraphicsLocation,
     /// Scale to this percent of primary content width (0–100).
     /// Omitted = actual size.
@@ -166,6 +168,13 @@ pub struct GraphicsLayer {
 }
 
 pub type Watermark = GraphicsLayer;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphicsLayerKind {
+    Media,
+    Canvas,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -499,5 +508,45 @@ mod tests {
             })
             .collect();
         assert_eq!(paths, ["legacy.png", "middle.png", "top.png"]);
+    }
+    #[test]
+    fn graphics_kind_round_trips_and_absent_kind_stays_omitted() {
+        for kind in [None, Some("media"), Some("canvas")] {
+            let mut value = layer("canvas.nut");
+            if let Some(kind) = kind {
+                value["kind"] = serde_json::json!(kind);
+            }
+            let parsed: GraphicsLayer = serde_json::from_value(value.clone()).unwrap();
+            match kind {
+                None => assert!(parsed.kind.is_none()),
+                Some("media") => assert!(matches!(parsed.kind, Some(GraphicsLayerKind::Media))),
+                Some("canvas") => assert!(matches!(parsed.kind, Some(GraphicsLayerKind::Canvas))),
+                _ => unreachable!(),
+            }
+            assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+        }
+    }
+
+    #[tokio::test]
+    async fn schema_003_and_004_files_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playout.json");
+        for version in ["0.0.3", "0.0.4"] {
+            let mut item = item_json();
+            let mut graphics = layer("canvas.nut");
+            if version == "0.0.4" {
+                graphics["kind"] = serde_json::json!("canvas");
+            }
+            item["graphics"] = serde_json::json!([graphics]);
+            let value = serde_json::json!({
+                "version": format!("https://ersatztv.org/playout/version/{version}"),
+                "items": [item]
+            });
+            tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
+                .await
+                .unwrap();
+            let loaded = from_file(path.to_str().unwrap()).await.unwrap().playout;
+            assert_eq!(serde_json::to_value(loaded).unwrap(), value);
+        }
     }
 }

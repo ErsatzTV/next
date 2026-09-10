@@ -21,6 +21,7 @@ pub struct InputSettings {
     pub video_input: ProbedInput,
     pub subtitle_input: Option<ProbedInput>,
     pub graphics_inputs: Vec<GraphicsInput>,
+    pub channel_number: Option<String>,
 }
 
 impl InputSettings {
@@ -253,47 +254,8 @@ pub struct HttpInputSource {
     pub options: HttpInputOptions,
 }
 
-#[derive(Debug, Clone)]
-pub struct RtspInputSource {
-    pub uri: String,
-    pub options: RtspInputOptions,
-}
-
-#[derive(Debug, Clone)]
-#[enum_dispatch(Probeable)]
-#[enum_dispatch(FfmpegInputArgs)]
-pub enum InputSource {
-    Local(LocalInputSource),
-    Lavfi(LavfiInputSource),
-    Http(HttpInputSource),
-    Rtsp(RtspInputSource),
-}
-
-#[enum_dispatch]
-pub trait FfmpegInputArgs {
-    fn args_for_input(&self) -> ArgVec;
-    fn input_path(&self) -> Option<String>;
-}
-
-impl FfmpegInputArgs for LocalInputSource {
-    fn args_for_input(&self) -> ArgVec {
-        vec![]
-    }
-    fn input_path(&self) -> Option<String> {
-        self.expand_path()
-    }
-}
-
-impl FfmpegInputArgs for LavfiInputSource {
-    fn args_for_input(&self) -> ArgVec {
-        args!["-f", "lavfi"]
-    }
-    fn input_path(&self) -> Option<String> {
-        Some(self.params.clone())
-    }
-}
-impl FfmpegInputArgs for HttpInputSource {
-    fn args_for_input(&self) -> ArgVec {
+impl HttpInputSource {
+    fn base_args(&self) -> ArgVec {
         let mut args: ArgVec = Vec::new();
 
         if self.options.reconnect {
@@ -322,6 +284,72 @@ impl FfmpegInputArgs for HttpInputSource {
             args.extend(args!["-user_agent", ua.clone()]);
         }
 
+        args.extend(args![
+            "-protocol_whitelist",
+            "file,http,https,tcp,tls,crypto",
+        ]);
+
+        args
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RtspInputSource {
+    pub uri: String,
+    pub options: RtspInputOptions,
+}
+
+#[derive(Debug, Clone)]
+#[enum_dispatch(Probeable)]
+#[enum_dispatch(FfmpegInputArgs)]
+pub enum InputSource {
+    Local(LocalInputSource),
+    Lavfi(LavfiInputSource),
+    Http(HttpInputSource),
+    Rtsp(RtspInputSource),
+}
+
+pub struct FfmpegInputRequestContext {
+    pub channel_number: Option<String>,
+    pub playout_offset: Duration,
+    pub duration: Duration,
+    pub frame_rate: String,
+}
+
+#[enum_dispatch]
+pub trait FfmpegInputArgs {
+    fn args_for_input(&self) -> ArgVec;
+    fn args_for_input_with_context(&self, context: &FfmpegInputRequestContext) -> ArgVec;
+    fn input_path(&self) -> Option<String>;
+}
+
+impl FfmpegInputArgs for LocalInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        vec![]
+    }
+    fn args_for_input_with_context(&self, _context: &FfmpegInputRequestContext) -> ArgVec {
+        self.args_for_input()
+    }
+    fn input_path(&self) -> Option<String> {
+        self.expand_path()
+    }
+}
+
+impl FfmpegInputArgs for LavfiInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        args!["-f", "lavfi"]
+    }
+    fn args_for_input_with_context(&self, _context: &FfmpegInputRequestContext) -> ArgVec {
+        self.args_for_input()
+    }
+    fn input_path(&self) -> Option<String> {
+        Some(self.params.clone())
+    }
+}
+impl FfmpegInputArgs for HttpInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        let mut args: ArgVec = self.base_args();
+
         if !self.options.headers.is_empty() {
             // FFmpeg expects headers separated by \r\n, with trailing \r\n
             let combined: String = self
@@ -333,10 +361,38 @@ impl FfmpegInputArgs for HttpInputSource {
             args.extend(args!["-headers", combined]);
         }
 
-        args.extend(args![
-            "-protocol_whitelist",
-            "file,http,https,tcp,tls,crypto",
-        ]);
+        args
+    }
+
+    fn args_for_input_with_context(&self, context: &FfmpegInputRequestContext) -> ArgVec {
+        let mut args: ArgVec = self.base_args();
+
+        let mut merged_headers: Vec<String> = self.options.headers.clone();
+
+        if let Some(channel_number) = context.channel_number.as_deref() {
+            merged_headers.push(format!("x-etv-channel:{}", channel_number))
+        }
+
+        merged_headers.push(format!(
+            "x-etv-offset-ms:{}",
+            context.playout_offset.as_millis()
+        ));
+
+        merged_headers.push(format!(
+            "x-etv-duration-ms:{}",
+            context.duration.as_millis()
+        ));
+
+        merged_headers.push(format!("x-etv-frame-rate:{}", context.frame_rate));
+
+        if !merged_headers.is_empty() {
+            // FFmpeg expects headers separated by \r\n, with trailing \r\n
+            let combined: String = merged_headers
+                .iter()
+                .map(|h| format!("{}\r\n", h))
+                .collect();
+            args.extend(args!["-headers", combined]);
+        }
 
         args
     }
@@ -360,6 +416,10 @@ impl FfmpegInputArgs for RtspInputSource {
         ]);
 
         args
+    }
+
+    fn args_for_input_with_context(&self, _context: &FfmpegInputRequestContext) -> ArgVec {
+        self.args_for_input()
     }
 
     fn input_path(&self) -> Option<String> {
@@ -387,7 +447,15 @@ pub struct GraphicsInput {
     pub horizontal_margin_percent: Option<f32>,
     pub vertical_margin_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
+    pub kind: GraphicsKind,
+    pub in_point: Duration,
     pub timing: Option<GraphicsTiming>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GraphicsKind {
+    Media,
+    Canvas,
 }
 
 #[derive(Debug, Clone)]

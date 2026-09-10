@@ -7,8 +7,8 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{
-    InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput, WatermarkLocation,
-    WatermarkTiming,
+    GraphicsKind, InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput,
+    WatermarkLocation, WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
@@ -292,6 +292,8 @@ pub async fn build_watermark_input(
         horizontal_margin_percent: Some(5.0),
         vertical_margin_percent: Some(5.0),
         opacity_percent: watermark.opacity_percent,
+        kind: GraphicsKind::Media,
+        in_point: Duration::ZERO,
         timing: watermark.timing.clone(),
     }
 }
@@ -324,6 +326,7 @@ pub fn build_input(
         },
         subtitle_input: None,
         graphics_inputs: watermark.into_iter().collect(),
+        channel_number: None,
     }
 }
 
