@@ -9,8 +9,8 @@ use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
-    AudioHint, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, ProbeHint,
-    TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
+    AudioHint, GraphicsLayerKind, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks,
+    ProbeHint, TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
@@ -485,8 +485,20 @@ impl ChannelSession {
             |(layer_index, layer)| async move {
                 let input_source = session.playout_source_to_input_source(layer.source.clone())?;
                 let location = playout_location_to_pipeline(&layer.location);
+                let kind = playout_graphics_kind_to_pipeline(&layer.kind);
                 let timing = playout_timing_to_pipeline(layer.timing.as_ref());
                 let probe_result = session.resolve_probe(&layer.source, &input_source).await?;
+
+                let in_point = if let PlayoutItemSource::Local {
+                    in_point_ms: Some(in_point_ms),
+                    ..
+                } = layer.source
+                {
+                    Duration::from_millis(in_point_ms)
+                } else {
+                    Duration::ZERO
+                };
+
                 Ok::<_, ChannelError>(GraphicsInput {
                     layer_index,
                     input_source,
@@ -498,6 +510,8 @@ impl ChannelSession {
                     horizontal_margin_percent: layer.horizontal_margin_percent,
                     vertical_margin_percent: layer.vertical_margin_percent,
                     opacity_percent: layer.opacity_percent,
+                    kind,
+                    in_point,
                     timing,
                 })
             },
@@ -671,6 +685,7 @@ impl ChannelSession {
             },
             subtitle_input,
             graphics_inputs,
+            channel_number: Some(self.channel_config.number().to_owned()),
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
@@ -1341,6 +1356,16 @@ fn playout_location_to_pipeline(value: &WatermarkLocation) -> ffpipeline::input:
         WatermarkLocation::BottomLeft => ffpipeline::input::WatermarkLocation::BottomLeft,
         WatermarkLocation::BottomCenter => ffpipeline::input::WatermarkLocation::BottomCenter,
         WatermarkLocation::BottomRight => ffpipeline::input::WatermarkLocation::BottomRight,
+    }
+}
+
+fn playout_graphics_kind_to_pipeline(
+    value: &Option<GraphicsLayerKind>,
+) -> ffpipeline::input::GraphicsKind {
+    match value {
+        Some(GraphicsLayerKind::Media) => ffpipeline::input::GraphicsKind::Media,
+        Some(GraphicsLayerKind::Canvas) => ffpipeline::input::GraphicsKind::Canvas,
+        None => ffpipeline::input::GraphicsKind::Media,
     }
 }
 
