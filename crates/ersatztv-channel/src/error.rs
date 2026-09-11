@@ -54,6 +54,12 @@ pub enum ChannelError {
     #[error("stream failed: {0}")]
     StreamFailure(String),
 
+    #[error("ffmpeg exited with {status}{}", format_stderr_tail(stderr_tail))]
+    FfmpegFailed {
+        status: String,
+        stderr_tail: Vec<String>,
+    },
+
     #[error("failed to scan for last pts")]
     PtsScannerFailure,
 
@@ -83,4 +89,12 @@ pub enum ChannelError {
 
     #[error("probe hint failure")]
     ProbeHintFailure,
+}
+
+fn format_stderr_tail(stderr_tail: &[String]) -> String {
+    if stderr_tail.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", stderr_tail.join("\n"))
+    }
 }

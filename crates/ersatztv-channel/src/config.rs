@@ -23,6 +23,8 @@ pub struct ChannelConfig {
     pub playout: PlayoutConfig,
     pub ffmpeg: FfmpegConfig,
     pub normalization: NormalizationConfig,
+    #[serde(default)]
+    pub fallback: FallbackConfig,
 
     #[serde(skip)]
     expanded_playout_folder: PathBuf,
@@ -55,6 +57,12 @@ pub struct FfmpegConfig {
     pub preferred_filters: Vec<String>,
     #[serde(default)]
     pub reports_folder: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
+pub struct FallbackConfig {
+    #[serde(default)]
+    pub show_error: bool,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
