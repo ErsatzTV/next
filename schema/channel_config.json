@@ -3,6 +3,12 @@
   "title": "ChannelConfig",
   "type": "object",
   "properties": {
+    "fallback": {
+      "$ref": "#/$defs/FallbackConfig",
+      "default": {
+        "show_error": false
+      }
+    },
     "ffmpeg": {
       "$ref": "#/$defs/FfmpegConfig"
     },
@@ -160,6 +166,17 @@
         }
       },
       "additionalProperties": false
+    },
+    "FallbackConfig": {
+      "description": "Controls the content that replaces scheduled content when there is nothing to play\n(a gap in the playout) or when the scheduled item fails",
+      "type": "object",
+      "properties": {
+        "show_error": {
+          "description": "Burn the reason for the fallback into the fallback video; this is always burned,\nregardless of the normalization subtitle mode",
+          "type": "boolean",
+          "default": false
+        }
+      }
     },
     "FfmpegConfig": {
       "type": "object",
