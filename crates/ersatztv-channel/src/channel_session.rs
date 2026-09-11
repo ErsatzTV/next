@@ -882,6 +882,15 @@ impl ChannelSession {
         Ok(source.probe(&probe_deps).await?)
     }
 
+    /// Expands `{{ENV}}` templates and then stream variables in a source URI.
+    fn expand_source_uri(&self, uri: &str) -> Result<String, ChannelError> {
+        let expanded = expand_template(uri)?;
+        Ok(ersatztv_playout::stream_variables::expand(
+            &expanded,
+            self.channel_config.number(),
+        ))
+    }
+
     fn playout_source_to_input_source(
         &self,
         source: PlayoutItemSource,
@@ -903,7 +912,7 @@ impl ChannelSession {
                 keep_alive,
                 ..
             } => {
-                let expanded_uri = expand_template(&uri)?;
+                let expanded_uri = self.expand_source_uri(&uri)?;
                 let expanded_headers: Vec<String> = headers
                     .unwrap_or_default()
                     .iter()
@@ -926,7 +935,7 @@ impl ChannelSession {
             PlayoutItemSource::Rtsp {
                 uri, timeout_us, ..
             } => {
-                let expanded_uri = expand_template(&uri)?;
+                let expanded_uri = self.expand_source_uri(&uri)?;
 
                 Ok(InputSource::Rtsp(RtspInputSource {
                     uri: expanded_uri,
