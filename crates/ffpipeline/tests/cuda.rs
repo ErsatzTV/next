@@ -76,14 +76,15 @@ async fn pipeline(
 #[tokio::test]
 #[ignore]
 async fn tonemap_hdr(
-    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+    #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
     #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;
     if let Ok(vf) = VideoFormat::from_str(vf_str) {
         run_cuda_test_case(TestCase {
-            fixture_name: "1080p_hevc_10_hdr.ts",
+            fixture_name: src,
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
@@ -152,6 +153,33 @@ async fn tonemap_dv(
 /// 1080p sources at 1920x1080 are the cases that catch it, via the height assertion
 /// in `assert_video`. 10-bit sources fall back to the software overlay, since
 /// `overlay_cuda` is 8-bit only.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn deinterlace(
+    #[values("480p_h264_interlaced.ts", "480p_h264_anamorphic_interlaced.ts")] src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_cuda_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                deinterlace: true,
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: String::from("aac"),
+        })
+        .await;
+    }
+}
+
 #[rstest]
 #[tokio::test]
 #[ignore]

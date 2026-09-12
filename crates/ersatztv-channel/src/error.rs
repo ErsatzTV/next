@@ -69,6 +69,12 @@ pub enum ChannelError {
     #[error("stream failed: {0}")]
     StreamFailure(String),
 
+    #[error("ffmpeg exited with {status}{}", format_stderr_tail(stderr_tail))]
+    FfmpegFailed {
+        status: String,
+        stderr_tail: Vec<String>,
+    },
+
     #[error("last segment path is not valid UTF-8: {0}")]
     PtsScannerPathNotUtf8(String),
 
@@ -98,6 +104,14 @@ pub enum ChannelError {
 
     #[error("probe hint failure")]
     ProbeHintFailure,
+}
+
+fn format_stderr_tail(stderr_tail: &[String]) -> String {
+    if stderr_tail.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", stderr_tail.join("\n"))
+    }
 }
 
 /// Names an io failure at the point the call is made, because neither the

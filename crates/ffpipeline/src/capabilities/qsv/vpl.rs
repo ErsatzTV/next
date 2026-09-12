@@ -2,11 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use libvpl_sys::*;
 
-use crate::capabilities::qsv::{QsvCapabilities, QsvPixelFormat};
+use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC, legacy};
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
 
-// byte offsets of dec and enc inside mfxImplDescription.
+// byte offsets of dec and enc inside mfxImplDescription (API 2.x, x86_64)
+const IMPL_DESC_API_VERSION_OFFSET: usize = 12;
 const IMPL_DESC_DEC_OFFSET: usize = 472;
 const IMPL_DESC_ENC_OFFSET: usize = 504;
 const IMPL_DESC_VPP_OFFSET: usize = 536;
@@ -16,6 +17,8 @@ impl QsvCapabilities {
         let mut supported_decoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         let mut supported_encoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         let mut vpp_pixel_formats = HashSet::new();
+        let mut vpp_filters = HashSet::new();
+        let mut runtime_api = None;
 
         let vpl = VplLib::load()
             .map_err(|e| FFPipelineError::QsvCapabilitiesError(format!("libvpl not found: {e}")))?;
@@ -51,6 +54,8 @@ impl QsvCapabilities {
                 // dec and enc are embedded at fixed offsets inside mfxImplDescription
                 // we access them directly by byte offset to avoid defining the full 648-byte struct
                 let base = hdl as *const u8;
+                let api = &*(base.add(IMPL_DESC_API_VERSION_OFFSET) as *const mfxVersion);
+                runtime_api = Some((api.Major, api.Minor));
                 let dec = &*(base.add(IMPL_DESC_DEC_OFFSET) as *const mfxDecoderDescription);
                 let enc = &*(base.add(IMPL_DESC_ENC_OFFSET) as *const mfxEncoderDescription);
                 let vpp = &*(base.add(IMPL_DESC_VPP_OFFSET) as *const mfxVPPDescription);
@@ -92,7 +97,7 @@ impl QsvCapabilities {
                     }
                 }
 
-                vpp_pixel_formats = walk_filters_for_pixel_formats(vpp);
+                (vpp_pixel_formats, vpp_filters) = walk_filters(vpp);
 
                 (vpl.MFXDispReleaseImplDescription)(loader, hdl);
             }
@@ -100,10 +105,24 @@ impl QsvCapabilities {
             (vpl.MFXUnload)(loader);
         }
 
+        // the dispatcher reports a legacy runtime with an empty capability tree,
+        // because MFXQueryImplsDescription exists only in API 2.x runtimes
+        if supported_decoders.is_empty() && supported_encoders.is_empty() {
+            log::debug!(
+                "[qsv] VPL reported no codecs; falling back to a legacy Media SDK capability query"
+            );
+
+            if let Some(capabilities) = legacy::probe(&vpl) {
+                return Ok(capabilities);
+            }
+        }
+
         Ok(QsvCapabilities {
             supported_decoders,
             supported_encoders,
             vpp_pixel_formats,
+            vpp_filters,
+            runtime_api,
         })
     }
 }
@@ -185,14 +204,16 @@ fn is_10bit_profile(codec_id: u32, profile: u32) -> bool {
     }
 }
 
-fn walk_filters_for_pixel_formats(vpp: &mfxVPPDescription) -> HashSet<QsvPixelFormat> {
+fn walk_filters(vpp: &mfxVPPDescription) -> (HashSet<QsvFourCC>, HashSet<QsvFourCC>) {
     let mut vpp_pixel_formats = HashSet::new();
+    let mut vpp_filters = HashSet::new();
     if vpp.NumFilters == 0 || vpp.Filters.is_null() {
-        return vpp_pixel_formats;
+        return (vpp_pixel_formats, vpp_filters);
     }
 
     for i in 0..vpp.NumFilters as usize {
         let filter = unsafe { &*vpp.Filters.add(i) };
+        vpp_filters.insert(QsvFourCC(filter.FilterFourCC));
         if filter.NumMemTypes == 0 || filter.MemDesc.is_null() {
             continue;
         }
@@ -204,18 +225,18 @@ fn walk_filters_for_pixel_formats(vpp: &mfxVPPDescription) -> HashSet<QsvPixelFo
             }
             for k in 0..memdesc.NumInFormats as usize {
                 let fmt = unsafe { &*memdesc.Formats.add(k) };
-                vpp_pixel_formats.insert(QsvPixelFormat(fmt.InFormat));
+                vpp_pixel_formats.insert(QsvFourCC(fmt.InFormat));
                 if fmt.NumOutFormat == 0 || fmt.OutFormats.is_null() {
                     continue;
                 }
 
                 for l in 0..fmt.NumOutFormat as usize {
                     let out = unsafe { &*fmt.OutFormats.add(l) };
-                    vpp_pixel_formats.insert(QsvPixelFormat(*out));
+                    vpp_pixel_formats.insert(QsvFourCC(*out));
                 }
             }
         }
     }
 
-    vpp_pixel_formats
+    (vpp_pixel_formats, vpp_filters)
 }

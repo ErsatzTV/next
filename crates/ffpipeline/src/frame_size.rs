@@ -37,6 +37,10 @@ impl FromStr for FrameSize {
 }
 
 impl FrameSize {
+    pub(crate) fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.height)
+    }
+
     pub(crate) fn square_pixel_size_contain(&self, frame_state: &FrameState) -> FrameSize {
         let mut source_width = frame_state.size.width as f64;
         let source_height = frame_state.size.height as f64;

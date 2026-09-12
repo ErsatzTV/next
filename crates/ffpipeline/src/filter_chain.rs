@@ -4,7 +4,7 @@ use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp, OverlaySource};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
 };
@@ -105,10 +105,12 @@ impl FilterChain {
         let mut surfaces = SurfaceSet::new();
 
         // eagerly convert to 8-bit if it allows us to use a hardware overlay
+        // skip hdr input because tonemap needs 10-bit frames and outputs 8-bit frames
         if let Some(a) = accel.as_ref()
             && let Some(pf) = encoder_pixel_format
             && pf.bit_depth() == 8
             && initial_state.pixel_format.bit_depth() > 8
+            && initial_state.hdr_format == HdrFormat::None
         {
             let initial_state_8bit = FrameState {
                 pixel_format: *pf,
@@ -477,19 +479,6 @@ impl FilterChain {
     }
 
     pub(crate) fn optimize(&mut self) {
-        // swap software scale before software tone map to reduce
-        // the amount of data that needs to be tone mapped
-        if let Some(tonemap_index) = self
-            .filters
-            .iter()
-            .position(|f| matches!(f, PipelineFilter::Video(VideoFilter::ToneMap(_))))
-            && let Some(PipelineFilter::Video(VideoFilter::Scale(_))) =
-                self.filters.get(tonemap_index + 1)
-        {
-            log::debug!("swapping software scale filter before software tonemap filter");
-            self.filters.swap(tonemap_index, tonemap_index + 1);
-        }
-
         // remove DV5 workaround with libplacebo
         if self.filters.iter().any(|f| {
             matches!(
@@ -524,7 +513,9 @@ impl FilterChain {
                     continue;
                 }
 
-                if let Some(fused) = Self::try_fuse_cuda(&self.filters[i], &self.filters[j]) {
+                let fused = Self::try_fuse_cuda(&self.filters[i], &self.filters[j])
+                    .or_else(|| Self::try_fuse_qsv(&self.filters[i], &self.filters[j]));
+                if let Some(fused) = fused {
                     self.filters[i] = fused;
                     self.filters.remove(j);
                     changed = true;
@@ -541,7 +532,7 @@ impl FilterChain {
 
     /// try to fuse consecutive scale_cuda (format, resize) into a single scale_cuda kernel
     fn try_fuse_cuda(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
-        use VideoFilter::{FormatCuda, ScaleCuda};
+        use VideoFilter::{FormatCuda, LibplaceboCuda, ScaleCuda};
         let (PipelineFilter::Video(va), PipelineFilter::Video(vb)) = (a, b) else {
             return None;
         };
@@ -559,8 +550,33 @@ impl FilterChain {
                     ..s.clone()
                 }),
             )),
+            // only fuse a tonemap followed by a downscale
+            (LibplaceboCuda(l), ScaleCuda(s))
+                if s.size
+                    .is_some_and(|size| size.pixel_count() < l.input_size.pixel_count())
+                    && s.format.is_none_or(|f| f == l.format) =>
+            {
+                Some(PipelineFilter::Video(LibplaceboCuda(
+                    crate::accel::cuda::LibplaceboCuda {
+                        size: s.size,
+                        ..l.clone()
+                    },
+                )))
+            }
             _ => None,
         }
+    }
+
+    fn try_fuse_qsv(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
+        let (
+            PipelineFilter::Video(VideoFilter::VppQsv(va)),
+            PipelineFilter::Video(VideoFilter::VppQsv(vb)),
+        ) = (a, b)
+        else {
+            return None;
+        };
+        va.fuse(vb)
+            .map(|fused| PipelineFilter::Video(VideoFilter::VppQsv(fused)))
     }
 
     pub(crate) fn build(
@@ -835,6 +851,7 @@ mod tests {
             hwaccels: HashSet::new(),
             video_filters,
             preferred_filters: HashMap::new(),
+            video_filter_options: HashMap::new(),
         }
     }
 
@@ -1578,7 +1595,6 @@ mod tests {
             size: None,
             scaling_mode: ScalingMode::Stretch,
             input_is_anamorphic: false,
-            force_original_aspect_ratio: None,
         }
         .into();
         assert!(upload.as_arg().is_none());

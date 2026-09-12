@@ -219,6 +219,7 @@ async fn build_items(
                                     display_aspect_ratio: v.display_aspect_ratio.clone(),
                                     sample_aspect_ratio: v.sample_aspect_ratio.clone(),
                                     dv_profile: v.dv_profile,
+                                    has_hdr10_metadata: Some(v.color_params.has_hdr10_metadata),
                                 })
                             } else {
                                 None

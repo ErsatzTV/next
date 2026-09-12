@@ -16,12 +16,15 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
-use crate::input::{FfmpegInputArgs, GraphicsInput, InputSettings, InputSource};
+use crate::input::{
+    FfmpegInputArgs, FfmpegInputRequestContext, GraphicsInput, GraphicsKind, GraphicsLocation,
+    InputSettings, InputSource,
+};
 use crate::output_option::OutputOption;
 use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
 };
-use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
+use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOverlay};
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -185,7 +188,10 @@ impl PixelFormat {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HdrFormat {
     None,
+    /// PQ without metadata
     Pq,
+    /// PQ with metadata
+    Hdr10,
     Hlg,
     Dv5,
 }
@@ -269,6 +275,7 @@ pub struct Pipeline {
     output_options: Vec<OutputOption>,
     env_vars: Vec<EnvironmentVariable>,
 
+    input_request_context: FfmpegInputRequestContext,
     output_context: OutputContext,
 }
 
@@ -345,6 +352,9 @@ impl Pipeline {
             video_stream.color_params.color_transfer.as_deref(),
         ) {
             (Some(5), _) => HdrFormat::Dv5,
+            (_, Some("smpte2084")) if video_stream.color_params.has_hdr10_metadata => {
+                HdrFormat::Hdr10
+            }
             (_, Some("smpte2084")) => HdrFormat::Pq,
             (_, Some("arib-std-b67")) => HdrFormat::Hlg,
             _ => HdrFormat::None,
@@ -398,16 +408,27 @@ impl Pipeline {
         filters.extend([
             PipelineFilter::Video(LoopFilter { is_still_image }.into()),
             PipelineFilter::Video(Dv5WorkaroundFilter.into()),
-            PipelineFilter::Video(
-                ToneMapFilter {
-                    algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
-                    output_format: match final_output_settings.bit_depth {
-                        Some(10) => PixelFormat::Yuv420p10le,
-                        _ => PixelFormat::Yuv420p,
-                    },
-                }
-                .into(),
-            ),
+        ]);
+
+        // tonemap first when decoded with vulkan (for libplacebo), or when not downscaling
+        let source = initial_state.size;
+        let tonemap_first = video_decoder.output_surface() == FrameSurface::Vulkan
+            || final_output_settings
+                .video_size
+                .is_none_or(|target| target.pixel_count() >= source.pixel_count());
+
+        let tonemap = PipelineFilter::Video(
+            ToneMapFilter {
+                algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
+                output_format: match final_output_settings.bit_depth {
+                    Some(10) => PixelFormat::Yuv420p10le,
+                    _ => PixelFormat::Yuv420p,
+                },
+            }
+            .into(),
+        );
+
+        let geometry_filters = [
             PipelineFilter::Video(
                 DeinterlaceFilter {
                     filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
@@ -425,7 +446,6 @@ impl Pipeline {
                     size: final_output_settings.video_size,
                     scaling_mode: final_output_settings.scaling_mode,
                     input_is_anamorphic: initial_state.is_anamorphic,
-                    force_original_aspect_ratio: None,
                 }
                 .into(),
             ),
@@ -443,7 +463,15 @@ impl Pipeline {
                 }
                 .into(),
             ),
-        ]);
+        ];
+
+        if tonemap_first {
+            filters.push(tonemap);
+            filters.extend(geometry_filters);
+        } else {
+            filters.extend(geometry_filters);
+            filters.push(tonemap);
+        }
 
         let mut inputs = vec![
             PipelineInput::Audio {
@@ -538,7 +566,58 @@ impl Pipeline {
                     graphics_input.layer_index,
                 ));
             };
-            let extra_input_args = if graphics_stream.is_still_image() {
+            if graphics_input.kind == GraphicsKind::Canvas {
+                // location is required by the schema, so only a non-default value is worth naming
+                let ignored = [
+                    (
+                        !matches!(graphics_input.location, GraphicsLocation::TopLeft),
+                        "location",
+                    ),
+                    (graphics_input.width_percent.is_some(), "width_percent"),
+                    (
+                        graphics_input.within_source_content.is_some(),
+                        "within_source_content",
+                    ),
+                    (
+                        graphics_input.horizontal_margin_percent.is_some(),
+                        "horizontal_margin_percent",
+                    ),
+                    (
+                        graphics_input.vertical_margin_percent.is_some(),
+                        "vertical_margin_percent",
+                    ),
+                    (graphics_input.opacity_percent.is_some(), "opacity_percent"),
+                    (graphics_input.timing.is_some(), "timing"),
+                ]
+                .into_iter()
+                .filter_map(|(present, name)| present.then_some(name))
+                .collect::<Vec<_>>();
+
+                if !ignored.is_empty() {
+                    log::warn!(
+                        "ignoring {} on canvas graphics layer {}",
+                        ignored.join(", "),
+                        graphics_input.layer_index
+                    );
+                }
+            }
+
+            let extra_input_args = if graphics_input.kind == GraphicsKind::Canvas {
+                // local canvas shouldn't restart from beginning after bursting
+                let seek = input_settings.playout_offset + graphics_input.in_point;
+                if seek > Duration::ZERO
+                    && matches!(graphics_input.input_source, InputSource::Local(_))
+                {
+                    args![
+                        "-ss",
+                        format!("{}ms", seek.as_millis()),
+                        "-t",
+                        format!("{}ms", duration.as_millis())
+                    ]
+                } else {
+                    args!["-t", format!("{}ms", duration.as_millis())]
+                }
+            } else if graphics_stream.is_still_image() {
                 // decode a single frame; the loop filter below repeats it *after* scaling, so
                 // decode and scale happen once instead of once per output frame
                 args![
@@ -589,6 +668,21 @@ impl Pipeline {
                 .as_ref()
                 .unwrap_or(&initial_state.size);
 
+            // a canvas is authored at the output size; a mismatch means the playout metadata is
+            // stale, so scale rather than fail the whole item
+            let canvas_needs_scale = graphics_input.kind == GraphicsKind::Canvas
+                && video_size != &secondary_initial_state.size;
+            if canvas_needs_scale {
+                log::warn!(
+                    "canvas graphics layer {} is {}x{} but output is {}x{}; scaling in software",
+                    graphics_input.layer_index,
+                    secondary_initial_state.size.width,
+                    secondary_initial_state.size.height,
+                    video_size.width,
+                    video_size.height
+                );
+            }
+
             let source_content_size = match final_output_settings.scaling_mode {
                 ScalingMode::ScaleAndPad => video_size.square_pixel_size_contain(&initial_state),
                 ScalingMode::Crop | ScalingMode::Stretch => *video_size,
@@ -599,36 +693,62 @@ impl Pipeline {
                 final_output_settings.video_size,
             );
 
-            let location =
-                Some(graphics_input.frame_location(&source_content_size, &scaled_size, video_size));
+            let location = if graphics_input.kind == GraphicsKind::Canvas {
+                Some(FramePoint { x: 0, y: 0 })
+            } else {
+                Some(graphics_input.frame_location(&source_content_size, &scaled_size, video_size))
+            };
 
-            let fade_filters = FadeFilter::for_graphics(
-                graphics_input.timing.as_ref(),
-                input_settings.start,
-                input_settings.playout_offset,
-                duration,
-            );
+            let fade_filters = if graphics_input.kind == GraphicsKind::Canvas {
+                vec![]
+            } else {
+                FadeFilter::for_graphics(
+                    graphics_input.timing.as_ref(),
+                    input_settings.start,
+                    input_settings.playout_offset,
+                    duration,
+                )
+            };
 
-            let mut secondary_filters: Vec<VideoFilter> = vec![
-                ColorChannelMixerFilter {
-                    alpha: graphics_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
-                }
-                .into(),
-                FormatFilter {
-                    format: match secondary_initial_state.pixel_format.bit_depth() {
-                        10 => PixelFormat::Yuva420p10le,
-                        _ => PixelFormat::Yuva420p,
-                    },
-                }
-                .into(),
-                ScaleFilter {
-                    size: Some(scaled_size),
-                    scaling_mode: ScalingMode::ScaleAndPad,
-                    input_is_anamorphic: false,
-                    force_original_aspect_ratio: None,
-                }
-                .into(),
-            ];
+            let format_filter: VideoFilter = FormatFilter {
+                format: match secondary_initial_state.pixel_format.bit_depth() {
+                    10 => PixelFormat::Yuva420p10le,
+                    _ => PixelFormat::Yuva420p,
+                },
+            }
+            .into();
+
+            let mut secondary_filters: Vec<VideoFilter> =
+                if graphics_input.kind == GraphicsKind::Canvas {
+                    let mut filters = vec![format_filter];
+                    if canvas_needs_scale {
+                        // stretch, not contain: the canvas has to stay exactly the output size or
+                        // the (0,0) overlay would pin a smaller canvas to the top left corner
+                        filters.push(
+                            ScaleFilter {
+                                size: Some(*video_size),
+                                scaling_mode: ScalingMode::Stretch,
+                                input_is_anamorphic: false,
+                            }
+                            .into(),
+                        );
+                    }
+                    filters
+                } else {
+                    vec![
+                        ColorChannelMixerFilter {
+                            alpha: graphics_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
+                        }
+                        .into(),
+                        format_filter,
+                        ScaleFilter {
+                            size: Some(scaled_size),
+                            scaling_mode: ScalingMode::ScaleAndPad,
+                            input_is_anamorphic: false,
+                        }
+                        .into(),
+                    ]
+                };
 
             // a still image is decoded as a single frame; only fades need it repeated (they act on
             // frame timestamps). otherwise the overlay's repeatlast holds it, which keeps the
@@ -689,6 +809,17 @@ impl Pipeline {
             }
         }
 
+        let input_request_context = FfmpegInputRequestContext {
+            channel_number: input_settings.channel_number.clone(),
+            playout_offset: input_settings.playout_offset,
+            duration,
+            frame_rate: final_output_settings
+                .frame_rate
+                .as_ref()
+                .map(|fr| fr.r_frame_rate.clone())
+                .unwrap_or(output_context.media_frame_rate.r_frame_rate.clone()),
+        };
+
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
             accel: final_output_settings.accel.clone(),
@@ -726,6 +857,7 @@ impl Pipeline {
                 OutputOption::FrameRate(final_output_settings.frame_rate.clone()),
                 OutputOption::Format(final_output_settings.format),
             ],
+            input_request_context,
             output_context,
             env_vars,
         })
@@ -822,6 +954,13 @@ impl Pipeline {
 
         let mut input_paths: Vec<&str> = Vec::new();
 
+        // audio decoder options must come before their input's `-i`.
+        // the video input writes that `-i` when both share a file.
+        let audio_decoder_args: Option<(&str, ArgVec)> = self.inputs.iter().find_map(|i| match i {
+            PipelineInput::Audio { path, decoder, .. } => Some((path.as_str(), decoder.as_arg())),
+            _ => None,
+        });
+
         let mut sorted_inputs: Vec<&PipelineInput> = self.inputs.iter().collect();
         sorted_inputs.sort_by_key(|i| i.sort_order());
 
@@ -842,6 +981,12 @@ impl Pipeline {
 
                     result.extend(decoder.as_arg());
 
+                    if let Some((audio_path, audio_args)) = &audio_decoder_args
+                        && *audio_path == path.as_str()
+                    {
+                        result.extend(audio_args.to_owned());
+                    }
+
                     let video_input_index = input_paths.iter().position(|p| p == path).unwrap_or(0);
                     video_label = format!("{}:{}", video_input_index, index);
 
@@ -854,7 +999,6 @@ impl Pipeline {
                     }
 
                     result.extend(input_source.args_for_input());
-                    // TODO: if audio has same input and args, should use here
 
                     result.extend(args!["-i", path.to_owned()]);
                 }
@@ -874,6 +1018,7 @@ impl Pipeline {
                         // TODO: seek?
 
                         result.extend(input_source.args_for_input());
+
                         result.extend(args!["-i", path.to_owned()]);
                     }
 
@@ -895,6 +1040,7 @@ impl Pipeline {
                         }
 
                         result.extend(input_source.args_for_input());
+
                         result.extend(args!["-i", path.to_owned()]);
                     }
 
@@ -910,7 +1056,16 @@ impl Pipeline {
                     extra_input_args,
                 } => {
                     input_paths.push(path.as_str());
-                    result.extend(input.input_source.args_for_input());
+
+                    if input.kind == GraphicsKind::Canvas {
+                        result.extend(
+                            input
+                                .input_source
+                                .args_for_input_with_context(&self.input_request_context),
+                        );
+                    } else {
+                        result.extend(input.input_source.args_for_input());
+                    }
                     result.extend(extra_input_args.clone());
                     result.extend(args!["-i", path.to_owned()]);
                     let graphics_input_index = input_paths.len() - 1;
@@ -983,5 +1138,341 @@ mod tests {
             Some("videotoolbox")
         );
         assert_eq!(FrameSurface::System.device_name(), None);
+    }
+
+    fn multichannel_ac3_input(path: &str) -> InputSettings {
+        let probe_result = crate::probe::ProbeResult {
+            path: path.to_owned(),
+            streams: vec![
+                crate::probe::ProbeResultStream::Video(Box::new(
+                    crate::probe::ProbeResultVideoStream {
+                        stream_index: 0,
+                        codec: "h264".to_owned(),
+                        codec_type: crate::probe::CodecType::Video,
+                        dv_profile: None,
+                        profile: "main".to_owned(),
+                        height: Some(480),
+                        width: Some(720),
+                        frame_rate: FrameRate::parse("30000/1001"),
+                        sample_aspect_ratio: None,
+                        display_aspect_ratio: None,
+                        pix_fmt: "yuv420p".to_owned(),
+                        color_params: Default::default(),
+                        field_order: None,
+                    },
+                )),
+                crate::probe::ProbeResultStream::Audio(crate::probe::ProbeResultAudioStream {
+                    stream_index: 1,
+                    codec: "ac3".to_owned(),
+                    channels: 6,
+                }),
+            ],
+            duration: Some(Duration::from_secs(60)),
+            format_name: Some("matroska".to_owned()),
+        };
+
+        let probed_input = |probe_result: crate::probe::ProbeResult| crate::input::ProbedInput {
+            input_source: InputSource::Local(crate::input::LocalInputSource {
+                path: path.to_owned(),
+            }),
+            probe_result,
+            in_point: Duration::ZERO,
+            out_point: Duration::from_secs(30),
+            stream_index: None,
+        };
+
+        InputSettings {
+            start: time::OffsetDateTime::now_utc(),
+            playout_offset: Duration::ZERO,
+            audio_input: probed_input(probe_result.clone()),
+            video_input: probed_input(probe_result),
+            subtitle_input: None,
+            graphics_inputs: Vec::new(),
+            channel_number: None,
+        }
+    }
+
+    fn stereo_output() -> OutputSettings {
+        OutputSettings {
+            audio: crate::output_settings::AudioOutputSettings {
+                format: Some(AudioFormat::Aac),
+                bitrate: Some(Kbps(320)),
+                buffer: Some(Kbps(640)),
+                channels: Some(2),
+                sample_rate: Some(Hz(48000)),
+                loudness: None,
+            },
+            video_format: Some(VideoFormat::H264),
+            bit_depth: Some(8),
+            video_bitrate: Some(Kbps(2000)),
+            video_buffer: Some(Kbps(4000)),
+            video_size: Some(FrameSize {
+                width: 1280,
+                height: 720,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+            filter_options: VideoFilterOptions::default(),
+            deinterlace: true,
+            accel: None,
+            format: crate::output_format::OutputFormat::Hls {
+                playlist: "out.m3u8".to_owned(),
+                segment_template: "live%06d.ts".to_owned(),
+                troubleshoot: false,
+            },
+            pts_offset: None,
+            realtime: false,
+            is_live: false,
+            frame_rate: None,
+            subtitle_mode: SubtitleMode::Burn,
+            fonts_folder: None,
+            subtitle_force_style: None,
+            reports_folder: None,
+            report_id: None,
+        }
+    }
+
+    #[test]
+    fn ac3_downmix_is_emitted_when_audio_shares_the_video_input() {
+        let path = "/tmp/shared.mkv";
+        let pipeline = Pipeline::full(
+            &FfmpegInfo::default(),
+            multichannel_ac3_input(path),
+            stereo_output(),
+        )
+        .unwrap();
+
+        let args = pipeline.args();
+        let downmix = args.iter().position(|a| a == "-downmix").expect("-downmix");
+        let input = args.iter().position(|a| a == "-i").expect("-i");
+
+        assert_eq!(args[downmix + 1], "stereo");
+        assert!(downmix < input, "-downmix must precede -i: {args:?}");
+        assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1);
+    }
+    fn canvas_input(source: InputSource) -> GraphicsInput {
+        let mut probe = multichannel_ac3_input("canvas.nut")
+            .video_input
+            .probe_result;
+        probe.path = source.input_path().unwrap();
+        probe.format_name = Some("nut".to_owned());
+        probe
+            .streams
+            .retain(|s| matches!(s, crate::probe::ProbeResultStream::Video(_)));
+        if let crate::probe::ProbeResultStream::Video(video) = &mut probe.streams[0] {
+            video.codec = "ffv1".to_owned();
+            video.pix_fmt = "bgra".to_owned();
+            video.width = Some(1280);
+            video.height = Some(720);
+        }
+        GraphicsInput {
+            layer_index: 0,
+            input_source: source,
+            probe_result: probe,
+            stream_index: None,
+            kind: GraphicsKind::Canvas,
+            in_point: Duration::from_secs(3),
+            // Canvas must ignore native graphics placement, opacity and timing.
+            location: crate::input::GraphicsLocation::BottomRight,
+            width_percent: Some(10.0),
+            within_source_content: Some(true),
+            horizontal_margin_percent: Some(5.0),
+            vertical_margin_percent: Some(5.0),
+            opacity_percent: Some(0.0),
+            timing: Some(crate::input::GraphicsTiming::Periodic(
+                crate::input::PeriodicTiming {
+                    clock: crate::input::PeriodicClock::Content,
+                    frequency_ms: 10000,
+                    phase_offset_ms: None,
+                    disable_after_ms: None,
+                    fade_ms: Some(1000),
+                    hold_ms: 2000,
+                },
+            )),
+        }
+    }
+
+    #[test]
+    fn canvas_sized_for_another_resolution_is_scaled_instead_of_failing() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        let mut graphics = canvas_input(InputSource::Local(crate::input::LocalInputSource {
+            path: "canvas.nut".to_owned(),
+        }));
+        if let crate::probe::ProbeResultStream::Video(video) = &mut graphics.probe_result.streams[0]
+        {
+            video.width = Some(1920);
+            video.height = Some(1080);
+        }
+        input.graphics_inputs.push(graphics);
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+        pipeline.optimize();
+        let filter = pipeline
+            .args()
+            .windows(2)
+            .filter(|a| a[0] == "-filter_complex")
+            .map(|a| a[1].as_ref())
+            .collect::<Vec<_>>()
+            .join(";");
+        assert!(filter.contains("scale=1280:720"), "{filter}");
+        assert!(filter.contains("overlay=x=0:y=0"), "{filter}");
+    }
+
+    #[test]
+    fn canvas_local_seeks_to_schedule_offset_plus_source_in_point() {
+        for offset in [0, 44, 88] {
+            let mut input = multichannel_ac3_input("main.mkv");
+            input.playout_offset = Duration::from_secs(offset);
+            input.graphics_inputs.push(canvas_input(InputSource::Local(
+                crate::input::LocalInputSource {
+                    path: "canvas.nut".to_owned(),
+                },
+            )));
+            let mut pipeline =
+                Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+            pipeline.optimize();
+            let args = pipeline.args();
+            let canvas = args.iter().position(|a| a == "canvas.nut").unwrap();
+            assert_eq!(
+                args[canvas - 5..canvas]
+                    .iter()
+                    .map(|a| a.as_ref())
+                    .collect::<Vec<_>>(),
+                [
+                    "-ss",
+                    &format!("{}ms", (offset + 3) * 1000),
+                    "-t",
+                    "30000ms",
+                    "-i"
+                ]
+            );
+            assert!(
+                !args
+                    .iter()
+                    .any(|a| matches!(a.as_ref(), "-stream_loop" | "-ignore_loop" | "-framerate"))
+            );
+            let filter = args
+                .windows(2)
+                .filter(|a| a[0] == "-filter_complex")
+                .map(|a| a[1].as_ref())
+                .collect::<Vec<_>>()
+                .join(";");
+            assert!(filter.contains("overlay=x=0:y=0"), "{filter}");
+            assert!(
+                !filter.contains("fade=")
+                    && !filter.contains("colorchannelmixer")
+                    && !filter.contains("loop="),
+                "{filter}"
+            );
+        }
+    }
+
+    #[test]
+    fn canvas_http_headers_use_process_context_without_seeking() {
+        use crate::input::{HttpInputOptions, HttpInputSource};
+        let source = InputSource::Http(HttpInputSource {
+            uri: "http://localhost/canvas".to_owned(),
+            options: HttpInputOptions {
+                headers: vec!["Authorization: Bearer test".to_owned()],
+                ..Default::default()
+            },
+        });
+        // Probing/extraction retain only configured headers.
+        let probe_args = source.args_for_input().join(" ");
+        assert!(probe_args.contains("Authorization: Bearer test"));
+        assert!(!probe_args.contains("x-etv-"));
+        for offset in [0, 44, 88] {
+            for override_rate in [None, Some(FrameRate::parse("25/1"))] {
+                let mut input = multichannel_ac3_input("main.mkv");
+                input.channel_number = Some("12.1".to_owned());
+                input.playout_offset = Duration::from_secs(offset);
+                input.graphics_inputs.push(canvas_input(source.clone()));
+                let mut output = stereo_output();
+                output.frame_rate = override_rate.clone();
+                let pipeline = Pipeline::full(&FfmpegInfo::default(), input, output).unwrap();
+                let args = pipeline.args();
+                let headers = args.windows(2).find(|a| a[0] == "-headers").unwrap()[1].as_ref();
+                let expected_rate = override_rate
+                    .as_ref()
+                    .map_or("30000/1001", |r| r.r_frame_rate.as_str());
+                assert_eq!(
+                    headers,
+                    format!(
+                        "Authorization: Bearer test\r\nx-etv-channel:12.1\r\nx-etv-offset-ms:{}\r\nx-etv-duration-ms:30000\r\nx-etv-frame-rate:{expected_rate}\r\n",
+                        offset * 1000
+                    )
+                );
+                assert_eq!(args.iter().filter(|a| *a == "-headers").count(), 1);
+                assert!(!args.iter().any(|a| matches!(
+                    a.as_ref(),
+                    "-ss" | "-stream_loop" | "-framerate" | "-ignore_loop"
+                )));
+                let canvas = args
+                    .iter()
+                    .position(|a| a == "http://localhost/canvas")
+                    .unwrap();
+                assert_eq!(
+                    args[canvas - 3..canvas]
+                        .iter()
+                        .map(|a| a.as_ref())
+                        .collect::<Vec<_>>(),
+                    ["-t", "30000ms", "-i"]
+                );
+            }
+        }
+    }
+    #[test]
+    fn contextual_headers_reach_only_canvas_http_inputs() {
+        use crate::input::{HttpInputOptions, HttpInputSource};
+        let http = |uri: &str| {
+            InputSource::Http(HttpInputSource {
+                uri: uri.to_owned(),
+                options: HttpInputOptions::default(),
+            })
+        };
+        let mut input = multichannel_ac3_input("http://localhost/video");
+        input.video_input.input_source = http("http://localhost/video");
+        input.audio_input.input_source = http("http://localhost/audio");
+        input.audio_input.probe_result.path = "http://localhost/audio".to_owned();
+        // Media seeks include a source in-point; headers must report schedule time only.
+        input.video_input.in_point = Duration::from_secs(54);
+        input.video_input.out_point = Duration::from_secs(98);
+        input.audio_input.in_point = Duration::from_secs(54);
+        input.audio_input.out_point = Duration::from_secs(98);
+        input.playout_offset = Duration::from_secs(44);
+        input.channel_number = Some("7".to_owned());
+        let mut subtitle = multichannel_ac3_input("http://localhost/subtitle").video_input;
+        subtitle.input_source = http("http://localhost/subtitle");
+        subtitle.probe_result.streams.truncate(1);
+        if let crate::probe::ProbeResultStream::Video(video) = &mut subtitle.probe_result.streams[0]
+        {
+            video.codec_type = crate::probe::CodecType::Subtitle;
+            video.codec = "hdmv_pgs_subtitle".to_owned();
+        }
+        input.subtitle_input = Some(subtitle);
+        input
+            .graphics_inputs
+            .push(canvas_input(http("http://localhost/canvas")));
+        let pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+        let args = pipeline.args();
+        let mut inputs = 0;
+        for group in args.split_inclusive(|a| a.starts_with("http://localhost/")) {
+            if !group
+                .last()
+                .is_some_and(|a| a.starts_with("http://localhost/"))
+            {
+                continue;
+            }
+            inputs += 1;
+            let headers: Vec<_> = group.windows(2).filter(|a| a[0] == "-headers").collect();
+            if group.last().is_some_and(|a| a.ends_with("/canvas")) {
+                assert_eq!(headers.len(), 1, "{group:?}");
+                assert_eq!(
+                    headers[0][1],
+                    "x-etv-channel:7\r\nx-etv-offset-ms:44000\r\nx-etv-duration-ms:44000\r\nx-etv-frame-rate:30000/1001\r\n"
+                );
+            } else {
+                assert!(headers.is_empty(), "{group:?}");
+            }
+        }
+        assert_eq!(inputs, 4);
     }
 }

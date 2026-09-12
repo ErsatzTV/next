@@ -20,6 +20,10 @@ static KNOWN_FILTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         .collect::<Vec<&str>>()
 });
 
+/// filter presence alone cannot tell a patched build from upstream, so these
+/// filters also get their options probed
+static OPTION_PROBED_FILTERS: &[KnownVideoFilter] = &[KnownVideoFilter::VppQsv];
+
 #[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
 pub enum KnownHardwareAccel {
     #[strum(serialize = "cuda")]
@@ -51,8 +55,6 @@ pub enum KnownVideoFilter {
     Bwdif,
     #[strum(serialize = "bwdif_cuda")]
     BwdifCuda,
-    #[strum(serialize = "deinterlace_qsv")]
-    DeinterlaceQsv,
     #[strum(serialize = "deinterlace_vaapi")]
     DeinterlaceVaapi,
     #[strum(serialize = "libplacebo")]
@@ -98,6 +100,7 @@ pub struct FfmpegInfo {
     pub(crate) hwaccels: HashSet<String>,
     pub(crate) video_filters: HashSet<String>,
     pub(crate) preferred_filters: HashMap<String, usize>,
+    pub(crate) video_filter_options: HashMap<String, HashSet<String>>,
 }
 
 impl FfmpegInfo {
@@ -117,10 +120,20 @@ impl FfmpegInfo {
             }
         }
 
+        let mut video_filter_options: HashMap<String, HashSet<String>> = HashMap::new();
+        for filter in OPTION_PROBED_FILTERS {
+            let name = filter.to_string();
+            if video_filters.contains(&name) {
+                let options = Self::load_video_filter_options(path, &name).await?;
+                video_filter_options.insert(name, options);
+            }
+        }
+
         Ok(FfmpegInfo {
             hwaccels,
             video_filters,
             preferred_filters: preferred,
+            video_filter_options,
         })
     }
 
@@ -131,6 +144,13 @@ impl FfmpegInfo {
 
     pub fn has_video_filter(&self, filter: &KnownVideoFilter) -> bool {
         self.video_filters.contains(&filter.to_string())
+    }
+
+    /// always false for filters not in [`OPTION_PROBED_FILTERS`]
+    pub fn has_video_filter_option(&self, filter: &KnownVideoFilter, option: &str) -> bool {
+        self.video_filter_options
+            .get(&filter.to_string())
+            .is_some_and(|options| options.contains(option))
     }
 
     /// Returns the "best" known filter from the inputted set. "Best" in this case is defined
@@ -219,6 +239,40 @@ impl FfmpegInfo {
         Ok(accels)
     }
 
+    async fn load_video_filter_options(
+        path: &Path,
+        filter: &str,
+    ) -> Result<HashSet<String>, FFPipelineError> {
+        let output = Command::new(path)
+            .args(["-hide_banner", "-h", &format!("filter={filter}")])
+            .output()
+            .await
+            .map_err(|_| {
+                FFPipelineError::FfmpegCapabilitiesError(format!("filter options: {filter}"))
+            })?;
+
+        Ok(Self::parse_filter_options(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    /// only option lines have a `<type>` in the second column; header lines and
+    /// enum constant lines (`bob  1  ..FV`) do not
+    fn parse_filter_options(help_text: &str) -> HashSet<String> {
+        let mut options = HashSet::new();
+
+        for line in help_text.lines() {
+            let mut parts = line.split_whitespace();
+            if let (Some(name), Some(kind)) = (parts.next(), parts.next())
+                && kind.starts_with('<')
+            {
+                options.insert(name.to_owned());
+            }
+        }
+
+        options
+    }
+
     async fn load_video_filters(
         path: &Path,
         disabled_filters: &[String],
@@ -267,6 +321,7 @@ mod tests {
             hwaccels: HashSet::new(),
             video_filters,
             preferred_filters: HashMap::new(),
+            video_filter_options: HashMap::new(),
         };
 
         let best_fit = info.find_best_fit(
@@ -301,6 +356,7 @@ mod tests {
             hwaccels: HashSet::new(),
             video_filters,
             preferred_filters,
+            video_filter_options: HashMap::new(),
         };
 
         let best_fit = info.find_best_fit(
@@ -312,6 +368,52 @@ mod tests {
         );
 
         assert_eq!(best_fit, Some(&KnownVideoFilter::TonemapVaapi));
+    }
+
+    #[test]
+    fn test_parse_filter_options() {
+        let help_text = r"Filter vpp_qsv
+  Description: Quick Sync Video VPP.
+  Inputs:
+       #0: default (video)
+  Outputs:
+       #0: default (video)
+vpp_qsv AVOptions:
+   deinterlace       <int>        ..FV....... deinterlace mode: 0=off, 1=bob, 2=advanced (from 0 to 2) (default 0)
+   denoise           <int>        ..FV....... denoise level [0, 100] (from 0 to 100) (default 0)
+   pad_w             <int>        ..FV....... set the padded output width (0 = no padding) (from 0 to 32767) (default 0)
+   pad_h             <int>        ..FV....... set the padded output height (0 = no padding) (from 0 to 32767) (default 0)
+   pad_color         <color>      ..FV....... set the colour of the padded area (default 'black')
+";
+        let options = FfmpegInfo::parse_filter_options(help_text);
+
+        assert!(options.contains("deinterlace"));
+        assert!(options.contains("pad_w"));
+        assert!(options.contains("pad_color"));
+        assert!(!options.contains("#0:"));
+        assert!(!options.contains("Description:"));
+    }
+
+    #[test]
+    fn test_has_video_filter_option() {
+        let mut video_filters = HashSet::new();
+        video_filters.insert(KnownVideoFilter::VppQsv.to_string());
+
+        let mut video_filter_options = HashMap::new();
+        video_filter_options.insert(
+            KnownVideoFilter::VppQsv.to_string(),
+            HashSet::from([String::from("pad_w"), String::from("pad_h")]),
+        );
+
+        let info = FfmpegInfo {
+            video_filters,
+            video_filter_options,
+            ..Default::default()
+        };
+
+        assert!(info.has_video_filter_option(&KnownVideoFilter::VppQsv, "pad_w"));
+        assert!(!info.has_video_filter_option(&KnownVideoFilter::VppQsv, "does_not_exist"));
+        assert!(!info.has_video_filter_option(&KnownVideoFilter::PadVaapi, "pad_w"));
     }
 
     #[test]

@@ -7,8 +7,8 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{
-    InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput, WatermarkLocation,
-    WatermarkTiming,
+    GraphicsKind, InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput,
+    WatermarkLocation, WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
@@ -95,8 +95,20 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+    let source_frame_rate = probe_avg_frame_rate(&test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
+    let deinterlace = test_case.params.deinterlace;
+    let source_is_hdr = probe.streams.iter().any(|s| match s {
+        ProbeResultStream::Video(v) => v.color_params.is_hdr() || v.dv_profile == Some(5),
+        _ => false,
+    });
+    // without frame rate normalization, output must keep the source frame rate
+    let expected_frame_rate = test_case
+        .params
+        .frame_rate
+        .clone()
+        .unwrap_or(source_frame_rate);
     let watermark = match test_case.params.watermark.take() {
         Some(watermark) => Some(build_watermark_input(test_env, &watermark).await),
         None => None,
@@ -117,9 +129,99 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
         &test_case.expected_video_codec,
         test_case.expected_video_size.width,
         test_case.expected_video_size.height,
+        &expected_frame_rate,
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if deinterlace {
+        let video = output_probe
+            .streams
+            .iter()
+            .find_map(|s| match s {
+                ProbeResultStream::Video(v) => Some(v),
+                _ => None,
+            })
+            .expect("no output video");
+        // HEVC may omit field_order even for progressive output. This rejects
+        // explicit interlace tags; the motion fixture also checks actual pixels.
+        assert!(
+            !video.is_interlaced(),
+            "deinterlaced output is still tagged interlaced: {:?}",
+            video.field_order
+        );
+        if test_case.fixture_name == "480i_h264_motion.ts" {
+            let score =
+                motion_combing_score(&test_env.ffmpeg, &segment, test_case.expected_video_size)
+                    .await;
+            assert!(
+                score < 1.0,
+                "deinterlacing left alternating scanlines: score={score}"
+            );
+        }
+    }
+    if source_is_hdr {
+        assert_sdr_output(&output_probe);
+    }
+}
+
+/// Only for 480i_h264_motion.ts: a vertical moving bar has identical rows after
+/// deinterlacing. Different field times leave alternating bar positions otherwise.
+/// Sample the middle third to exclude letterboxing, and ignore encoder field tags.
+pub async fn motion_combing_score(ffmpeg: &Path, path: &Path, size: FrameSize) -> f64 {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(ffmpeg)
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-an",
+                "-vf",
+                "crop=iw:trunc(ih/3):0:trunc(ih/3),format=gray",
+                "-frames:v",
+                "30",
+                "-f",
+                "rawvideo",
+                "-",
+            ])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("pixel check timed out")
+    .expect("failed to decode motion fixture");
+    assert!(
+        output.status.success(),
+        "pixel check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let width = size.width as usize;
+    // crop rounds subsampled input dimensions down to even values.
+    let height = (size.height as usize / 3) & !1;
+    let frame_bytes = width * height;
+    assert!(
+        output.stdout.len() >= frame_bytes * 20,
+        "too few decoded frames for pixel check"
+    );
+    assert_eq!(
+        output.stdout.len() % frame_bytes,
+        0,
+        "unexpected decoded dimensions"
+    );
+    let mut difference = 0u64;
+    let mut samples = 0u64;
+    for frame in output.stdout.chunks_exact(frame_bytes) {
+        assert!(
+            frame.iter().max().unwrap() - frame.iter().min().unwrap() > 64,
+            "motion fixture lost its foreground/background contrast"
+        );
+        for (a, b) in frame[..frame_bytes - width].iter().zip(&frame[width..]) {
+            difference += u64::from(a.abs_diff(*b));
+            samples += 1;
+        }
+    }
+    difference as f64 / samples as f64
 }
 
 pub fn find_ffmpeg() -> Option<PathBuf> {
@@ -190,6 +292,8 @@ pub async fn build_watermark_input(
         horizontal_margin_percent: Some(5.0),
         vertical_margin_percent: Some(5.0),
         opacity_percent: watermark.opacity_percent,
+        kind: GraphicsKind::Media,
+        in_point: Duration::ZERO,
         timing: watermark.timing.clone(),
     }
 }
@@ -222,6 +326,7 @@ pub fn build_input(
         },
         subtitle_input: None,
         graphics_inputs: watermark.into_iter().collect(),
+        channel_number: None,
     }
 }
 
@@ -329,6 +434,26 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
     (output.status.success(), stderr)
 }
 
+/// r_frame_rate is guessed from timestamp deltas and is wrong for irregular fixtures
+/// (480p_h264_sps_change.ts reports 240/1 for 30 fps content), so the expected source
+/// rate comes from avg_frame_rate instead
+pub async fn probe_avg_frame_rate(ffprobe: &Path, path: &Path) -> FrameRate {
+    let output = tokio::process::Command::new(ffprobe)
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to spawn ffprobe");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text
+        .lines()
+        .next()
+        .expect("no avg_frame_rate in source")
+        .trim();
+    FrameRate::parse(line)
+}
+
 pub fn find_first_segment(dir: &Path) -> PathBuf {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .expect("failed to read output dir")
@@ -352,6 +477,7 @@ pub fn assert_video(
     codec: &str,
     width: u32,
     height: u32,
+    frame_rate: &FrameRate,
     accel: Option<HardwareAccel>,
 ) {
     let video = probe
@@ -365,6 +491,12 @@ pub fn assert_video(
     assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
     assert_eq!(video.width, Some(width), "unexpected video width");
     assert_eq!(video.height, Some(height), "unexpected video height");
+    assert!(
+        frame_rates_equal(&video.frame_rate, frame_rate),
+        "unexpected video frame rate: expected {}, got {}",
+        frame_rate.r_frame_rate,
+        video.frame_rate.r_frame_rate
+    );
 
     // RKMPP encoders don't seem to set SAR
     if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) {
@@ -373,6 +505,22 @@ pub fn assert_video(
             Some(String::from("1:1")),
             "unexpected SAR"
         );
+    }
+}
+
+/// Compares frame rates as exact rationals so 30000/1001 != 30 and 60/2 == 30/1
+fn frame_rates_equal(a: &FrameRate, b: &FrameRate) -> bool {
+    fn rational(frame_rate: &FrameRate) -> Option<(u64, u64)> {
+        let text = frame_rate.r_frame_rate.trim();
+        match text.split_once('/') {
+            Some((num, den)) => Some((num.parse().ok()?, den.parse().ok()?)),
+            None => Some((text.parse().ok()?, 1)),
+        }
+    }
+
+    match (rational(a), rational(b)) {
+        (Some((an, ad)), Some((bn, bd))) => an * bd == bn * ad,
+        _ => a.parsed_frame_rate == b.parsed_frame_rate,
     }
 }
 
@@ -386,4 +534,27 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
         })
         .expect("no audio stream found in output");
     assert_eq!(audio.codec, codec, "unexpected audio codec");
+}
+
+// this helps catch cases where e.g. vpp_qsv=tonemap=1 silently no-ops
+pub fn assert_sdr_output(probe: &ProbeResult) {
+    let video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v),
+            _ => None,
+        })
+        .expect("no video stream found in output");
+    assert!(
+        !video.color_params.is_hdr(),
+        "output is still tagged HDR: {:?}",
+        video.color_params
+    );
+    assert_eq!(
+        video.color_params.color_transfer.as_deref(),
+        Some("bt709"),
+        "tonemapped output should be tagged bt709: {:?}",
+        video.color_params
+    );
 }

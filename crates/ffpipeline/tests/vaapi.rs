@@ -120,14 +120,15 @@ async fn pipeline(
 #[tokio::test]
 #[ignore]
 async fn tonemap_hdr(
-    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+    #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
     #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;
     if let Ok(vf) = VideoFormat::from_str(vf_str) {
         run_vaapi_test_case(TestCase {
-            fixture_name: "1080p_hevc_10_hdr.ts",
+            fixture_name: src,
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),
@@ -193,7 +194,8 @@ async fn tonemap_dv(
 #[rstest]
 #[tokio::test]
 #[ignore]
-async fn deinterlace_anamorphic(
+async fn deinterlace(
+    #[values("480p_h264_interlaced.ts", "480p_h264_anamorphic_interlaced.ts")] src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
@@ -201,7 +203,7 @@ async fn deinterlace_anamorphic(
     let (vf_str, bpp) = vf;
     if let Ok(vf) = VideoFormat::from_str(vf_str) {
         run_vaapi_test_case(TestCase {
-            fixture_name: "480p_h264_anamorphic.ts",
+            fixture_name: src,
             params: TestOutputParams {
                 audio_format: Some(af),
                 video_format: Some(vf),

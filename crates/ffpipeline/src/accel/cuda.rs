@@ -13,8 +13,7 @@ use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceS
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, ForceOriginalAspectRatio, PadFilter, ScaleFilter, ToneMapFilter,
-    VideoFilter, VideoFilterOp,
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,19 +60,13 @@ impl HwAccel for Cuda {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                force_original_aspect_ratio,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
-                && !current_state.pixel_format.has_alpha() =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
+                    && !current_state.pixel_format.has_alpha() =>
             {
                 ScaleCuda {
                     format: None,
                     size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
                 }
                 .into()
             }
@@ -96,6 +89,8 @@ impl HwAccel for Cuda {
                         PixelFormat::Yuv420p10le => PixelFormat::P010le,
                         _ => PixelFormat::Nv12,
                     },
+                    input_size: current_state.size,
+                    size: None,
                 }
                 .into()
             }
@@ -266,8 +261,6 @@ impl HwAccel for Cuda {
 pub struct ScaleCuda {
     pub(crate) format: Option<PixelFormat>,
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
-    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleCuda {
@@ -295,27 +288,15 @@ impl VideoFilterOp for ScaleCuda {
 
     fn as_arg(&self) -> Option<String> {
         if let Some(size) = &self.size {
-            let aspect_ratio = self
-                .force_original_aspect_ratio
-                .as_ref()
-                .map_or(String::new(), |f| f.as_arg());
-
             let format = self
                 .format
                 .as_ref()
                 .map_or(String::new(), |f| format!(":format={}", f.as_arg()));
 
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_cuda=iw*sar:ih,scale_cuda={}:{}{}{},setsar=1",
-                    size.width, size.height, aspect_ratio, format
-                ))
-            } else {
-                Some(format!(
-                    "scale_cuda={}:{}{}{},setsar=1",
-                    size.width, size.height, aspect_ratio, format
-                ))
-            }
+            Some(format!(
+                "scale_cuda={}:{}{},setsar=1",
+                size.width, size.height, format
+            ))
         } else {
             None
         }
@@ -405,6 +386,9 @@ pub struct LibplaceboCuda {
     /// algorithm to use for tonemapping
     pub(crate) algorithm: Option<String>,
     pub(crate) format: PixelFormat,
+    /// frame size entering the filter, used to decide whether fusing a scale is worthwhile
+    pub(crate) input_size: FrameSize,
+    pub(crate) size: Option<FrameSize>,
 }
 
 impl VideoFilterOp for LibplaceboCuda {
@@ -416,6 +400,14 @@ impl VideoFilterOp for LibplaceboCuda {
         state.pixel_format = self.format;
         state.hdr_format = HdrFormat::None;
         state.surface = FrameSurface::Cuda;
+
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::Cuda;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -433,11 +425,18 @@ impl VideoFilterOp for LibplaceboCuda {
             _ => "",
         };
 
+        let (size, setsar) = match &self.size {
+            Some(size) => (format!(":w={}:h={}", size.width, size.height), ",setsar=1"),
+            None => (String::new(), ""),
+        };
+
         Some(format!(
-            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={},hwupload_cuda{}",
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}{},hwupload_cuda{}{}",
             self.algorithm.as_deref().unwrap_or("linear"),
             vulkan_format.as_arg(),
-            cuda_format
+            size,
+            cuda_format,
+            setsar
         ))
     }
 }
@@ -487,11 +486,11 @@ impl VideoFilterOp for DeinterlaceCuda {
     fn as_arg(&self) -> Option<String> {
         match &self.filter {
             CudaDeinterlaceFilter::Bwdif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("bwdif_cuda={mode}"))
             }
             CudaDeinterlaceFilter::Yadif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("yadif_cuda={mode}"))
             }
         }

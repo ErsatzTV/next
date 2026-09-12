@@ -30,6 +30,10 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
 static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
 
 static DOLBY_VISION_SIDE_DATA: &str = "DOVI configuration record";
+static HDR10_SIDE_DATA: &[&str] = &["Mastering display metadata", "Content light level metadata"];
+static PQ_TRANSFER: &str = "smpte2084";
+
+const FRAME_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ProbeResultColorParams {
@@ -37,13 +41,18 @@ pub struct ProbeResultColorParams {
     pub color_space: Option<String>,
     pub color_transfer: Option<String>,
     pub color_primaries: Option<String>,
+    pub has_hdr10_metadata: bool,
 }
 
 impl ProbeResultColorParams {
     pub fn is_hdr(&self) -> bool {
         self.color_transfer
             .as_ref()
-            .is_some_and(|ct| ct == "arib-std-b67" || ct == "smpte2084")
+            .is_some_and(|ct| ct == "arib-std-b67" || ct == PQ_TRANSFER)
+    }
+
+    pub fn is_pq(&self) -> bool {
+        self.color_transfer.as_deref() == Some(PQ_TRANSFER)
     }
 }
 
@@ -241,6 +250,24 @@ struct StreamSideData {
     dv_profile: Option<u32>,
 }
 
+fn has_hdr10_side_data(side_data_list: &[StreamSideData]) -> bool {
+    side_data_list
+        .iter()
+        .any(|sd| HDR10_SIDE_DATA.contains(&sd.side_data_type.as_str()))
+}
+
+#[derive(Deserialize)]
+struct ProbeOutputFrame {
+    #[serde(default)]
+    side_data_list: Vec<StreamSideData>,
+}
+
+#[derive(Deserialize)]
+struct FrameProbeOutput {
+    #[serde(default)]
+    frames: Vec<ProbeOutputFrame>,
+}
+
 #[derive(Deserialize)]
 struct ProbeOutputFormat {
     duration: Option<String>,
@@ -268,19 +295,13 @@ pub trait Probeable {
 
 impl Probeable for LocalInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
-        let mut args = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-        ];
-        args.extend(self.args_for_input());
         let expanded_path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
-        args.extend(args!["-i", expanded_path.clone()]);
-
-        probe_with_args(probe_deps.ffprobe_path, &expanded_path, &args).await
+        probe_with_args(
+            probe_deps.ffprobe_path,
+            &expanded_path,
+            &self.args_for_input(),
+        )
+        .await
     }
 }
 
@@ -344,44 +365,33 @@ impl Probeable for LavfiInputSource {
 impl Probeable for HttpInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
         let path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
-        let mut args: ArgVec = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-        ];
-        args.extend(self.args_for_input());
-        args.extend(args!["-i", path.clone()]);
-
-        probe_with_args(probe_deps.ffprobe_path, &path, &args).await
+        probe_with_args(probe_deps.ffprobe_path, &path, &self.args_for_input()).await
     }
 }
 
 impl Probeable for RtspInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
         let path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
-        let mut args: ArgVec = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-        ];
-        args.extend(self.args_for_input());
-        args.extend(args!["-i", path.clone()]);
-
-        probe_with_args(probe_deps.ffprobe_path, &path, &args).await
+        probe_with_args(probe_deps.ffprobe_path, &path, &self.args_for_input()).await
     }
 }
 
 async fn probe_with_args(
     ffprobe_path: &Path,
     path: &str,
-    args: &ArgVec,
+    input_args: &ArgVec,
 ) -> Result<ProbeResult, FFPipelineError> {
+    let mut args: ArgVec = args![
+        "-hide_banner",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        "-show_chapters",
+    ];
+    args.extend(input_args.iter().cloned());
+    args.extend(args!["-i", path.to_owned()]);
+
     let output = Command::new(ffprobe_path)
         .args(args.iter().map(Cow::as_ref))
         .output()
@@ -397,7 +407,9 @@ async fn probe_with_args(
         return Err(FFPipelineError::ProbeFailed);
     }
 
-    parse_ffprobe_stdout(path.to_owned(), output.stdout)
+    let mut result = parse_ffprobe_stdout(path.to_owned(), output.stdout)?;
+    probe_hdr10_metadata(ffprobe_path, path, input_args, &mut result).await;
+    Ok(result)
 }
 
 fn parse_ffprobe_stdout(path: String, stdout: Vec<u8>) -> Result<ProbeResult, FFPipelineError> {
@@ -467,6 +479,7 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 color_space: output_stream.color_space.clone(),
                 color_transfer: output_stream.color_transfer.clone(),
                 color_primaries: output_stream.color_primaries.clone(),
+                has_hdr10_metadata: has_hdr10_side_data(&output_stream.side_data_list),
             },
             field_order: output_stream.field_order.clone(),
             frame_rate: FrameRate::parse(&output_stream.r_frame_rate.clone()?),
@@ -474,6 +487,76 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
         }))),
         _ => None,
+    }
+}
+
+async fn probe_hdr10_metadata(
+    ffprobe_path: &Path,
+    path: &str,
+    input_args: &ArgVec,
+    result: &mut ProbeResult,
+) {
+    for stream in result.streams.iter_mut() {
+        let ProbeResultStream::Video(video) = stream else {
+            continue;
+        };
+
+        if video.codec_type != CodecType::Video
+            || !video.color_params.is_pq()
+            || video.color_params.has_hdr10_metadata
+        {
+            continue;
+        }
+
+        let mut args: ArgVec = args![
+            "-hide_banner",
+            "-print_format",
+            "json",
+            "-select_streams",
+            video.stream_index.to_string(),
+            "-read_intervals",
+            "%+#1",
+            "-show_frames",
+            "-show_entries",
+            "frame=side_data_list",
+        ];
+        args.extend(input_args.iter().cloned());
+        args.extend(args!["-i", path.to_owned()]);
+
+        let output = tokio::time::timeout(
+            FRAME_PROBE_TIMEOUT,
+            Command::new(ffprobe_path)
+                .args(args.iter().map(Cow::as_ref))
+                .output(),
+        )
+        .await;
+
+        let Ok(Ok(output)) = output else {
+            log::warn!(
+                "ffprobe frame probe for HDR10 metadata timed out or failed on stream {}",
+                video.stream_index
+            );
+            continue;
+        };
+
+        if !output.status.success() {
+            log::warn!(
+                "error executing ffprobe frame probe: {}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            continue;
+        }
+
+        match serde_json::from_slice::<FrameProbeOutput>(&output.stdout) {
+            Ok(frames) => {
+                video.color_params.has_hdr10_metadata = frames
+                    .frames
+                    .iter()
+                    .any(|f| has_hdr10_side_data(&f.side_data_list));
+            }
+            Err(err) => log::warn!("failed to parse ffprobe frame probe: {err}"),
+        }
     }
 }
 

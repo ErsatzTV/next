@@ -9,8 +9,8 @@ use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
-    AudioHint, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks, ProbeHint,
-    TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
+    AudioHint, GraphicsLayerKind, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks,
+    ProbeHint, SubtitleHint, TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
@@ -35,6 +35,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 
 use crate::dossier::DossierBuilder;
+use crate::fallback::{FallbackReason, error_card_subtitle};
 use crate::local_proxy::{LocalProxyServer, ScriptCommand};
 use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
 use crate::playout_loader::PlayoutLoader;
@@ -379,33 +380,39 @@ impl ChannelSession {
                 .await;
         }
 
+        let mut is_fallback = false;
         let current_item = match current_item_result {
             Ok(playout_item) => playout_item,
-            Err(ChannelError::PlayoutJsonNoItem { next_start }) => {
-                log::debug!(
-                    "no playout item covers {}, replacing with black/silence until {}",
-                    self.transcoded_until,
-                    next_start.map_or_else(
-                        || String::from("the next reload"),
-                        |start| start.to_string()
-                    )
-                );
-                self.fake_playout_item(next_start)
-            }
             Err(err) => {
-                log::error!(
-                    "no item could be selected for {}, replacing with black/silence: {}",
-                    self.transcoded_until,
-                    err
-                );
-                self.fake_playout_item(None)
+                let reason = FallbackReason::from_selection_error(err);
+                if troubleshoot {
+                    // a gap in a single-item troubleshooting playout is always a bug/error
+                    self.write_fallback_dossier(&reason).await;
+                    return Err(reason.into_error());
+                }
+                reason.log(&self.transcoded_until);
+                is_fallback = true;
+                self.fallback_playout_item(&reason).await
             }
         };
 
         let pts_duration = pts_time.map(|p| p.duration);
 
+        let subtitle_mode = if is_fallback {
+            // the fallback message is only useful on screen
+            SubtitleMode::Burn
+        } else {
+            self.channel_config.normalization.subtitle.mode.into()
+        };
+
         let result = self
-            .transcode_item(&current_item, realtime, troubleshoot, pts_duration)
+            .transcode_item(
+                &current_item,
+                realtime,
+                troubleshoot,
+                pts_duration,
+                subtitle_mode,
+            )
             .await;
 
         let (finish, is_complete) = match result {
@@ -414,16 +421,17 @@ impl ChannelSession {
             Err(e @ ChannelError::Stalled(_)) => return Err(e),
             Err(e) if troubleshoot => return Err(e),
             Err(e) => {
-                log::error!(
-                    "item {} ({} .. {}) failed, replacing with black/silence: {}",
-                    current_item.id,
-                    current_item.start,
-                    current_item.finish,
-                    e
-                );
-                let fake_item = self.fake_playout_item(Some(current_item.finish));
-                self.transcode_item(&fake_item, realtime, troubleshoot, pts_duration)
-                    .await?
+                let reason = FallbackReason::from_transcode_error(&current_item, e);
+                reason.log(&self.transcoded_until);
+                let fallback_item = self.fallback_playout_item(&reason).await;
+                self.transcode_item(
+                    &fallback_item,
+                    realtime,
+                    troubleshoot,
+                    pts_duration,
+                    SubtitleMode::Burn,
+                )
+                .await?
             }
         };
 
@@ -441,6 +449,7 @@ impl ChannelSession {
         realtime: bool,
         troubleshoot: bool,
         pts_duration: Option<Duration>,
+        subtitle_mode: SubtitleMode,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
         // prioritize source from audio tracks, then default source
         let audio_source = Self::resolve_source(current_item, |t| t.audio.as_ref())
@@ -499,8 +508,20 @@ impl ChannelSession {
             |(layer_index, layer)| async move {
                 let input_source = session.playout_source_to_input_source(layer.source.clone())?;
                 let location = playout_location_to_pipeline(&layer.location);
+                let kind = playout_graphics_kind_to_pipeline(&layer.kind);
                 let timing = playout_timing_to_pipeline(layer.timing.as_ref());
                 let probe_result = session.resolve_probe(&layer.source, &input_source).await?;
+
+                let in_point = if let PlayoutItemSource::Local {
+                    in_point_ms: Some(in_point_ms),
+                    ..
+                } = layer.source
+                {
+                    Duration::from_millis(in_point_ms)
+                } else {
+                    Duration::ZERO
+                };
+
                 Ok::<_, ChannelError>(GraphicsInput {
                     layer_index,
                     input_source,
@@ -512,6 +533,8 @@ impl ChannelSession {
                     horizontal_margin_percent: layer.horizontal_margin_percent,
                     vertical_margin_percent: layer.vertical_margin_percent,
                     opacity_percent: layer.opacity_percent,
+                    kind,
+                    in_point,
                     timing,
                 })
             },
@@ -581,7 +604,7 @@ impl ChannelSession {
             } else {
                 None
             },
-            subtitle_mode: self.channel_config.normalization.subtitle.mode.into(),
+            subtitle_mode,
             fonts_folder: self
                 .channel_config
                 .normalization
@@ -685,6 +708,7 @@ impl ChannelSession {
             },
             subtitle_input,
             graphics_inputs,
+            channel_number: Some(self.channel_config.number().to_owned()),
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
@@ -784,9 +808,12 @@ impl ChannelSession {
                         subtitle_probe_result.as_ref(),
                         &ring,
                         format!("ffmpeg exited with code {status}")).await;
-                    return Err(ChannelError::StreamFailure(format!(
-                        "ffmpeg exited {status}"
-                    )));
+                    return Err(ChannelError::FfmpegFailed {
+                        status: status
+                            .code()
+                            .map_or_else(|| status.to_string(), |code| format!("code {code}")),
+                        stderr_tail: Self::stderr_tail(&ring),
+                    });
                 } else if troubleshoot {
                     self.write_dossier(current_item, &video_probe_result,
                         &audio_probe_result, subtitle_probe_result.as_ref(),
@@ -1031,7 +1058,7 @@ impl ChannelSession {
         }
     }
 
-    fn fake_playout_item(&self, next_start: Option<OffsetDateTime>) -> PlayoutItem {
+    async fn fallback_playout_item(&self, reason: &FallbackReason) -> PlayoutItem {
         let width = self
             .channel_config
             .normalization
@@ -1048,10 +1075,18 @@ impl ChannelSession {
 
         let duration = Duration::from_mins(1);
 
+        let subtitle = if self.channel_config.fallback.show_error {
+            self.write_error_card(reason, width, height, duration).await
+        } else {
+            None
+        };
+
         PlayoutItem {
             id: uuid::Uuid::new_v4().to_string(),
             start: self.transcoded_until,
-            finish: next_start.unwrap_or(self.transcoded_until + duration),
+            finish: reason
+                .fallback_until()
+                .unwrap_or(self.transcoded_until + duration),
             source: None,
             tracks: Some(PlayoutItemTracks {
                 audio: Some(TrackSelection {
@@ -1089,11 +1124,49 @@ impl ChannelSession {
                     }),
                     stream_index: None,
                 }),
-                subtitle: None,
+                subtitle,
             }),
             watermark: None,
             graphics: Vec::new(),
         }
+    }
+
+    async fn write_error_card(
+        &self,
+        reason: &FallbackReason,
+        width: u32,
+        height: u32,
+        duration: Duration,
+    ) -> Option<TrackSelection> {
+        let path = self
+            .channel_config
+            .expanded_output_folder()
+            .join("fallback.ass");
+        let ass = error_card_subtitle(&reason.to_string(), width, height);
+
+        if let Err(err) = tokio::fs::write(&path, ass).await {
+            log::warn!("failed to write fallback error card, continuing without it: {err}");
+            return None;
+        }
+
+        Some(TrackSelection {
+            source: Some(PlayoutItemSource::Local {
+                path: path.to_string_lossy().into_owned(),
+                in_point_ms: None,
+                out_point_ms: None,
+                probe_hint: Some(ProbeHint {
+                    video: Vec::new(),
+                    audio: Vec::new(),
+                    subtitle: vec![SubtitleHint {
+                        codec: String::from("ass"),
+                        stream_index: 0,
+                    }],
+                    format_name: Some(String::from("ass")),
+                    duration_ms: Some(duration.as_millis() as u64),
+                }),
+            }),
+            stream_index: None,
+        })
     }
 
     async fn resolve_dynamic_item(
@@ -1295,6 +1368,40 @@ impl ChannelSession {
         }
     }
 
+    // ffmpeg runs at -loglevel error, so the ring holds only error lines; the last few
+    // are enough to identify the cause on the fallback card and in the process log
+    fn stderr_tail(ring: &Arc<std::sync::Mutex<VecDeque<String>>>) -> Vec<String> {
+        const TAIL_LINES: usize = 3;
+
+        ring.lock()
+            .map(|r| {
+                r.iter()
+                    .rev()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .take(TAIL_LINES)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn write_fallback_dossier(&self, reason: &FallbackReason) {
+        let mut builder = DossierBuilder::new(&self.channel_config, &self.ffmpeg_info)
+            .outcome(reason.to_string());
+
+        if let Some(accel) = &self.hw_accel {
+            builder = builder.accel(accel);
+        }
+
+        if let Err(err) = builder.build().write().await {
+            log::error!("failed to save dossier: {err}");
+        }
+    }
+
     async fn write_dossier(
         &self,
         current_item: &PlayoutItem,
@@ -1358,6 +1465,16 @@ fn playout_location_to_pipeline(value: &WatermarkLocation) -> ffpipeline::input:
     }
 }
 
+fn playout_graphics_kind_to_pipeline(
+    value: &Option<GraphicsLayerKind>,
+) -> ffpipeline::input::GraphicsKind {
+    match value {
+        Some(GraphicsLayerKind::Media) => ffpipeline::input::GraphicsKind::Media,
+        Some(GraphicsLayerKind::Canvas) => ffpipeline::input::GraphicsKind::Canvas,
+        None => ffpipeline::input::GraphicsKind::Media,
+    }
+}
+
 fn playout_timing_to_pipeline(
     value: Option<&WatermarkTiming>,
 ) -> Option<ffpipeline::input::WatermarkTiming> {
@@ -1418,6 +1535,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
                 color_space: v.color_space.clone(),
                 color_transfer: v.color_transfer.clone(),
                 color_primaries: v.color_primaries.clone(),
+                has_hdr10_metadata: v.has_hdr10_metadata.unwrap_or(false),
             },
             field_order: v.field_order.clone(),
             frame_rate: v
