@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use ffpipeline::capabilities::amf::AmfCapabilities;
 use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::qsv::QsvCapabilities;
@@ -18,6 +19,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Accel {
+    Amf,
     Cuda,
     Qsv,
     Rkmpp,
@@ -84,6 +86,7 @@ fn main() {
     let cli = Cli::parse();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
     let result = match cli.accel {
+        Accel::Amf => print_amf(),
         Accel::Cuda => print_cuda(),
         Accel::Qsv => print_qsv(),
         Accel::Rkmpp => print_rkmpp(),
@@ -96,6 +99,78 @@ fn main() {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+}
+
+fn print_amf() -> Result<(), String> {
+    let caps = AmfCapabilities::probe().map_err(|e| e.to_string())?;
+    println!("=== AMF (AMD) Capabilities ===");
+    match caps.runtime_version() {
+        Some((major, minor, release, build)) => {
+            println!("  Runtime: {major}.{minor}.{release}.{build}");
+        }
+        None => println!("  Runtime: unknown"),
+    }
+    println!(
+        "  Device:  {}",
+        caps.device().map_or("(none)", |d| d.name())
+    );
+    println!();
+
+    print_decode_table(ALL_FORMATS, |f, bd| caps.can_decode(f, bd));
+
+    println!();
+    println!("Encoders:");
+    println!(
+        "  {:<12} {:<8} {:<8} {:<8} {:<12} {:<8}",
+        "Codec", "8-bit", "10-bit", "B-Frames", "Max Profile", "Max Level"
+    );
+    println!(
+        "  {:<12} {:<8} {:<8} {:<8} {:<12} {:<8}",
+        "-----", "-----", "------", "--------", "-----------", "---------"
+    );
+    for f in ALL_FORMATS {
+        if let Some(encoder) = caps.encoder(f) {
+            println!(
+                "  {:<12} {:<8} {:<8} {:<8} {:<12} {:<8}",
+                format_name(f),
+                yn(caps.can_encode(f, 8)),
+                yn(caps.can_encode(f, 10)),
+                yn(encoder.b_frames),
+                encoder
+                    .max_profile
+                    .map_or_else(|| String::from("?"), |p| p.to_string()),
+                encoder
+                    .max_level
+                    .map_or_else(|| String::from("?"), |l| l.to_string()),
+            );
+        }
+    }
+
+    println!();
+    print_vpp_table(|pf| caps.vpp_supports_format(pf));
+
+    println!();
+    println!("AMFVideoConverter (vpp_amf) Surface Formats:");
+    let input = caps.vpp_input_formats();
+    let output = caps.vpp_output_formats();
+    println!(
+        "  Input:  {}",
+        if input.is_empty() {
+            String::from("(none)")
+        } else {
+            input.join(" ")
+        }
+    );
+    println!(
+        "  Output: {}",
+        if output.is_empty() {
+            String::from("(none)")
+        } else {
+            output.join(" ")
+        }
+    );
+
+    Ok(())
 }
 
 fn print_cuda() -> Result<(), String> {

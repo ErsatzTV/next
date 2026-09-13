@@ -26,6 +26,8 @@ static OPTION_PROBED_FILTERS: &[KnownVideoFilter] = &[KnownVideoFilter::VppQsv];
 
 #[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
 pub enum KnownHardwareAccel {
+    #[strum(serialize = "amf")]
+    Amf,
     #[strum(serialize = "cuda")]
     Cuda,
     #[strum(serialize = "qsv")]
