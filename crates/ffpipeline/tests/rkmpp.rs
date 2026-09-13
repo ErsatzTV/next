@@ -69,7 +69,7 @@ async fn pipeline(
 #[tokio::test]
 #[ignore]
 async fn deinterlace(
-    #[values("480p_h264_interlaced.ts", "480p_h264_anamorphic_interlaced.ts")] src: &'static str,
+    #[values("480i_h264.ts", "480i_h264_anamorphic.ts")] src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
 ) {

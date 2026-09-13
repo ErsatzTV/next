@@ -3,13 +3,14 @@ use serde::Serialize;
 use crate::ArgVec;
 use crate::capabilities::amf::AmfCapabilities;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
+use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
+use crate::video_filter::{HwDownloadFilter, ScaleFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Amf {
@@ -112,6 +113,22 @@ impl HwAccel for Amf {
             return None;
         }
 
+        // The AMF decoder stamps interlaced surfaces as field pairs, and the runtime then
+        // switches h264_amf into interlaced scan mode, which stalls. Download interlaced
+        // frames right after decode; the planner treats them as system frames from here.
+        let (surface, filters) = if video_stream.is_interlaced() {
+            (
+                FrameSurface::System,
+                vec![PipelineFilter::Video(VideoFilter::HwDownload(
+                    HwDownloadFilter {
+                        target_pixel_format: PixelFormat::Nv12,
+                    },
+                ))],
+            )
+        } else {
+            (FrameSurface::Amf, Vec::new())
+        };
+
         Some(HwDecoder {
             args: args![
                 "-hwaccel",
@@ -119,8 +136,8 @@ impl HwAccel for Amf {
                 "-hwaccel_output_format",
                 KnownHardwareAccel::Amf
             ],
-            surface: FrameSurface::Amf,
-            filters: Vec::new(),
+            surface,
+            filters,
         })
     }
 
