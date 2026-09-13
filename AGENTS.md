@@ -80,7 +80,7 @@ channels.
 - **`ersatztv-playout`** — Playout JSON data models (serde). Schema at `schema/playout.json` is hand-maintained - keep it in sync when editing the Rust types.
 - **`ersatztv-core`** — Shared utilities: heartbeat/ready file management, timing constants.
 - **`ersatztv-playout-generator`** — Dev tool for generating playout JSON from video folders or syncing from legacy DB.
-- **`libnvidia-sys`, `libva-sys`, `libvpl-sys`** — FFI bindings for hardware acceleration capability detection.
+- **`libamf-sys`, `libnvidia-sys`, `libva-sys`, `libvpl-sys`** — FFI bindings for hardware acceleration capability detection.
   Platform-specific with stub fallbacks.
 
 ### Configuration Tiers

@@ -6,6 +6,7 @@ members = [
     "crates/ersatztv-playout",
     "crates/ersatztv-playout-generator",
     "crates/ffpipeline",
+    "crates/libamf-sys",
     "crates/libcl-sys",
     "crates/libmpp-sys",
     "crates/libnvidia-sys",
@@ -31,6 +32,7 @@ filetime = "0.2"
 futures-core = "0.3.32"
 futures-util = "0.3.32"
 libloading = "0.9"
+libamf-sys = { path = "crates/libamf-sys" }
 libcl-sys = { path = "crates/libcl-sys" }
 libmpp-sys = { path = "crates/libmpp-sys" }
 libnvidia-sys = { path = "crates/libnvidia-sys" }

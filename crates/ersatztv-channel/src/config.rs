@@ -323,9 +323,21 @@ impl HardwareAccel {
         channel_config: &ChannelConfig,
     ) -> Option<ffpipeline::hw_accel::HardwareAccel> {
         match self {
-            HardwareAccel::Amf => Some(ffpipeline::hw_accel::HardwareAccel::Amf(
-                ffpipeline::accel::amf::Amf,
-            )),
+            HardwareAccel::Amf => {
+                let capabilities = ffpipeline::capabilities::amf::AmfCapabilities::probe();
+                match capabilities {
+                    Ok(capabilities) => {
+                        log::debug!("detected AMF capabilities: {:?}", capabilities);
+                        Some(ffpipeline::hw_accel::HardwareAccel::Amf(
+                            ffpipeline::accel::amf::Amf { capabilities },
+                        ))
+                    }
+                    Err(e) => {
+                        log::error!("failed to probe AMF capabilities: {}", e);
+                        None
+                    }
+                }
+            }
             HardwareAccel::Cuda => {
                 let capabilities = ffpipeline::capabilities::nvidia::NvidiaCapabilities::probe();
                 match capabilities {

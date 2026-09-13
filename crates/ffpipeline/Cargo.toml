@@ -8,6 +8,7 @@ clap = { workspace = true }
 derive_more = { workspace = true }
 enum_dispatch = { workspace = true }
 env_logger = { workspace = true }
+libamf-sys = { workspace = true }
 libcl-sys = { workspace = true }
 libmpp-sys = { workspace = true }
 libnvidia-sys = { workspace = true }
