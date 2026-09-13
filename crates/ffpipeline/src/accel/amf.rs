@@ -2,28 +2,18 @@ use serde::Serialize;
 
 use crate::ArgVec;
 use crate::capabilities::amf::AmfCapabilities;
-use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
+use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
-use crate::pipeline::{FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::output_settings::VideoFilterOptions;
+use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
+use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Amf {
     pub capabilities: AmfCapabilities,
-}
-
-/// ffmpeg's AMF decoders are full codecs rather than hwaccels, so the decoder has
-/// to be named explicitly alongside the hwaccel that keeps frames on the device.
-fn decoder_name(format: &VideoFormat) -> Option<&'static str> {
-    match format {
-        VideoFormat::Av1 => Some("av1_amf"),
-        VideoFormat::H264 => Some("h264_amf"),
-        VideoFormat::Hevc => Some("hevc_amf"),
-        VideoFormat::Vp9 => Some("vp9_amf"),
-        _ => None,
-    }
 }
 
 fn video_format(codec: &str) -> Option<VideoFormat> {
@@ -37,9 +27,29 @@ fn video_format(codec: &str) -> Option<VideoFormat> {
 }
 
 impl HwAccel for Amf {
+    fn best_filter(
+        &self,
+        video_filter: &VideoFilter,
+        ffmpeg_info: &FfmpegInfo,
+        _current_state: &FrameState,
+        _filter_options: &VideoFilterOptions,
+    ) -> VideoFilter {
+        match video_filter {
+            VideoFilter::Scale(ScaleFilter {
+                size: Some(size), ..
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppAmf) => {
+                VppAmf::scale(*size).into()
+            }
+            _ => video_filter.clone(),
+        }
+    }
+
+    /// Decoded surfaces go through vpp_amf for scaling and format conversion, so only
+    /// decode on the device when the converter can consume the decoded surface format.
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         video_format(codec).is_some_and(|f| {
-            decoder_name(&f).is_some() && self.capabilities.can_decode(&f, pixel_format.bit_depth())
+            self.capabilities.can_decode(&f, pixel_format.bit_depth())
+                && self.capabilities.vpp_accepts_input(pixel_format)
         })
     }
 
@@ -76,6 +86,14 @@ impl HwAccel for Amf {
         }
     }
 
+    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+        if pixel_format.has_alpha() {
+            None
+        } else {
+            Some(VppAmf::format(*pixel_format).into())
+        }
+    }
+
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
         args!["-init_hw_device", "amf=hw", "-filter_hw_device", "hw"]
     }
@@ -94,15 +112,12 @@ impl HwAccel for Amf {
             return None;
         }
 
-        let decoder = decoder_name(&video_format(&video_stream.codec)?)?;
         Some(HwDecoder {
             args: args![
                 "-hwaccel",
                 KnownHardwareAccel::Amf,
                 "-hwaccel_output_format",
-                KnownHardwareAccel::Amf,
-                "-c:v",
-                decoder,
+                KnownHardwareAccel::Amf
             ],
             surface: FrameSurface::Amf,
             filters: Vec::new(),
@@ -113,13 +128,97 @@ impl HwAccel for Amf {
         self.capabilities.vpp_supports_format(pixel_format)
     }
 
-    /// No AMF format filter is wired up yet, so conversions go through software
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        _pixel_format: &PixelFormat,
+        pixel_format: &PixelFormat,
     ) -> bool {
-        false
+        self.capabilities.vpp_supports_format(pixel_format)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VppAmf {
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) format: Option<PixelFormat>,
+}
+
+impl VppAmf {
+    pub(crate) fn scale(size: FrameSize) -> VppAmf {
+        VppAmf {
+            size: Some(size),
+            ..VppAmf::default()
+        }
+    }
+
+    pub(crate) fn format(format: PixelFormat) -> VppAmf {
+        VppAmf {
+            format: Some(format),
+            ..VppAmf::default()
+        }
+    }
+
+    pub(crate) fn fuse(&self, next: &VppAmf) -> Option<VppAmf> {
+        if self.size.is_some() && next.size.is_some() {
+            return None;
+        }
+
+        let fused = VppAmf {
+            size: self.size.or(next.size),
+            // later format conversion wins
+            format: next.format.or(self.format),
+        };
+
+        Some(fused)
+    }
+}
+
+impl VideoFilterOp for VppAmf {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.surface = FrameSurface::Amf;
+
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::Amf;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
+
+        if let Some(format) = &self.format {
+            state.pixel_format = *format;
+        }
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Amf)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        let mut options: Vec<String> = Vec::new();
+
+        if let Some(size) = &self.size {
+            options.push(format!("w={}:h={}", size.width, size.height));
+        }
+
+        if let Some(format) = &self.format {
+            options.push(format!("format={}", format.as_arg()));
+        }
+
+        if options.is_empty() {
+            None
+        } else {
+            let mut arg = format!("vpp_amf={}", options.join(":"));
+            if self.size.is_some() {
+                arg.push_str(",setsar=1");
+            }
+
+            Some(arg)
+        }
     }
 }
 
@@ -127,7 +226,7 @@ impl HwAccel for Amf {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12};
+    use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12, AMF_SURFACE_P010};
 
     use super::*;
     use crate::capabilities::amf::{AmfDevice, AmfEncoderCapability, AmfSurfaceFormat};
@@ -135,6 +234,10 @@ mod tests {
     use crate::probe::{CodecType, ProbeResultVideoStream};
 
     fn make_amf() -> Amf {
+        make_amf_with_vpp(&[AMF_SURFACE_NV12, AMF_SURFACE_BGRA])
+    }
+
+    fn make_amf_with_vpp(vpp_formats: &[i32]) -> Amf {
         let mut supported_decoders = HashMap::new();
         supported_decoders.insert(VideoFormat::H264, vec![8]);
         supported_decoders.insert(VideoFormat::Hevc, vec![8, 10]);
@@ -159,10 +262,8 @@ mod tests {
             },
         );
 
-        let vpp: HashSet<AmfSurfaceFormat> = [AMF_SURFACE_NV12, AMF_SURFACE_BGRA]
-            .into_iter()
-            .map(AmfSurfaceFormat)
-            .collect();
+        let vpp: HashSet<AmfSurfaceFormat> =
+            vpp_formats.iter().copied().map(AmfSurfaceFormat).collect();
 
         Amf {
             capabilities: AmfCapabilities {
@@ -196,7 +297,7 @@ mod tests {
 
     #[test]
     fn decode_follows_capabilities() {
-        let amf = make_amf();
+        let amf = make_amf_with_vpp(&[AMF_SURFACE_NV12, AMF_SURFACE_P010, AMF_SURFACE_BGRA]);
         assert!(amf.can_decode("h264", "high", &PixelFormat::Yuv420p));
         assert!(!amf.can_decode("h264", "high 10", &PixelFormat::Yuv420p10le));
         assert!(amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
@@ -205,26 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn decoder_names_the_amf_codec() {
+    fn decode_requires_converter_input_support() {
+        // runtime 1.4.31 decodes hevc 10-bit to P010 but its converter has no P010 input
         let amf = make_amf();
-        let decoder = amf
-            .make_decoder(&FfmpegInfo::default(), &video_stream("hevc", "yuv420p10le"))
-            .expect("hevc 10-bit decoder");
-        assert_eq!(decoder.surface, FrameSurface::Amf);
-        assert_eq!(
-            decoder.args,
-            args![
-                "-hwaccel",
-                "amf",
-                "-hwaccel_output_format",
-                "amf",
-                "-c:v",
-                "hevc_amf"
-            ]
-        );
-
+        assert!(amf.can_decode("hevc", "main", &PixelFormat::Yuv420p));
+        assert!(!amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
         assert!(
-            amf.make_decoder(&FfmpegInfo::default(), &video_stream("h264", "yuv420p10le"))
+            amf.make_decoder(&FfmpegInfo::default(), &video_stream("hevc", "yuv420p10le"))
                 .is_none()
         );
     }
@@ -250,6 +338,20 @@ mod tests {
         assert!(amf.accepts_upload_format(&PixelFormat::Yuv420p));
         assert!(amf.accepts_upload_format(&PixelFormat::Bgra));
         assert!(!amf.accepts_upload_format(&PixelFormat::P010le));
-        assert!(!amf.can_convert_pixel_format(&FfmpegInfo::default(), &PixelFormat::Nv12));
+    }
+
+    #[test]
+    fn format_conversion_follows_converter_formats() {
+        let amf = make_amf();
+        let ffmpeg_info = FfmpegInfo::default();
+        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12));
+        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Yuv420p));
+        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
+        assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::P010le));
+        assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Yuv420p10le));
+
+        let with_p010 = make_amf_with_vpp(&[AMF_SURFACE_NV12, AMF_SURFACE_P010]);
+        assert!(with_p010.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::P010le));
+        assert!(!with_p010.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
     }
 }
