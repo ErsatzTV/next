@@ -514,7 +514,8 @@ impl FilterChain {
                 }
 
                 let fused = Self::try_fuse_cuda(&self.filters[i], &self.filters[j])
-                    .or_else(|| Self::try_fuse_qsv(&self.filters[i], &self.filters[j]));
+                    .or_else(|| Self::try_fuse_qsv(&self.filters[i], &self.filters[j]))
+                    .or_else(|| Self::try_fuse_amf(&self.filters[i], &self.filters[j]));
                 if let Some(fused) = fused {
                     self.filters[i] = fused;
                     self.filters.remove(j);
@@ -577,6 +578,18 @@ impl FilterChain {
         };
         va.fuse(vb)
             .map(|fused| PipelineFilter::Video(VideoFilter::VppQsv(fused)))
+    }
+
+    fn try_fuse_amf(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
+        let (
+            PipelineFilter::Video(VideoFilter::VppAmf(va)),
+            PipelineFilter::Video(VideoFilter::VppAmf(vb)),
+        ) = (a, b)
+        else {
+            return None;
+        };
+        va.fuse(vb)
+            .map(|fused| PipelineFilter::Video(VideoFilter::VppAmf(fused)))
     }
 
     pub(crate) fn build(

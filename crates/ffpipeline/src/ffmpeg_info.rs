@@ -87,6 +87,8 @@ pub enum KnownVideoFilter {
     TonemapOpencl,
     #[strum(serialize = "tonemap_vaapi")]
     TonemapVaapi,
+    #[strum(serialize = "vpp_amf")]
+    VppAmf,
     #[strum(serialize = "vpp_qsv")]
     VppQsv,
     #[strum(serialize = "w3fdif")]

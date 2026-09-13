@@ -50,6 +50,8 @@ pub enum VideoFilter {
     Fade(FadeFilter),
     Crop(CropFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
+    // AMF hardware filters
+    VppAmf(accel::amf::VppAmf),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -126,6 +128,7 @@ impl VideoFilterOp for HwUploadFilter {
         };
 
         match &self.target_surface {
+            FrameSurface::Amf => Some(format!("{format_filter}hwupload")),
             FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
             FrameSurface::Rkmpp => Some(format!("{format_filter}hwupload")),
 

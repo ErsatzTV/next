@@ -104,17 +104,16 @@ impl AmfCapabilities {
     /// Software formats map to the surface they become after hwupload, as in the QSV
     /// capabilities.
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
-        let surface = match pixel_format {
-            PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(AMF_SURFACE_NV12),
-            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(AMF_SURFACE_P010),
-            PixelFormat::Bgra => Some(AMF_SURFACE_BGRA),
-            _ => None,
-        };
-
-        surface.is_some_and(|s| {
-            let s = AmfSurfaceFormat(s);
+        vpp_surface(pixel_format).is_some_and(|s| {
             self.vpp_input_formats.contains(&s) && self.vpp_output_formats.contains(&s)
         })
+    }
+
+    /// Whether the converter can consume surfaces in this format. Older runtimes (1.4.31
+    /// on Polaris) decode hevc 10-bit to P010 but list no P010 converter input, and
+    /// feeding those surfaces to vpp_amf crashes inside the driver instead of failing.
+    pub fn vpp_accepts_input(&self, pixel_format: &PixelFormat) -> bool {
+        vpp_surface(pixel_format).is_some_and(|s| self.vpp_input_formats.contains(&s))
     }
 
     pub fn vpp_input_formats(&self) -> Vec<String> {
@@ -136,6 +135,17 @@ impl AmfCapabilities {
     pub fn count(&self) -> usize {
         self.supported_decoders.len() + self.supported_encoders.len()
     }
+}
+
+/// The AMF surface a software pixel format becomes after hwupload, or is decoded to.
+fn vpp_surface(pixel_format: &PixelFormat) -> Option<AmfSurfaceFormat> {
+    let surface = match pixel_format {
+        PixelFormat::Nv12 | PixelFormat::Yuv420p => AMF_SURFACE_NV12,
+        PixelFormat::P010le | PixelFormat::Yuv420p10le => AMF_SURFACE_P010,
+        PixelFormat::Bgra => AMF_SURFACE_BGRA,
+        _ => return None,
+    };
+    Some(AmfSurfaceFormat(surface))
 }
 
 fn sorted_names(formats: &HashSet<AmfSurfaceFormat>) -> Vec<String> {
@@ -236,6 +246,10 @@ mod tests {
         let input_only = caps(&[AMF_SURFACE_NV12, AMF_SURFACE_P010], &[AMF_SURFACE_NV12]);
         assert!(input_only.vpp_supports_format(&PixelFormat::Nv12));
         assert!(!input_only.vpp_supports_format(&PixelFormat::P010le));
+        assert!(input_only.vpp_accepts_input(&PixelFormat::P010le));
+        assert!(input_only.vpp_accepts_input(&PixelFormat::Yuv420p10le));
+        assert!(!input_only.vpp_accepts_input(&PixelFormat::Bgra));
+        assert!(!input_only.vpp_accepts_input(&PixelFormat::Nv15));
     }
 
     #[test]
