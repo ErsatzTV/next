@@ -75,7 +75,7 @@ async fn pipeline(
 #[tokio::test]
 #[ignore]
 async fn deinterlace(
-    #[values("480p_h264_interlaced.ts", "480p_h264_anamorphic_interlaced.ts")] src: &'static str,
+    #[values("480i_h264.ts", "480i_h264_anamorphic.ts")] src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
 ) {
@@ -88,6 +88,35 @@ async fn deinterlace(
                 video_size: Some(res),
                 bit_depth: Some(bpp),
                 deinterlace: true,
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: String::from("aac"),
+        })
+        .await;
+    }
+}
+
+/// 16:9 interlaced source transcoded with deinterlacing off: no pad is needed, so
+/// hardware pipelines keep decoded frames on the device all the way to the encoder.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn interlaced_no_deinterlace(
+    #[values("1080i_h264.ts")] src: &'static str,
+    #[values("1920x1080", "1280x720")] res: FrameSize,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_qsv_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                deinterlace: false,
                 ..TestOutputParams::default()
             },
             expected_video_codec: vf.to_string(),
