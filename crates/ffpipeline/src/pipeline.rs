@@ -879,11 +879,15 @@ impl Pipeline {
             self.filter_chain.disable_audio();
         };
 
-        // remove audio channels output option if input channel count matches
+        // remove audio channels output option if input channel count matches;
+        // aac with more than 2 channels still needs it to normalize layout
+        let aac_surround = self.output_context.audio_codec == AudioCodec::Aac
+            && self.output_context.audio_channels.is_some_and(|c| c > 2);
         if let Some(audio_channels) = self.inputs.iter().find_map(|s| match s {
             PipelineInput::Audio { channels, .. } => Some(channels),
             _ => None,
         }) && Some(audio_channels) == self.output_context.audio_channels.as_ref()
+            && !aac_surround
         {
             self.output_options
                 .retain(|o| !matches!(o, OutputOption::AudioChannels(_)));
