@@ -102,6 +102,7 @@ pub enum KnownVideoFilter {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FfmpegInfo {
     pub(crate) hwaccels: HashSet<String>,
+    pub(crate) decoders: HashSet<String>,
     pub(crate) video_filters: HashSet<String>,
     pub(crate) preferred_filters: HashMap<String, usize>,
     pub(crate) video_filter_options: HashMap<String, HashSet<String>>,
@@ -114,6 +115,7 @@ impl FfmpegInfo {
         preferred_filters: &[String],
     ) -> Result<FfmpegInfo, FFPipelineError> {
         let hwaccels = Self::load_hw_accels(path).await?;
+        let decoders = Self::load_decoders(path).await?;
         let video_filters = Self::load_video_filters(path, disabled_filters).await?;
 
         // filter preferred by known video filters
@@ -135,6 +137,7 @@ impl FfmpegInfo {
 
         Ok(FfmpegInfo {
             hwaccels,
+            decoders,
             video_filters,
             preferred_filters: preferred,
             video_filter_options,
@@ -144,6 +147,10 @@ impl FfmpegInfo {
     pub fn has_hw_accel(&self, hw_accel: &KnownHardwareAccel) -> bool {
         let accel_string = hw_accel.to_string();
         self.hwaccels.iter().any(|f| f == &accel_string)
+    }
+
+    pub fn has_decoder(&self, decoder: &str) -> bool {
+        self.decoders.contains(decoder)
     }
 
     pub fn has_video_filter(&self, filter: &KnownVideoFilter) -> bool {
@@ -243,6 +250,34 @@ impl FfmpegInfo {
         Ok(accels)
     }
 
+    async fn load_decoders(path: &Path) -> Result<HashSet<String>, FFPipelineError> {
+        let output = Command::new(path)
+            .args(["-hide_banner", "-decoders"])
+            .output()
+            .await
+            .map_err(|_| FFPipelineError::FfmpegCapabilitiesError(String::from("decoders")))?;
+
+        Ok(Self::parse_decoders(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    /// Entries look like ` V....D h264_amf   H264 AMD AMF video decoder`. The legend
+    /// above the `------` line has the same shape (` V..... = Video`), so it is skipped.
+    fn parse_decoders(listing: &str) -> HashSet<String> {
+        listing
+            .lines()
+            .skip_while(|line| !line.trim_start().starts_with("------"))
+            .skip(1)
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let flags = parts.next()?;
+                let name = parts.next()?;
+                (flags.starts_with('V')).then(|| name.to_owned())
+            })
+            .collect()
+    }
+
     async fn load_video_filter_options(
         path: &Path,
         filter: &str,
@@ -322,10 +357,8 @@ mod tests {
         );
 
         let info: FfmpegInfo = FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
-            preferred_filters: HashMap::new(),
-            video_filter_options: HashMap::new(),
+            ..Default::default()
         };
 
         let best_fit = info.find_best_fit(
@@ -357,10 +390,9 @@ mod tests {
         preferred_filters.insert(KnownVideoFilter::TonemapVaapi.to_string(), 0);
 
         let info = FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
             preferred_filters,
-            video_filter_options: HashMap::new(),
+            ..Default::default()
         };
 
         let best_fit = info.find_best_fit(
@@ -418,6 +450,30 @@ vpp_qsv AVOptions:
         assert!(info.has_video_filter_option(&KnownVideoFilter::VppQsv, "pad_w"));
         assert!(!info.has_video_filter_option(&KnownVideoFilter::VppQsv, "does_not_exist"));
         assert!(!info.has_video_filter_option(&KnownVideoFilter::PadVaapi, "pad_w"));
+    }
+
+    #[test]
+    fn parse_decoders_skips_legend_and_non_video_entries() {
+        let listing = "Decoders:\n V..... = Video\n A..... = Audio\n ------\n \
+                       V....D h264                 H.264\n \
+                       V..... h264_amf             H264 AMD AMF video decoder (codec h264)\n \
+                       V..... mpeg2_amf            MPEG2VIDEO AMD AMF video decoder (codec mpeg2video)\n \
+                       A....D aac                  AAC (Advanced Audio Coding)\n \
+                       S..... dvdsub               DVD subtitles\n";
+        let decoders = FfmpegInfo::parse_decoders(listing);
+        assert!(decoders.contains("h264"));
+        assert!(decoders.contains("h264_amf"));
+        assert!(decoders.contains("mpeg2_amf"));
+        assert!(!decoders.contains("aac"));
+        assert!(!decoders.contains("dvdsub"));
+        assert!(!decoders.contains("Video"));
+
+        let info = FfmpegInfo {
+            decoders,
+            ..Default::default()
+        };
+        assert!(info.has_decoder("mpeg2_amf"));
+        assert!(!info.has_decoder("vc1_amf"));
     }
 
     #[test]

@@ -15,9 +15,9 @@ use libamf_sys::{
     AMFContext, AMFContext1, AMFFactory, AMFIOCaps, AMFVariantStruct, AMFVideoConverter,
     AMFVideoDecoderHW_AV1, AMFVideoDecoderHW_H265_HEVC, AMFVideoDecoderHW_H265_MAIN10,
     AMFVideoDecoderHW_VP9, AMFVideoDecoderHW_VP9_10BIT, AMFVideoDecoderUVD_H264_AVC,
-    AMFVideoEncoder_AV1, AMFVideoEncoder_HEVC, AMFVideoEncoderVCE_AVC, AmfInterface, AmfLib,
-    IID_AMFContext1, amf_memory_type_name, amf_result_name, amf_surface_format_name,
-    amf_version_parts, wide,
+    AMFVideoDecoderUVD_MPEG2, AMFVideoDecoderUVD_VC1, AMFVideoEncoder_AV1, AMFVideoEncoder_HEVC,
+    AMFVideoEncoderVCE_AVC, AmfInterface, AmfLib, IID_AMFContext1, amf_memory_type_name,
+    amf_result_name, amf_surface_format_name, amf_version_parts, wide,
 };
 
 use crate::capabilities::amf::{
@@ -31,6 +31,8 @@ use crate::pipeline::VideoFormat;
 /// drivers without bitness detection, so that component existing is the signal.
 /// AV1 Main covers 8 and 10-bit.
 const DECODERS: &[(VideoFormat, &str, &[u8])] = &[
+    (VideoFormat::Mpeg2Video, AMFVideoDecoderUVD_MPEG2, &[8]),
+    (VideoFormat::Vc1, AMFVideoDecoderUVD_VC1, &[8]),
     (VideoFormat::H264, AMFVideoDecoderUVD_H264_AVC, &[8]),
     (VideoFormat::Hevc, AMFVideoDecoderHW_H265_HEVC, &[8]),
     (VideoFormat::Hevc, AMFVideoDecoderHW_H265_MAIN10, &[10]),

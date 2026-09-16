@@ -440,7 +440,14 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
 pub async fn probe_avg_frame_rate(ffprobe: &Path, path: &Path) -> FrameRate {
     let output = tokio::process::Command::new(ffprobe)
         .args(["-v", "error", "-select_streams", "v:0"])
-        .args(["-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0"])
+        // not csv: a stream with side data (MPEG-2 CPB properties) gets an extra
+        // empty field, so the value would come out as "30/1,"
+        .args([
+            "-show_entries",
+            "stream=avg_frame_rate",
+            "-of",
+            "default=nw=1:nk=1",
+        ])
         .arg(path)
         .output()
         .await

@@ -404,10 +404,9 @@ mod tests {
         video_filter_options.insert(KnownVideoFilter::VppQsv.to_string(), options);
 
         FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
-            preferred_filters: HashMap::new(),
             video_filter_options,
+            ..Default::default()
         }
     }
 
