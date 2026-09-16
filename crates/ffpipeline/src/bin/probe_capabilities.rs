@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use ffpipeline::capabilities::amf::AmfCapabilities;
+use ffpipeline::capabilities::amf::{AmfCapabilities, AmfDeviceTarget};
 use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::qsv::QsvCapabilities;
@@ -19,7 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Accel {
-    Amf,
+    Amf {
+        /// DXGI adapter index (Windows only); default is the discrete AMD adapter
+        #[arg(long)]
+        adapter: Option<u32>,
+    },
     Cuda,
     Qsv,
     Rkmpp,
@@ -86,7 +90,7 @@ fn main() {
     let cli = Cli::parse();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
     let result = match cli.accel {
-        Accel::Amf => print_amf(),
+        Accel::Amf { adapter } => print_amf(adapter),
         Accel::Cuda => print_cuda(),
         Accel::Qsv => print_qsv(),
         Accel::Rkmpp => print_rkmpp(),
@@ -101,9 +105,17 @@ fn main() {
     }
 }
 
-fn print_amf() -> Result<(), String> {
-    let caps = AmfCapabilities::probe().map_err(|e| e.to_string())?;
+fn print_amf(adapter: Option<u32>) -> Result<(), String> {
+    let target = adapter.map_or(AmfDeviceTarget::Auto, AmfDeviceTarget::Adapter);
+    let caps = AmfCapabilities::probe_with(target).map_err(|e| e.to_string())?;
     println!("=== AMF (AMD) Capabilities ===");
+    match caps.adapter() {
+        Some(adapter) => println!(
+            "  Adapter: {} ({:04x}:{:04x} {})",
+            adapter.index, adapter.vendor_id, adapter.device_id, adapter.description
+        ),
+        None => println!("  Adapter: (runtime default)"),
+    }
     match caps.runtime_version() {
         Some((major, minor, release, build)) => {
             println!("  Runtime: {major}.{minor}.{release}.{build}");

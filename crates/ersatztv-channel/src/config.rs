@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ffpipeline::capabilities::amf::AmfDeviceTarget;
 use ffpipeline::capabilities::vulkan::VulkanCapabilities;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -135,6 +136,8 @@ pub struct VideoNormalizationConfig {
     pub buffer_kbps: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_optional_accel")]
     pub accel: Option<HardwareAccel>,
+    /// Windows only. Unset picks the discrete AMD adapter.
+    pub amf_device: Option<u32>,
     pub vaapi_device: Option<PathBuf>,
     pub vaapi_driver: Option<VaapiDriver>,
     #[serde(default)]
@@ -324,10 +327,23 @@ impl HardwareAccel {
     ) -> Option<ffpipeline::hw_accel::HardwareAccel> {
         match self {
             HardwareAccel::Amf => {
-                let capabilities = ffpipeline::capabilities::amf::AmfCapabilities::probe();
+                let target = channel_config
+                    .normalization
+                    .video
+                    .amf_device
+                    .map_or(AmfDeviceTarget::Auto, AmfDeviceTarget::Adapter);
+                let capabilities =
+                    ffpipeline::capabilities::amf::AmfCapabilities::probe_with(target);
                 match capabilities {
                     Ok(capabilities) => {
                         log::debug!("detected AMF capabilities: {:?}", capabilities);
+                        if let Some(adapter) = capabilities.adapter() {
+                            log::info!(
+                                "AMF will use adapter {}: {}",
+                                adapter.index,
+                                adapter.description
+                            );
+                        }
                         Some(ffpipeline::hw_accel::HardwareAccel::Amf(
                             ffpipeline::accel::amf::Amf { capabilities },
                         ))

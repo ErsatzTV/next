@@ -491,6 +491,15 @@
           ],
           "default": null
         },
+        "amf_device": {
+          "description": "Windows only. Unset picks the discrete AMD adapter.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "bit_depth": {
           "type": [
             "integer",

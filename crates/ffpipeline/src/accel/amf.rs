@@ -129,8 +129,20 @@ impl HwAccel for Amf {
         }
     }
 
+    /// ffmpeg's AMF context ignores its device string. The only way to pick an adapter
+    /// is to derive AMF from a `d3d11va` device, which does take an adapter index.
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {
-        args!["-init_hw_device", "amf=hw", "-filter_hw_device", "hw"]
+        match self.capabilities.adapter() {
+            Some(adapter) => args![
+                "-init_hw_device",
+                format!("d3d11va=dx:{}", adapter.index),
+                "-init_hw_device",
+                "amf=hw@dx",
+                "-filter_hw_device",
+                "hw"
+            ],
+            None => args!["-init_hw_device", "amf=hw", "-filter_hw_device", "hw"],
+        }
     }
 
     fn known_accel(&self) -> Option<&KnownHardwareAccel> {
@@ -308,7 +320,7 @@ mod tests {
     use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12, AMF_SURFACE_P010};
 
     use super::*;
-    use crate::capabilities::amf::{AmfDevice, AmfEncoderCapability, AmfSurfaceFormat};
+    use crate::capabilities::amf::{AmfAdapter, AmfDevice, AmfEncoderCapability, AmfSurfaceFormat};
     use crate::frame_rate::FrameRate;
     use crate::probe::{CodecType, ProbeResultColorParams, ProbeResultVideoStream};
 
@@ -392,8 +404,37 @@ mod tests {
                 vpp_output_formats: vpp,
                 runtime_version,
                 device: Some(AmfDevice::Dx11),
+                adapter: None,
             },
         }
+    }
+
+    #[test]
+    fn init_hw_device_derives_from_d3d11va_on_chosen_adapter() {
+        let surfaces = SurfaceSet::default();
+        assert_eq!(
+            make_amf().init_hw_device(&surfaces),
+            vec!["-init_hw_device", "amf=hw", "-filter_hw_device", "hw"]
+        );
+
+        let mut amf = make_amf();
+        amf.capabilities.adapter = Some(AmfAdapter {
+            index: 1,
+            description: String::from("AMD Radeon RX 6600M"),
+            vendor_id: 0x1002,
+            device_id: 0x73ff,
+        });
+        assert_eq!(
+            amf.init_hw_device(&surfaces),
+            vec![
+                "-init_hw_device",
+                "d3d11va=dx:1",
+                "-init_hw_device",
+                "amf=hw@dx",
+                "-filter_hw_device",
+                "hw"
+            ]
+        );
     }
 
     fn video_stream(codec: &str, pix_fmt: &str) -> ProbeResultVideoStream {

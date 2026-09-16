@@ -21,7 +21,7 @@ use libamf_sys::{
 };
 
 use crate::capabilities::amf::{
-    AmfCapabilities, AmfDevice, AmfEncoderCapability, AmfSurfaceFormat,
+    AmfAdapter, AmfCapabilities, AmfDevice, AmfDeviceTarget, AmfEncoderCapability, AmfSurfaceFormat,
 };
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
@@ -120,16 +120,53 @@ fn error(message: String) -> FFPipelineError {
     FFPipelineError::AmfCapabilitiesError(message)
 }
 
-impl AmfCapabilities {
-    pub fn probe() -> Result<AmfCapabilities, FFPipelineError> {
-        let amf =
-            AmfLib::load().map_err(|e| error(format!("failed to load the AMF runtime: {e}")))?;
+struct Backing {
+    adapter: AmfAdapter,
+    #[cfg(target_os = "windows")]
+    device: libd3d11_sys::D3d11Device,
+}
 
-        unsafe { probe_amf(&amf) }
+impl Backing {
+    #[cfg(target_os = "windows")]
+    fn d3d11_device(&self) -> *mut c_void {
+        self.device.as_ptr()
     }
 }
 
-unsafe fn probe_amf(amf: &AmfLib) -> Result<AmfCapabilities, FFPipelineError> {
+#[cfg(target_os = "windows")]
+fn select_backing(target: AmfDeviceTarget) -> Result<Option<Backing>, FFPipelineError> {
+    Ok(super::adapter::select(target)?.map(|selected| Backing {
+        adapter: selected.info,
+        device: selected.device,
+    }))
+}
+
+/// ffmpeg cannot derive AMF from a Vulkan device, so a choice made here could not be
+/// passed on. The runtime picks on both sides instead.
+#[cfg(not(target_os = "windows"))]
+fn select_backing(target: AmfDeviceTarget) -> Result<Option<Backing>, FFPipelineError> {
+    if let AmfDeviceTarget::Adapter(index) = target {
+        log::warn!("[amf] amf_device {index} is only supported on Windows; ignoring");
+    }
+    Ok(None)
+}
+
+impl AmfCapabilities {
+    pub fn probe_with(target: AmfDeviceTarget) -> Result<AmfCapabilities, FFPipelineError> {
+        let amf =
+            AmfLib::load().map_err(|e| error(format!("failed to load the AMF runtime: {e}")))?;
+
+        // kept in this frame so the D3D11 device outlives the AMF context built on it
+        let backing = select_backing(target)?;
+
+        unsafe { probe_amf(&amf, backing.as_ref()) }
+    }
+}
+
+unsafe fn probe_amf(
+    amf: &AmfLib,
+    backing: Option<&Backing>,
+) -> Result<AmfCapabilities, FFPipelineError> {
     unsafe {
         let mut runtime = 0u64;
         let runtime_version = match (amf.AMFQueryVersion)(&mut runtime) {
@@ -165,8 +202,16 @@ unsafe fn probe_amf(amf: &AmfLib) -> Result<AmfCapabilities, FFPipelineError> {
         }
         let context = Context(context);
 
-        let device = init_device(context.0)?;
-        log::trace!("[amf] context initialized on {}", device.name());
+        let device = init_device(context.0, backing)?;
+        match backing {
+            Some(backing) => log::trace!(
+                "[amf] context initialized on {} (adapter {}: \"{}\")",
+                device.name(),
+                backing.adapter.index,
+                backing.adapter.description
+            ),
+            None => log::trace!("[amf] context initialized on {}", device.name()),
+        }
 
         let mut supported_decoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         for (format, id, bit_depths) in DECODERS {
@@ -195,20 +240,33 @@ unsafe fn probe_amf(amf: &AmfLib) -> Result<AmfCapabilities, FFPipelineError> {
             vpp_output_formats,
             runtime_version: runtime_version.map(amf_version_parts),
             device: Some(device),
+            adapter: backing.map(|b| b.adapter.clone()),
         })
     }
 }
 
-/// Same backend order as ffmpeg's hwcontext_amf: DX11, DX9, then Vulkan.
-unsafe fn init_device(context: *mut AMFContext) -> Result<AmfDevice, FFPipelineError> {
+/// Same backend order as ffmpeg's hwcontext_amf: DX11, DX9, then Vulkan. With a backing
+/// D3D11 device there is no fallback, because another backend would land on another GPU.
+unsafe fn init_device(
+    context: *mut AMFContext,
+    backing: Option<&Backing>,
+) -> Result<AmfDevice, FFPipelineError> {
     let mut failures = Vec::new();
 
     #[cfg(target_os = "windows")]
     unsafe {
-        let result =
-            ((*(*context).pVtbl).InitDX11)(context, ptr::null_mut(), libamf_sys::AMF_DX11_1);
+        let d3d11_device = backing.map_or(ptr::null_mut(), Backing::d3d11_device);
+        let result = ((*(*context).pVtbl).InitDX11)(context, d3d11_device, libamf_sys::AMF_DX11_1);
         if result == AMF_OK {
             return Ok(AmfDevice::Dx11);
+        }
+        if let Some(backing) = backing {
+            return Err(error(format!(
+                "InitDX11 on adapter {} (\"{}\") failed: {}",
+                backing.adapter.index,
+                backing.adapter.description,
+                amf_result_name(result)
+            )));
         }
         failures.push(format!("InitDX11: {}", amf_result_name(result)));
 
@@ -218,6 +276,9 @@ unsafe fn init_device(context: *mut AMFContext) -> Result<AmfDevice, FFPipelineE
         }
         failures.push(format!("InitDX9: {}", amf_result_name(result)));
     }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = backing;
 
     unsafe {
         let mut context1: *mut AMFContext1 = ptr::null_mut();

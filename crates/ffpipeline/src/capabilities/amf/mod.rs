@@ -4,6 +4,7 @@ use std::fmt::{Debug, Formatter};
 use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12, AMF_SURFACE_P010, amf_surface_format_name};
 use serde::Serialize;
 
+use crate::error::FFPipelineError;
 use crate::pipeline::{PixelFormat, VideoFormat};
 
 #[cfg(all(
@@ -17,6 +18,26 @@ pub(crate) mod probe;
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
 pub(crate) mod stub;
+
+#[cfg(target_os = "windows")]
+pub(crate) mod adapter;
+
+/// Only Windows can honour a target: ffmpeg reaches a specific adapter by deriving AMF
+/// from a `d3d11va` device, and no such path exists on Linux.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AmfDeviceTarget {
+    #[default]
+    Auto,
+    Adapter(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AmfAdapter {
+    pub index: u32,
+    pub description: String,
+    pub vendor_id: u32,
+    pub device_id: u32,
+}
 
 /// AMF_MAKE_FULL_VERSION(1, 4, 32, 0), the floor libavcodec/amfenc.c applies to P010
 const MIN_RUNTIME_FOR_10BIT_ENCODE: (u16, u16, u16, u16) = (1, 4, 32, 0);
@@ -70,9 +91,14 @@ pub struct AmfCapabilities {
     pub(crate) vpp_output_formats: HashSet<AmfSurfaceFormat>,
     pub(crate) runtime_version: Option<(u16, u16, u16, u16)>,
     pub(crate) device: Option<AmfDevice>,
+    pub(crate) adapter: Option<AmfAdapter>,
 }
 
 impl AmfCapabilities {
+    pub fn probe() -> Result<AmfCapabilities, FFPipelineError> {
+        Self::probe_with(AmfDeviceTarget::Auto)
+    }
+
     pub fn can_decode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
         self.supported_decoders
             .get(format)
@@ -146,6 +172,12 @@ impl AmfCapabilities {
         self.device
     }
 
+    /// `None` means the probe let the runtime choose, so ffmpeg must do the same for the
+    /// capabilities to match.
+    pub fn adapter(&self) -> Option<&AmfAdapter> {
+        self.adapter.as_ref()
+    }
+
     pub fn count(&self) -> usize {
         self.supported_decoders.len() + self.supported_encoders.len()
     }
@@ -212,6 +244,7 @@ mod tests {
             vpp_output_formats: output.iter().map(|f| AmfSurfaceFormat(*f)).collect(),
             runtime_version,
             device: Some(AmfDevice::Dx11),
+            adapter: None,
         }
     }
 
