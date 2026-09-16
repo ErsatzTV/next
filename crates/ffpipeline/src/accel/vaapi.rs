@@ -533,10 +533,8 @@ mod tests {
             video_filters.insert(f.to_string());
         }
         FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
-            preferred_filters: HashMap::new(),
-            video_filter_options: HashMap::new(),
+            ..Default::default()
         }
     }
 

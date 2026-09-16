@@ -276,8 +276,11 @@ pub const AMF_VARIANT_FLOAT_POINT2D: AMF_VARIANT_TYPE = 15;
 pub const AMF_VARIANT_FLOAT_POINT3D: AMF_VARIANT_TYPE = 16;
 pub const AMF_VARIANT_FLOAT_VECTOR4D: AMF_VARIANT_TYPE = 17;
 
-// ffmpeg only instantiates these components; the MPEG-2, VC-1 and MJPEG decoders
-// exist but nothing uses them.
+// Only the components ffmpeg creates are listed. Stock ffmpeg uses H.264, HEVC, VP9
+// and AV1; MPEG-2 and VC-1 need the etv mpeg2_amf/vc1_amf patch. The
+// SDK also has MPEG-4, WMV3 and MJPEG components, but nothing uses them.
+pub const AMFVideoDecoderUVD_MPEG2: &str = "AMFVideoDecoderUVD_MPEG2";
+pub const AMFVideoDecoderUVD_VC1: &str = "AMFVideoDecoderUVD_VC1";
 pub const AMFVideoDecoderUVD_H264_AVC: &str = "AMFVideoDecoderUVD_H264_AVC";
 pub const AMFVideoDecoderHW_H265_HEVC: &str = "AMFVideoDecoderHW_H265_HEVC";
 /// Deprecated in the SDK, but ffmpeg still creates this for 10-bit HEVC

@@ -26,7 +26,28 @@ fn video_format(codec: &str) -> Option<VideoFormat> {
         "av1" => Some(VideoFormat::Av1),
         "h264" => Some(VideoFormat::H264),
         "hevc" => Some(VideoFormat::Hevc),
+        "mpeg2video" => Some(VideoFormat::Mpeg2Video),
+        "vc1" => Some(VideoFormat::Vc1),
         "vp9" => Some(VideoFormat::Vp9),
+        _ => None,
+    }
+}
+
+/// `-hwaccel amf` makes ffmpeg use this decoder, so the build must include it. Stock
+/// ffmpeg ships av1, h264, hevc and vp9; mpeg2_amf comes from the etv patch.
+/// If the decoder is missing, ffmpeg falls back to software decoding with no warning.
+///
+/// vc1_amf is in the same patch but is left out on purpose. The AMF runtime gives each
+/// output picture the pts of its own packet. VC-1 in MKV has decode-order timestamps,
+/// so output pts swap in pairs, and a cfr encode then duplicates and drops about
+/// a third of the frames. The native decoder avoids this with a one-frame reorder.
+fn amf_decoder(codec: &str) -> Option<&'static str> {
+    match codec {
+        "av1" => Some("av1_amf"),
+        "h264" => Some("h264_amf"),
+        "hevc" => Some("hevc_amf"),
+        "mpeg2video" => Some("mpeg2_amf"),
+        "vp9" => Some("vp9_amf"),
         _ => None,
     }
 }
@@ -151,9 +172,13 @@ impl HwAccel for Amf {
 
     fn make_decoder(
         &self,
-        _ffmpeg_info: &FfmpegInfo,
+        ffmpeg_info: &FfmpegInfo,
         video_stream: &ProbeResultVideoStream,
     ) -> Option<HwDecoder> {
+        if !amf_decoder(&video_stream.codec).is_some_and(|d| ffmpeg_info.has_decoder(d)) {
+            return None;
+        }
+
         let pixel_format = PixelFormat::parse(&video_stream.pix_fmt);
         if !self.can_decode(&video_stream.codec, &video_stream.profile, &pixel_format)
             && !self.can_decode_for_tonemap(video_stream, &pixel_format)
@@ -324,12 +349,21 @@ mod tests {
     use crate::frame_rate::FrameRate;
     use crate::probe::{CodecType, ProbeResultColorParams, ProbeResultVideoStream};
 
+    /// Models a build with the etv patch, so mpeg2_amf and vc1_amf exist.
     fn make_ffmpeg_info() -> FfmpegInfo {
         FfmpegInfo {
-            hwaccels: HashSet::new(),
+            decoders: [
+                "h264_amf",
+                "hevc_amf",
+                "vp9_amf",
+                "av1_amf",
+                "mpeg2_amf",
+                "vc1_amf",
+            ]
+            .map(String::from)
+            .into(),
             video_filters: HashSet::from([KnownVideoFilter::VppAmf.to_string()]),
-            preferred_filters: HashMap::new(),
-            video_filter_options: HashMap::new(),
+            ..Default::default()
         }
     }
 
@@ -372,6 +406,8 @@ mod tests {
         let mut supported_decoders = HashMap::new();
         supported_decoders.insert(VideoFormat::H264, vec![8]);
         supported_decoders.insert(VideoFormat::Hevc, vec![8, 10]);
+        supported_decoders.insert(VideoFormat::Mpeg2Video, vec![8]);
+        supported_decoders.insert(VideoFormat::Vc1, vec![8]);
 
         let mut supported_encoders = HashMap::new();
         supported_encoders.insert(
@@ -476,7 +512,49 @@ mod tests {
         assert!(!amf.can_decode("h264", "high 10", &PixelFormat::Yuv420p10le));
         assert!(amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
         assert!(!amf.can_decode("vp9", "profile 0", &PixelFormat::Yuv420p));
-        assert!(!amf.can_decode("mpeg2video", "main", &PixelFormat::Yuv420p));
+        assert!(amf.can_decode("mpeg2video", "main", &PixelFormat::Yuv420p));
+        assert!(amf.can_decode("vc1", "advanced", &PixelFormat::Yuv420p));
+        assert!(!amf.can_decode("mpeg4", "simple", &PixelFormat::Yuv420p));
+    }
+
+    #[test]
+    fn decoder_requires_the_amf_decoder_in_ffmpeg() {
+        let amf = make_amf_with_vpp(&[AMF_SURFACE_NV12, AMF_SURFACE_P010, AMF_SURFACE_BGRA]);
+        let with_patch = make_ffmpeg_info();
+        assert!(
+            amf.make_decoder(&with_patch, &video_stream("mpeg2video", "yuv420p"))
+                .is_some()
+        );
+        // hardware and build both support vc1, but vc1_amf breaks timestamps
+        assert!(
+            amf.make_decoder(&with_patch, &video_stream("vc1", "yuv420p"))
+                .is_none()
+        );
+
+        // stock ffmpeg, without the etv patch
+        let stock = FfmpegInfo {
+            decoders: ["h264_amf", "hevc_amf", "vp9_amf", "av1_amf"]
+                .map(String::from)
+                .into(),
+            ..make_ffmpeg_info()
+        };
+        assert!(
+            amf.make_decoder(&stock, &video_stream("h264", "yuv420p"))
+                .is_some()
+        );
+        assert!(
+            amf.make_decoder(&stock, &video_stream("mpeg2video", "yuv420p"))
+                .is_none()
+        );
+        assert!(
+            amf.make_decoder(&stock, &video_stream("vc1", "yuv420p"))
+                .is_none()
+        );
+
+        assert!(
+            amf.make_decoder(&FfmpegInfo::default(), &video_stream("h264", "yuv420p"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -486,11 +564,11 @@ mod tests {
         assert!(amf.can_decode("hevc", "main", &PixelFormat::Yuv420p));
         assert!(!amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
         assert!(
-            amf.make_decoder(&FfmpegInfo::default(), &video_stream("hevc", "yuv420p10le"))
+            amf.make_decoder(&make_ffmpeg_info(), &video_stream("hevc", "yuv420p10le"))
                 .is_none()
         );
         assert!(
-            amf.make_decoder(&FfmpegInfo::default(), &pq_video_stream())
+            amf.make_decoder(&make_ffmpeg_info(), &pq_video_stream())
                 .is_none()
         );
     }
@@ -501,13 +579,13 @@ mod tests {
         let amf = make_amf();
         assert!(!amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
         assert!(
-            amf.make_decoder(&FfmpegInfo::default(), &video_stream("hevc", "yuv420p10le"))
+            amf.make_decoder(&make_ffmpeg_info(), &video_stream("hevc", "yuv420p10le"))
                 .is_none(),
             "sdr 10-bit must stay in software: the converter mangles P010 to NV12"
         );
 
         let decoder = amf
-            .make_decoder(&FfmpegInfo::default(), &pq_video_stream())
+            .make_decoder(&make_ffmpeg_info(), &pq_video_stream())
             .expect("pq source should decode on the device");
         assert_eq!(decoder.surface, FrameSurface::Amf);
 
@@ -518,7 +596,7 @@ mod tests {
             },
             ..pq_video_stream()
         };
-        assert!(amf.make_decoder(&FfmpegInfo::default(), &hlg).is_none());
+        assert!(amf.make_decoder(&make_ffmpeg_info(), &hlg).is_none());
     }
 
     #[test]
