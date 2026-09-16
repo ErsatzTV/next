@@ -21,6 +21,11 @@ pub(crate) mod stub;
 /// AMF_MAKE_FULL_VERSION(1, 4, 32, 0), the floor libavcodec/amfenc.c applies to P010
 const MIN_RUNTIME_FOR_10BIT_ENCODE: (u16, u16, u16, u16) = (1, 4, 32, 0);
 
+/// The converter's color management landed in AMF SDK 1.4.34 (driver 24.6.1). PQ to
+/// bt709 conversion of decoder P010 surfaces is verified on 1.4.37 (RDNA2) and crashes
+/// the 1.4.31 driver, see [`AmfCapabilities::vpp_accepts_input`].
+const MIN_RUNTIME_FOR_VPP_TONEMAP: (u16, u16, u16, u16) = (1, 4, 34, 0);
+
 /// ffmpeg's amf hwcontext tries the same backends in the same order, so this is also
 /// where ffmpeg's frames will live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -114,6 +119,15 @@ impl AmfCapabilities {
     /// feeding those surfaces to vpp_amf crashes inside the driver instead of failing.
     pub fn vpp_accepts_input(&self, pixel_format: &PixelFormat) -> bool {
         vpp_surface(pixel_format).is_some_and(|s| self.vpp_input_formats.contains(&s))
+    }
+
+    /// Whether vpp_amf can convert decoder PQ surfaces to bt709 nv12. The converter
+    /// caps never list P010 input, even on runtimes that handle it, so this checks the
+    /// runtime version instead. Only the tonemap works: the same converter still
+    /// mangles plain P010 to NV12 and PQ to P010.
+    pub fn can_tonemap(&self) -> bool {
+        self.runtime_version
+            .is_some_and(|version| version >= MIN_RUNTIME_FOR_VPP_TONEMAP)
     }
 
     pub fn vpp_input_formats(&self) -> Vec<String> {
@@ -212,6 +226,15 @@ mod tests {
         );
         assert!(caps_with_runtime(Some((1, 5, 0, 0)), &[], &[]).can_encode(&VideoFormat::Hevc, 10));
         assert!(!caps_with_runtime(None, &[], &[]).can_encode(&VideoFormat::Hevc, 10));
+    }
+
+    #[test]
+    fn tonemap_requires_runtime_1_4_34() {
+        assert!(!caps_with_runtime(Some((1, 4, 31, 0)), &[], &[]).can_tonemap());
+        assert!(!caps_with_runtime(Some((1, 4, 33, 0)), &[], &[]).can_tonemap());
+        assert!(caps_with_runtime(Some((1, 4, 34, 0)), &[], &[]).can_tonemap());
+        assert!(caps_with_runtime(Some((1, 5, 0, 0)), &[], &[]).can_tonemap());
+        assert!(!caps_with_runtime(None, &[], &[]).can_tonemap());
     }
 
     #[test]
