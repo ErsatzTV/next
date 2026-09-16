@@ -8,6 +8,7 @@ members = [
     "crates/ffpipeline",
     "crates/libamf-sys",
     "crates/libcl-sys",
+    "crates/libd3d11-sys",
     "crates/libmpp-sys",
     "crates/libnvidia-sys",
     "crates/libva-sys",
@@ -34,6 +35,7 @@ futures-util = "0.3.32"
 libloading = "0.9"
 libamf-sys = { path = "crates/libamf-sys" }
 libcl-sys = { path = "crates/libcl-sys" }
+libd3d11-sys = { path = "crates/libd3d11-sys" }
 libmpp-sys = { path = "crates/libmpp-sys" }
 libnvidia-sys = { path = "crates/libnvidia-sys" }
 libva-sys = { path = "crates/libva-sys" }

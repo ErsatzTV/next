@@ -83,6 +83,8 @@ struct DeviceIdentity {
     device_type: u32,
     vendor_id: u32,
     device_uuid: Option<[u8; 16]>,
+    /// Only Windows drivers report a LUID
+    device_luid: Option<[u8; 8]>,
 }
 
 impl CapsBuf {
@@ -127,18 +129,38 @@ impl VulkanCapabilities {
     }
 }
 
-fn probe_target(target: DeviceTarget) -> Result<VulkanCapabilities, FFPipelineError> {
-    let vk = VkLib::load().map_err(|e| {
-        FFPipelineError::VulkanCapabilitiesError(format!("failed to load libvulkan: {e}"))
-    })?;
-
-    unsafe { probe_vulkan(&vk, target) }
+/// Lets another API target the same GPU that [`VulkanCapabilities::probe`] would pick
+/// among `vendor_id` devices. Only Windows drivers report a LUID.
+pub fn best_device_luid(vendor_id: u32) -> Result<Option<[u8; 8]>, FFPipelineError> {
+    let vk = load()?;
+    unsafe {
+        with_instance(&vk, |instance| {
+            let (_, identities, extensions) = enumerate_devices(&vk, instance)?;
+            let best = identities
+                .iter()
+                .zip(&extensions)
+                .filter(|(identity, _)| identity.vendor_id == vendor_id)
+                .max_by_key(|(identity, ext_names)| score(identity, ext_names));
+            Ok(best.and_then(|(identity, _)| identity.device_luid))
+        })
+    }
 }
 
-unsafe fn probe_vulkan(
+fn load() -> Result<VkLib, FFPipelineError> {
+    VkLib::load().map_err(|e| {
+        FFPipelineError::VulkanCapabilitiesError(format!("failed to load libvulkan: {e}"))
+    })
+}
+
+fn probe_target(target: DeviceTarget) -> Result<VulkanCapabilities, FFPipelineError> {
+    let vk = load()?;
+    unsafe { with_instance(&vk, |instance| probe_with_instance(&vk, instance, target)) }
+}
+
+unsafe fn with_instance<T>(
     vk: &VkLib,
-    target: DeviceTarget,
-) -> Result<VulkanCapabilities, FFPipelineError> {
+    f: impl FnOnce(libvulkan_sys::VkInstance) -> Result<T, FFPipelineError>,
+) -> Result<T, FFPipelineError> {
     unsafe {
         let app_name = b"ersatztv\0";
         let app_info = VkApplicationInfo {
@@ -170,11 +192,11 @@ unsafe fn probe_vulkan(
             )));
         }
 
-        let caps = probe_with_instance(vk, instance, target);
+        let result = f(instance);
 
         (vk.vkDestroyInstance)(instance, ptr::null());
 
-        caps
+        result
     }
 }
 
@@ -196,8 +218,20 @@ unsafe fn get_device_identity(vk: &VkLib, device: VkPhysicalDevice) -> DeviceIde
             device_type: props2.properties.device_type,
             vendor_id: props2.properties.vendor_id,
             device_uuid: (id_props.device_uuid != [0u8; 16]).then_some(id_props.device_uuid),
+            device_luid: (id_props.device_luid_valid != 0).then_some(id_props.device_luid),
         }
     }
+}
+
+fn score(identity: &DeviceIdentity, ext_names: &HashSet<String>) -> i32 {
+    let mut score = VIDEO_EXTENSIONS
+        .iter()
+        .filter(|e| ext_names.contains(**e))
+        .count() as i32;
+    if identity.device_type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU {
+        score += 100;
+    }
+    score
 }
 
 fn select_device(
@@ -210,14 +244,7 @@ fn select_device(
             let mut best: Option<(usize, i32)> = None;
 
             for (i, (identity, ext_names)) in identities.iter().zip(extensions).enumerate() {
-                let mut score = VIDEO_EXTENSIONS
-                    .iter()
-                    .filter(|e| ext_names.contains(**e))
-                    .count() as i32;
-                if identity.device_type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU {
-                    score += 100;
-                }
-
+                let score = score(identity, ext_names);
                 if best.is_none_or(|(_, best_score)| score > best_score) {
                     best = Some((i, score));
                 }
@@ -250,11 +277,16 @@ fn device_type_name(device_type: u32) -> &'static str {
     }
 }
 
-unsafe fn probe_with_instance(
+type EnumeratedDevices = (
+    Vec<VkPhysicalDevice>,
+    Vec<DeviceIdentity>,
+    Vec<HashSet<String>>,
+);
+
+unsafe fn enumerate_devices(
     vk: &VkLib,
     instance: libvulkan_sys::VkInstance,
-    target: DeviceTarget,
-) -> Result<VulkanCapabilities, FFPipelineError> {
+) -> Result<EnumeratedDevices, FFPipelineError> {
     unsafe {
         let mut device_count: u32 = 0;
         (vk.vkEnumeratePhysicalDevices)(instance, &mut device_count, ptr::null_mut());
@@ -300,6 +332,17 @@ unsafe fn probe_with_instance(
             extensions.push(ext_names);
         }
 
+        Ok((devices, identities, extensions))
+    }
+}
+
+unsafe fn probe_with_instance(
+    vk: &VkLib,
+    instance: libvulkan_sys::VkInstance,
+    target: DeviceTarget,
+) -> Result<VulkanCapabilities, FFPipelineError> {
+    unsafe {
+        let (devices, identities, extensions) = enumerate_devices(vk, instance)?;
         let selected = select_device(target, &identities, &extensions)?;
         let device_index = selected as u32;
         let physical_device = devices[selected];
