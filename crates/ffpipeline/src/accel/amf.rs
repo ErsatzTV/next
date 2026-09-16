@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::ArgVec;
 use crate::capabilities::amf::AmfCapabilities;
-use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
+use crate::ffmpeg_info::{FfmpegInfo, KnownDecoders, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
@@ -43,11 +43,11 @@ fn video_format(codec: &str) -> Option<VideoFormat> {
 /// a third of the frames. The native decoder avoids this with a one-frame reorder.
 fn amf_decoder(codec: &str) -> Option<&'static str> {
     match codec {
-        "av1" => Some("av1_amf"),
-        "h264" => Some("h264_amf"),
-        "hevc" => Some("hevc_amf"),
-        "mpeg2video" => Some("mpeg2_amf"),
-        "vp9" => Some("vp9_amf"),
+        "av1" => Some(KnownDecoders::Av1Amf.into()),
+        "h264" => Some(KnownDecoders::H264Amf.into()),
+        "hevc" => Some(KnownDecoders::HevcAmf.into()),
+        "mpeg2video" => Some(KnownDecoders::Mpeg2Amf.into()),
+        "vp9" => Some(KnownDecoders::Vp9Amf.into()),
         _ => None,
     }
 }
