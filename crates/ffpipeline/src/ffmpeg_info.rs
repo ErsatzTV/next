@@ -14,6 +14,12 @@ use crate::error::FFPipelineError;
 static KNOWN_ACCELS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| KnownHardwareAccel::iter().map(|x| x.into()).collect());
 
+static KNOWN_DECODERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    KnownDecoders::iter()
+        .map(|x| x.into())
+        .collect::<Vec<&str>>()
+});
+
 static KNOWN_FILTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     KnownVideoFilter::iter()
         .map(|x| x.into())
@@ -97,6 +103,22 @@ pub enum KnownVideoFilter {
     Yadif,
     #[strum(serialize = "yadif_cuda")]
     YadifCuda,
+}
+
+#[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
+pub enum KnownDecoders {
+    #[strum(serialize = "av1_amf")]
+    Av1Amf,
+    #[strum(serialize = "h264_amf")]
+    H264Amf,
+    #[strum(serialize = "hevc_amf")]
+    HevcAmf,
+    #[strum(serialize = "mpeg2_amf")]
+    Mpeg2Amf,
+    #[strum(serialize = "vc1_amf")]
+    Vc1Amf,
+    #[strum(serialize = "vp9_amf")]
+    Vp9Amf,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -273,7 +295,7 @@ impl FfmpegInfo {
                 let mut parts = line.split_whitespace();
                 let flags = parts.next()?;
                 let name = parts.next()?;
-                (flags.starts_with('V')).then(|| name.to_owned())
+                (flags.starts_with('V') && KNOWN_DECODERS.contains(&name)).then(|| name.to_owned())
             })
             .collect()
     }
@@ -461,7 +483,6 @@ vpp_qsv AVOptions:
                        A....D aac                  AAC (Advanced Audio Coding)\n \
                        S..... dvdsub               DVD subtitles\n";
         let decoders = FfmpegInfo::parse_decoders(listing);
-        assert!(decoders.contains("h264"));
         assert!(decoders.contains("h264_amf"));
         assert!(decoders.contains("mpeg2_amf"));
         assert!(!decoders.contains("aac"));
