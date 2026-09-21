@@ -18,7 +18,7 @@ async fn make_rkmpp_accel() -> Option<&'static HardwareAccel> {
     RKMPP_ACCEL
         .get_or_init(|| async {
             let capabilities = RkmppCapabilities::probe().ok()?;
-            Some(HardwareAccel::Rkmpp(Rkmpp { capabilities }))
+            (capabilities.count() > 0).then(|| HardwareAccel::Rkmpp(Rkmpp { capabilities }))
         })
         .await
         .as_ref()
@@ -155,7 +155,7 @@ async fn run_rkmpp_test_case(mut test_case: TestCase) {
         }
 
         let Some(accel) = make_rkmpp_accel().await else {
-            panic!("rkmpp accel failed to probe");
+            panic!("rkmpp accel failed to probe any capabilities");
         };
 
         test_case.params.accel = Some(accel.clone());

@@ -24,6 +24,9 @@ async fn make_cuda_accel() -> Option<&'static HardwareAccel> {
     CUDA_ACCEL
         .get_or_init(|| async {
             let capabilities = NvidiaCapabilities::probe().ok()?;
+            if capabilities.count() == 0 {
+                return None;
+            }
             let vulkan = VulkanCapabilities::probe_for_nvidia(capabilities.device_uuid()).ok();
             Some(HardwareAccel::Cuda(Cuda::new(capabilities, vulkan)))
         })
@@ -275,7 +278,7 @@ async fn run_cuda_test_case(mut test_case: TestCase) {
         }
 
         let Some(accel) = make_cuda_accel().await else {
-            panic!("no usable NVIDIA GPU found");
+            panic!("no usable NVIDIA GPU found, or it reported no decode/encode capabilities");
         };
 
         test_case.params.accel = Some(accel.clone());

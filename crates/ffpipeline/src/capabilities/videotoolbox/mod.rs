@@ -24,6 +24,10 @@ impl VideoToolboxCapabilities {
     pub fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
         self.supported_encoders.contains(&(*format, bit_depth))
     }
+
+    pub fn count(&self) -> usize {
+        self.supported_decoders.len() + self.supported_encoders.len()
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use std::time::Duration;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
-use ffpipeline::hw_accel::HardwareAccel;
+use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
 use ffpipeline::input::{
     GraphicsKind, InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput,
     WatermarkLocation, WatermarkTiming,
@@ -15,8 +15,12 @@ use ffpipeline::output_settings::{
     AudioLoudnessSettings, AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode,
     VideoFilterOptions,
 };
-use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
-use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
+use ffpipeline::pipeline::{
+    AudioFormat, Hz, Kbps, Pipeline, PixelFormat, VideoFormat, generate_pipeline,
+};
+use ffpipeline::probe::{
+    ProbeDeps, ProbeResult, ProbeResultStream, ProbeResultVideoStream, Probeable,
+};
 use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 
@@ -99,10 +103,18 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
 
     let accel = test_case.params.accel.clone();
     let deinterlace = test_case.params.deinterlace;
-    let source_is_hdr = probe.streams.iter().any(|s| match s {
-        ProbeResultStream::Video(v) => v.color_params.is_hdr() || v.dv_profile == Some(5),
-        _ => false,
-    });
+    let video_format = test_case.params.video_format;
+    let bit_depth = test_case.params.bit_depth.unwrap_or(8);
+    let video_size = test_case.params.video_size;
+    let source_video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.clone()),
+            _ => None,
+        })
+        .expect("no video stream found in source");
+    let source_is_hdr = source_video.color_params.is_hdr() || source_video.dv_profile == Some(5);
     // without frame rate normalization, output must keep the source frame rate
     let expected_frame_rate = test_case
         .params
@@ -121,6 +133,18 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
 
     let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
     assert!(success, "ffmpeg failed:\n{stderr}");
+
+    if let Some(accel) = &accel {
+        assert_accel_usage(
+            accel,
+            &source_video,
+            source_is_hdr,
+            video_format,
+            bit_depth,
+            video_size,
+            &pipeline.args(),
+        );
+    }
 
     let segment = find_first_segment(dir.path());
     let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
@@ -541,6 +565,67 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
         })
         .expect("no audio stream found in output");
     assert_eq!(audio.codec, codec, "unexpected audio codec");
+}
+
+/// The output assertions cannot tell hardware output from a software fallback, so the
+/// pipeline must agree with what the accel's capability probe says it can do (PR #192).
+#[allow(dead_code)]
+pub fn assert_accel_usage(
+    accel: &HardwareAccel,
+    source: &ProbeResultVideoStream,
+    source_is_hdr: bool,
+    video_format: Option<VideoFormat>,
+    bit_depth: u8,
+    video_size: Option<FrameSize>,
+    args: &[impl AsRef<str>],
+) {
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+    let cmd = args.join(" ");
+
+    let hw_decode = args.contains(&"-hwaccel");
+    let pixel_format = PixelFormat::parse(&source.pix_fmt);
+    if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
+        assert!(
+            hw_decode,
+            "{accel} reports it can decode {} {} but the pipeline used software decode:\n{cmd}",
+            source.codec, source.pix_fmt
+        );
+    } else if !source_is_hdr {
+        // HDR sources may take an accel-specific decode path (e.g. AMF decode-for-tonemap)
+        assert!(
+            !hw_decode,
+            "{accel} reports it cannot decode {} {} but the pipeline used hardware decode:\n{cmd}",
+            source.codec, source.pix_fmt
+        );
+    }
+
+    let Some(format) = video_format else {
+        return;
+    };
+    let actual = args
+        .iter()
+        .position(|a| *a == "-vcodec")
+        .map(|i| args[i + 1])
+        .expect("no -vcodec in pipeline args");
+    if accel.can_encode(&format, bit_depth) {
+        let expected = accel
+            .codec_for_format(&format, bit_depth, video_size)
+            .map(|c| c.codec_name())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{accel} reports it can encode {bit_depth}-bit {format} but has no codec for it"
+                )
+            });
+        assert_eq!(
+            actual, expected,
+            "{accel} reports it can encode {bit_depth}-bit {format} but the pipeline used {actual}:\n{cmd}"
+        );
+    } else {
+        assert!(
+            actual.starts_with("libx"),
+            "{accel} reports it cannot encode {bit_depth}-bit {format} but the pipeline used {actual}:\n{cmd}"
+        );
+    }
 }
 
 // this helps catch cases where e.g. vpp_qsv=tonemap=1 silently no-ops

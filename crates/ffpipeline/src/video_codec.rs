@@ -13,6 +13,10 @@ pub struct VideoCodec {
 impl VideoCodec {
     pub const COPY: &'static str = "copy";
 
+    pub fn codec_name(&self) -> &'static str {
+        self.codec_name
+    }
+
     pub fn copy() -> Self {
         Self {
             codec_name: Self::COPY,

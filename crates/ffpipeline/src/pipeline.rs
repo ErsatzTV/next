@@ -132,7 +132,7 @@ pub enum PixelFormat {
 gen_subset!(HwPixelFormat, PixelFormat, Nv12, Nv15, P010le);
 
 impl PixelFormat {
-    pub(crate) fn parse(pix_fmt: &str) -> PixelFormat {
+    pub fn parse(pix_fmt: &str) -> PixelFormat {
         match pix_fmt.to_lowercase().as_str() {
             "bgra" => PixelFormat::Bgra,
             "yuv420p" => PixelFormat::Yuv420p,
