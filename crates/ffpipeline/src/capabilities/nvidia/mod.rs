@@ -42,6 +42,10 @@ impl NvidiaCapabilities {
             .is_some_and(|cap| cap.bit_depths.contains(&bit_depth))
     }
 
+    pub fn count(&self) -> usize {
+        self.supported_decoders.len() + self.supported_encoders.len()
+    }
+
     pub fn b_frame_ref_mode(&self, format: &VideoFormat) -> bool {
         self.supported_encoders
             .get(format)

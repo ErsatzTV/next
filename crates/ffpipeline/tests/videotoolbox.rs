@@ -19,7 +19,8 @@ async fn make_videotoolbox_accel() -> Option<&'static HardwareAccel> {
     VIDEOTOOLBOX_ACCEL
         .get_or_init(|| async {
             let capabilities = VideoToolboxCapabilities::probe().ok()?;
-            Some(HardwareAccel::VideoToolbox(VideoToolbox { capabilities }))
+            (capabilities.count() > 0)
+                .then(|| HardwareAccel::VideoToolbox(VideoToolbox { capabilities }))
         })
         .await
         .as_ref()
@@ -159,7 +160,7 @@ async fn run_videotoolbox_test_case(mut test_case: TestCase) {
         }
 
         let Some(accel) = make_videotoolbox_accel().await else {
-            panic!("videotoolbox accel failed to probe");
+            panic!("videotoolbox accel failed to probe any capabilities");
         };
 
         test_case.params.accel = Some(accel.clone());
