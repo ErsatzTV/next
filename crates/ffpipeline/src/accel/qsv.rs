@@ -63,7 +63,9 @@ impl HwAccel for Qsv {
                 VppQsv::tonemap(self.output_format(format)).into()
             }
             VideoFilter::Transpose(TransposeFilter { dir: Some(dir) })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                    && self.capabilities.can_rotate(&current_state.pixel_format)
+                    && !current_state.is_interlaced =>
             {
                 VppQsv::transpose(*dir).into()
             }
@@ -409,6 +411,7 @@ mod tests {
                 supported_encoders: HashMap::new(),
                 vpp_pixel_formats: HashSet::new(),
                 vpp_filters: HashSet::new(),
+                rotation_formats: HashSet::new(),
                 runtime_api: None,
             },
         }
@@ -463,6 +466,57 @@ mod tests {
             }),
             scaling_mode: ScalingMode::ScaleAndPad,
         })
+    }
+
+    #[test]
+    fn transpose_requires_runtime_format_support() {
+        use crate::capabilities::qsv::QsvFourCC;
+        for api in [
+            None,
+            Some((1, 16)),
+            Some((1, 17)),
+            Some((1, 35)),
+            Some((2, 17)),
+        ] {
+            for supported in [false, true] {
+                for pixel_format in [PixelFormat::Nv12, PixelFormat::P010le] {
+                    let mut qsv = make_qsv();
+                    qsv.capabilities.runtime_api = api;
+                    if supported {
+                        qsv.capabilities
+                            .rotation_formats
+                            .insert(QsvFourCC(libvpl_sys::MFX_FOURCC_NV12));
+                    }
+                    let filter = TransposeFilter {
+                        dir: Some(TransposeDir::Clock),
+                    }
+                    .into();
+                    let state = FrameState {
+                        pixel_format,
+                        ..make_frame_state()
+                    };
+                    let result = qsv.best_filter(
+                        &filter,
+                        &make_ffmpeg_info(false),
+                        &state,
+                        &VideoFilterOptions::default(),
+                    );
+                    assert_eq!(
+                        matches!(result, VideoFilter::VppQsv(_)),
+                        supported
+                            && pixel_format == PixelFormat::Nv12
+                            && api.is_some_and(|v| v >= (1, 17))
+                    );
+                    let result = qsv.best_filter(
+                        &filter,
+                        &FfmpegInfo::default(),
+                        &state,
+                        &VideoFilterOptions::default(),
+                    );
+                    assert!(matches!(result, VideoFilter::Transpose(_)));
+                }
+            }
+        }
     }
 
     #[test]

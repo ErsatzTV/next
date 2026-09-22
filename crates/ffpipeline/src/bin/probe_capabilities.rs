@@ -291,6 +291,13 @@ fn print_qsv() -> Result<(), String> {
         println!("VPP Filters: {}", filters.join(" "));
     }
     println!("Can Tonemap: {}", caps.can_tonemap());
+    for pf in [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra] {
+        println!(
+            "Rotation {}: {}",
+            pixel_format_name(&pf),
+            yn(caps.can_rotate(&pf))
+        );
+    }
 
     Ok(())
 }
@@ -369,7 +376,16 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
             );
         }
     }
-    println!("  Overlay:     {}", yn(caps.can_overlay()));
+
+    println!();
+    println!("Overlay: {}", yn(caps.can_overlay()));
+    for dir in [
+        ffpipeline::video_filter::TransposeDir::Clock,
+        ffpipeline::video_filter::TransposeDir::CClock,
+        ffpipeline::video_filter::TransposeDir::Reversal,
+    ] {
+        println!("Rotation {dir:?}: {}", yn(caps.can_rotate(dir)));
+    }
 
     println!();
     println!("Rate Control:");

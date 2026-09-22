@@ -172,6 +172,16 @@ impl<'a> Session<'a> {
             vpp_pixel_formats,
             // 1.x runtime does not provide a filter list
             vpp_filters: HashSet::new(),
+            rotation_formats: VPP_FORMATS
+                .iter()
+                .filter(|(fourcc, bit_depth)| {
+                    self.api_version().is_some_and(|version| version >= (1, 17))
+                        && [90, 180, 270]
+                            .into_iter()
+                            .all(|angle| self.can_rotate(*fourcc, *bit_depth, angle))
+                })
+                .map(|(fourcc, _)| QsvFourCC(*fourcc))
+                .collect(),
             runtime_api: self.api_version(),
         }
     }
@@ -231,6 +241,42 @@ impl<'a> Session<'a> {
         input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
 
         self.query(Query::Vpp, 0, &mut input)
+    }
+
+    fn can_rotate(&self, fourcc: u32, bit_depth: u8, angle: u16) -> bool {
+        let mut rotation = mfxExtVPPRotation {
+            Header: mfxExtBuffer {
+                BufferId: MFX_EXTBUFF_VPP_ROTATION,
+                BufferSz: std::mem::size_of::<mfxExtVPPRotation>() as u32,
+            },
+            Angle: angle,
+            ..Default::default()
+        };
+        let mut output_rotation = rotation;
+        let mut input_ext = &mut rotation as *mut mfxExtVPPRotation;
+        let mut output_ext = &mut output_rotation as *mut mfxExtVPPRotation;
+        let source = frame_info(fourcc, bit_depth);
+        let mut target = source;
+        if angle != 180 {
+            std::mem::swap(&mut target.Width, &mut target.Height);
+            std::mem::swap(&mut target.CropW, &mut target.CropH);
+        }
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion {
+            vpp: mfxInfoVPP {
+                In: source,
+                Out: target,
+                ..Default::default()
+            },
+        };
+        input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        input.ExtParam = (&mut input_ext as *mut *mut mfxExtVPPRotation).cast();
+        input.NumExtParam = 1;
+        let mut output = input;
+        output.ExtParam = (&mut output_ext as *mut *mut mfxExtVPPRotation).cast();
+        let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
+        // Warnings can mean the runtime skipped rotation or changed the requested settings.
+        status == MFX_ERR_NONE && output_rotation.Angle == angle
     }
 
     fn query(&self, kind: Query, codec_id: u32, input: &mut mfxVideoParam) -> bool {

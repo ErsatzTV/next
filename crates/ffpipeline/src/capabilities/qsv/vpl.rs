@@ -18,6 +18,7 @@ impl QsvCapabilities {
         let mut supported_encoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         let mut vpp_pixel_formats = HashSet::new();
         let mut vpp_filters = HashSet::new();
+        let mut rotation_formats = HashSet::new();
         let mut runtime_api = None;
 
         let vpl = VplLib::load()
@@ -97,7 +98,7 @@ impl QsvCapabilities {
                     }
                 }
 
-                (vpp_pixel_formats, vpp_filters) = walk_filters(vpp);
+                (vpp_pixel_formats, vpp_filters, rotation_formats) = walk_filters(vpp);
 
                 (vpl.MFXDispReleaseImplDescription)(loader, hdl);
             }
@@ -122,6 +123,7 @@ impl QsvCapabilities {
             supported_encoders,
             vpp_pixel_formats,
             vpp_filters,
+            rotation_formats,
             runtime_api,
         })
     }
@@ -204,11 +206,14 @@ fn is_10bit_profile(codec_id: u32, profile: u32) -> bool {
     }
 }
 
-fn walk_filters(vpp: &mfxVPPDescription) -> (HashSet<QsvFourCC>, HashSet<QsvFourCC>) {
+fn walk_filters(
+    vpp: &mfxVPPDescription,
+) -> (HashSet<QsvFourCC>, HashSet<QsvFourCC>, HashSet<QsvFourCC>) {
     let mut vpp_pixel_formats = HashSet::new();
     let mut vpp_filters = HashSet::new();
+    let mut rotation_formats = HashSet::new();
     if vpp.NumFilters == 0 || vpp.Filters.is_null() {
-        return (vpp_pixel_formats, vpp_filters);
+        return (vpp_pixel_formats, vpp_filters, rotation_formats);
     }
 
     for i in 0..vpp.NumFilters as usize {
@@ -233,10 +238,56 @@ fn walk_filters(vpp: &mfxVPPDescription) -> (HashSet<QsvFourCC>, HashSet<QsvFour
                 for l in 0..fmt.NumOutFormat as usize {
                     let out = unsafe { &*fmt.OutFormats.add(l) };
                     vpp_pixel_formats.insert(QsvFourCC(*out));
+                    if filter.FilterFourCC == MFX_EXTBUFF_VPP_ROTATION && *out == fmt.InFormat {
+                        rotation_formats.insert(QsvFourCC(*out));
+                    }
                 }
             }
         }
     }
 
-    (vpp_pixel_formats, vpp_filters)
+    (vpp_pixel_formats, vpp_filters, rotation_formats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotation_requires_a_same_format_pair_in_the_rotation_filter() {
+        let mut output = MFX_FOURCC_NV12;
+        let mut format = mfxVPPDescription_filter_memdesc_format {
+            InFormat: MFX_FOURCC_NV12,
+            reserved: [0; 5],
+            NumOutFormat: 1,
+            OutFormats: &mut output,
+        };
+        // Zero initialization is valid because these structs contain only integers and raw pointers.
+        let mut mem: mfxVPPDescription_filter_memdesc = unsafe { std::mem::zeroed() };
+        mem.NumInFormats = 1;
+        mem.Formats = &mut format;
+        let mut filter: mfxVPPDescription_filter = unsafe { std::mem::zeroed() };
+        filter.NumMemTypes = 1;
+        filter.MemDesc = &mut mem;
+        let mut vpp: mfxVPPDescription = unsafe { std::mem::zeroed() };
+        vpp.NumFilters = 1;
+        vpp.Filters = &mut filter;
+
+        for filter_id in [MFX_EXTBUFF_VPP_ROTATION, MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN] {
+            filter.FilterFourCC = filter_id;
+            for input in [MFX_FOURCC_NV12, MFX_FOURCC_P010] {
+                format.InFormat = input;
+                mem.Formats = &mut format;
+                filter.MemDesc = &mut mem;
+                vpp.Filters = &mut filter;
+                let (formats, _, rotation) = walk_filters(&vpp);
+                assert!(formats.contains(&QsvFourCC(input)));
+                assert_eq!(
+                    rotation.contains(&QsvFourCC(MFX_FOURCC_NV12)),
+                    filter_id == MFX_EXTBUFF_VPP_ROTATION && input == MFX_FOURCC_NV12,
+                );
+                assert!(!rotation.contains(&QsvFourCC(MFX_FOURCC_P010)));
+            }
+        }
+    }
 }

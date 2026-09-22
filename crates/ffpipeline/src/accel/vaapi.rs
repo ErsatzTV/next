@@ -137,7 +137,8 @@ impl HwAccel for Vaapi {
             }
 
             VideoFilter::Transpose(TransposeFilter { dir: Some(dir), .. })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeVaapi) =>
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeVaapi)
+                    && self.capabilities.can_rotate(*dir) =>
             {
                 TransposeVaapi { dir: *dir }.into()
             }
@@ -578,6 +579,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -601,6 +603,43 @@ mod tests {
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
             rotation: None,
+        }
+    }
+
+    #[test]
+    fn transpose_requires_the_requested_driver_rotation_and_filter() {
+        for (dir, flag) in [
+            (TransposeDir::Clock, libva_sys::VA_ROTATION_90),
+            (TransposeDir::CClock, libva_sys::VA_ROTATION_270),
+            (TransposeDir::Reversal, libva_sys::VA_ROTATION_180),
+        ] {
+            for flags in [
+                0,
+                1 << libva_sys::VA_ROTATION_90,
+                1 << libva_sys::VA_ROTATION_180,
+                1 << libva_sys::VA_ROTATION_270,
+            ] {
+                for available in [false, true] {
+                    let mut vaapi = make_vaapi();
+                    vaapi.capabilities.rotation_flags = flags;
+                    let info = make_ffmpeg_info(if available {
+                        &[KnownVideoFilter::TransposeVaapi]
+                    } else {
+                        &[]
+                    });
+                    let filter = TransposeFilter { dir: Some(dir) }.into();
+                    let result = vaapi.best_filter(
+                        &filter,
+                        &info,
+                        &make_frame_state(),
+                        &VideoFilterOptions::default(),
+                    );
+                    assert_eq!(
+                        matches!(result, VideoFilter::TransposeVaapi(_)),
+                        available && flags & (1 << flag) != 0
+                    );
+                }
+            }
         }
     }
 

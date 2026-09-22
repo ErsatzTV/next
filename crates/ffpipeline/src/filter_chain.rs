@@ -786,6 +786,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities::default(),
@@ -846,6 +847,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap,
                 can_hdr_to_hdr_tonemap,
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -1301,6 +1303,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
