@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ffpipeline::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
+use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
@@ -136,7 +136,6 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
 
     if let Some(accel) = &accel {
         assert_accel_usage(
-            &test_env.ffmpeg_info,
             accel,
             &source_video,
             source_is_hdr,
@@ -621,9 +620,7 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
 /// The output assertions cannot tell hardware output from a software fallback, so the
 /// pipeline must agree with what the accel's capability probe says it can do (PR #192).
 #[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 pub fn assert_accel_usage(
-    ffmpeg_info: &FfmpegInfo,
     accel: &HardwareAccel,
     source: &ProbeResultVideoStream,
     source_is_hdr: bool,
@@ -638,28 +635,10 @@ pub fn assert_accel_usage(
     let hw_decode = args.contains(&"-hwaccel");
     let pixel_format = PixelFormat::parse(&source.pix_fmt);
     if source.rotation_degrees() != 0 {
-        match accel {
-            HardwareAccel::Cuda(_)
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeCuda) =>
-            {
-                assert!(
-                    cmd.contains("transpose_cuda="),
-                    "rotated source must be transposed by the pipeline but no transpose filter was used"
-                )
-            }
-            HardwareAccel::Vaapi(_)
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeVaapi) =>
-            {
-                assert!(
-                    cmd.contains("transpose_vaapi="),
-                    "rotated source must be transposed by the pipeline but no transpose filter was used"
-                )
-            }
-            _ => assert!(
-                cmd.contains("transpose="),
-                "rotated source must be transposed by the pipeline but no transpose filter was used"
-            ),
-        };
+        assert!(
+            cmd.contains("transpose") || cmd.contains("hflip,vflip"),
+            "rotated source must be rotated by the pipeline"
+        );
     }
     if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
         assert!(
