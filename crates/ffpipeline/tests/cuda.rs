@@ -78,6 +78,23 @@ async fn pipeline(
 #[rstest]
 #[tokio::test]
 #[ignore]
+async fn rotated(#[values("1920x1080", "1280x720")] res: FrameSize) {
+    run_cuda_test_case(TestCase {
+        fixture_name: "720p_h264_rotated.mp4",
+        params: TestOutputParams {
+            video_size: Some(res),
+            ..TestOutputParams::default()
+        },
+        expected_video_codec: String::from("h264"),
+        expected_video_size: res,
+        expected_audio_codec: String::from("aac"),
+    })
+    .await;
+}
+
+#[rstest]
+#[tokio::test]
+#[ignore]
 async fn tonemap_hdr(
     #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
     #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,

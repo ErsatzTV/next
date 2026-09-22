@@ -360,20 +360,42 @@ impl Pipeline {
             _ => HdrFormat::None,
         };
 
+        let stored_width = video_stream
+            .width
+            .ok_or(FFPipelineError::VideoInputIsRequired)?;
+        let stored_height = video_stream
+            .height
+            .ok_or(FFPipelineError::VideoInputIsRequired)?;
+
+        // ffmpeg auto-rotates on decode, so a quarter-turn display matrix (phone video) means
+        // the decoded frame has the stored width and height swapped; such video has square pixels
+        let is_quarter_turn = video_stream.is_quarter_turn();
+
         let initial_state = FrameState {
-            size: FrameSize {
-                width: video_stream
-                    .width
-                    .ok_or(FFPipelineError::VideoInputIsRequired)?,
-                height: video_stream
-                    .height
-                    .ok_or(FFPipelineError::VideoInputIsRequired)?,
+            size: if is_quarter_turn {
+                FrameSize {
+                    width: stored_height,
+                    height: stored_width,
+                }
+            } else {
+                FrameSize {
+                    width: stored_width,
+                    height: stored_height,
+                }
             },
-            is_anamorphic: video_stream.is_anamorphic(),
+            is_anamorphic: !is_quarter_turn && video_stream.is_anamorphic(),
             // if user does not want to deinterlace, pretend content is not interlaced
             is_interlaced: final_output_settings.deinterlace && video_stream.is_interlaced(),
-            sample_aspect_ratio: video_stream.sample_aspect_ratio.to_owned(),
-            display_aspect_ratio: video_stream.display_aspect_ratio.to_owned(),
+            sample_aspect_ratio: if is_quarter_turn {
+                Some(String::from("1:1"))
+            } else {
+                video_stream.sample_aspect_ratio.to_owned()
+            },
+            display_aspect_ratio: if is_quarter_turn {
+                None
+            } else {
+                video_stream.display_aspect_ratio.to_owned()
+            },
             surface: video_decoder.output_surface(),
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
@@ -1163,6 +1185,7 @@ mod tests {
                         pix_fmt: "yuv420p".to_owned(),
                         color_params: Default::default(),
                         field_order: None,
+                        rotation: None,
                     },
                 )),
                 crate::probe::ProbeResultStream::Audio(crate::probe::ProbeResultAudioStream {

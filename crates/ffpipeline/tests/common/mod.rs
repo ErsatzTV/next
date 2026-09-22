@@ -157,6 +157,11 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if source_video.is_quarter_turn()
+        && let Some(size) = video_size
+    {
+        assert_pillarboxed(&test_env.ffmpeg, &segment, size).await;
+    }
     if deinterlace {
         let video = output_probe
             .streams
@@ -186,6 +191,51 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     if source_is_hdr {
         assert_sdr_output(&output_probe);
     }
+}
+
+/// A quarter-turn source is taller than it is wide, so scale-and-pad output must have black
+/// pillars on both sides with the picture in the middle. Stretched or sideways output has
+/// picture at the edges instead.
+pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
+    async fn mean_luma(ffmpeg: &Path, path: &Path, crop: &str) -> f64 {
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new(ffmpeg)
+                .args(["-v", "error", "-i"])
+                .arg(path)
+                .args(["-map", "0:v:0", "-an", "-vf"])
+                .arg(format!("crop={crop},format=gray"))
+                .args(["-frames:v", "10", "-f", "rawvideo", "-"])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("pixel check timed out")
+        .expect("failed to decode output");
+        assert!(
+            output.status.success(),
+            "pixel check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.stdout.is_empty(),
+            "no decoded frames for pixel check"
+        );
+        output.stdout.iter().map(|b| f64::from(*b)).sum::<f64>() / output.stdout.len() as f64
+    }
+
+    let edge = (size.width / 10) & !1;
+    let left = mean_luma(ffmpeg, path, &format!("{edge}:ih:0:0")).await;
+    let right = mean_luma(ffmpeg, path, &format!("{edge}:ih:iw-{edge}:0")).await;
+    let center = mean_luma(ffmpeg, path, "trunc(iw/5):ih:trunc(iw*2/5):0").await;
+    assert!(
+        left < 32.0 && right < 32.0,
+        "rotated video is not pillarboxed: left luma {left:.1}, right luma {right:.1}"
+    );
+    assert!(
+        center > 64.0,
+        "rotated video has no picture in the centre: luma {center:.1}"
+    );
 }
 
 /// Only for 480i_h264_motion.ts: a vertical moving bar has identical rows after
@@ -584,7 +634,13 @@ pub fn assert_accel_usage(
 
     let hw_decode = args.contains(&"-hwaccel");
     let pixel_format = PixelFormat::parse(&source.pix_fmt);
-    if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
+    if source.rotation_degrees() != 0 {
+        // hardware decoders bypass ffmpeg's auto-rotation
+        assert!(
+            !hw_decode,
+            "rotated source must be decoded in software but the pipeline used hardware decode:\n{cmd}"
+        );
+    } else if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
         assert!(
             hw_decode,
             "{accel} reports it can decode {} {} but the pipeline used software decode:\n{cmd}",

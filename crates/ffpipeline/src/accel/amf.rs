@@ -488,6 +488,7 @@ mod tests {
             pix_fmt: String::from(pix_fmt),
             color_params: Default::default(),
             field_order: None,
+            rotation: None,
         }
     }
 
