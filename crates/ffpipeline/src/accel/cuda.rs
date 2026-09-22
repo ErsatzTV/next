@@ -13,7 +13,8 @@ use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceS
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp,
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, TransposeDir, TransposeFilter,
+    VideoFilter, VideoFilterOp,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +110,11 @@ impl HwAccel for Cuda {
                 }
 
                 video_filter.clone()
+            }
+            VideoFilter::Transpose(TransposeFilter { dir: Some(dir), .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeCuda) =>
+            {
+                TransposeCuda { dir: *dir }.into()
             }
             _ => video_filter.clone(),
         }
@@ -528,5 +534,28 @@ impl OverlayKindOp for CudaOverlay {
         } else {
             Some(String::from("overlay_cuda=x=(W-w)/2:y=(H-h)/2"))
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TransposeCuda {
+    pub(crate) dir: TransposeDir,
+}
+
+impl VideoFilterOp for TransposeCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.apply_rotation();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Cuda)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("transpose_cuda={}", self.dir as u32))
     }
 }

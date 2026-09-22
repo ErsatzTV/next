@@ -60,6 +60,7 @@ pub enum VideoFilter {
     HwUploadCudaWorkaround(accel::cuda::HwUploadCudaWorkaround),
     LibplaceboCuda(accel::cuda::LibplaceboCuda),
     DeinterlaceCuda(accel::cuda::DeinterlaceCuda),
+    TransposeCuda(accel::cuda::TransposeCuda),
     // VAAPI hardware filters
     DeinterlaceVaapi(accel::vaapi::DeinterlaceVaapi),
     ScaleVaapi(accel::vaapi::ScaleVaapi),
