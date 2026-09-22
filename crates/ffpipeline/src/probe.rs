@@ -79,8 +79,6 @@ pub struct ProbeResultVideoStream {
     pub pix_fmt: String,
     pub color_params: ProbeResultColorParams,
     pub field_order: Option<String>,
-    /// Display rotation in degrees (0, 90, 180 or 270) from the stream's display matrix;
-    /// `None` when unknown (a probe hint that omits it)
     pub rotation: Option<i32>,
 }
 
@@ -89,7 +87,6 @@ impl ProbeResultVideoStream {
         self.rotation.unwrap_or(0)
     }
 
-    /// ffmpeg auto-rotates on decode, so a quarter turn swaps the displayed width and height
     pub fn is_quarter_turn(&self) -> bool {
         matches!(self.rotation_degrees(), 90 | 270)
     }
@@ -533,8 +530,6 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
     }
 }
 
-/// Header-only probe for a stream's display rotation, for hinted items whose hint omits it
-/// (media servers rarely know it). `None` when the probe fails.
 pub async fn probe_rotation(
     probe_deps: &ProbeDeps<'_>,
     source: &LocalInputSource,

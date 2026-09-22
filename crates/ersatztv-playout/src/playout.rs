@@ -355,8 +355,6 @@ pub struct VideoHint {
     pub dv_profile: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_hdr10_metadata: Option<bool>,
-    /// Display rotation in degrees (0, 90, 180, 270) from the stream's display matrix. Omit when
-    /// unknown; the channel then reads it from the file header for local sources.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation: Option<i32>,
 }
