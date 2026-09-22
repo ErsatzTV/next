@@ -819,7 +819,7 @@
             270,
             null
           ],
-          "description": "Display rotation in degrees from the stream's display matrix (phone video is stored landscape with a 90 or 270 degree rotation). The channel decodes rotated video in software, since hardware decoders bypass ffmpeg's auto-rotation, and treats a 90/270 stream as having its width and height swapped. Omit when unknown; for local sources the channel then reads it from the file header."
+          "description": "Display rotation in counter-clockwise degrees from the stream's display matrix, normalized to 0, 90, 180, or 270. The channel rotates frames explicitly after deinterlacing and before scaling, using hardware filters when supported and software otherwise. A 90/270 rotation swaps width and height and inverts pixel and display aspect ratios. Omit when unknown; for local sources the channel then reads it from the file header."
         }
       }
     },

@@ -13,7 +13,7 @@ use crate::error::FFPipelineError;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::filter_chain::{FilterChain, PipelineFilter};
 use crate::frame_rate::FrameRate;
-use crate::frame_size::FrameSize;
+use crate::frame_size::{FrameSize, parse_aspect_ratio};
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{
@@ -221,10 +221,16 @@ impl FrameState {
             && dir.is_quarter_turn()
         {
             std::mem::swap(&mut self.size.width, &mut self.size.height);
-            // quarter-turn video (phone recordings) has square pixels
-            self.sample_aspect_ratio = Some(String::from("1:1"));
-            self.display_aspect_ratio = None;
-            self.is_anamorphic = false;
+            // rotation does not make pixels square. hints may omit SAR, so keep DAR.
+            for ratio in [
+                &mut self.sample_aspect_ratio,
+                &mut self.display_aspect_ratio,
+            ] {
+                *ratio = ratio
+                    .as_deref()
+                    .and_then(parse_aspect_ratio)
+                    .map(|value| (1.0 / value).to_string());
+            }
         }
 
         self.rotation = None;
