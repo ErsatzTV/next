@@ -79,9 +79,18 @@ pub struct ProbeResultVideoStream {
     pub pix_fmt: String,
     pub color_params: ProbeResultColorParams,
     pub field_order: Option<String>,
+    pub rotation: Option<i32>,
 }
 
 impl ProbeResultVideoStream {
+    pub fn rotation_degrees(&self) -> i32 {
+        self.rotation.unwrap_or(0)
+    }
+
+    pub fn is_quarter_turn(&self) -> bool {
+        matches!(self.rotation_degrees(), 90 | 270)
+    }
+
     pub fn is_interlaced(&self) -> bool {
         self.field_order
             .as_ref()
@@ -248,6 +257,36 @@ struct ProbeOutputStream {
 struct StreamSideData {
     side_data_type: String,
     dv_profile: Option<u32>,
+    rotation: Option<f64>,
+}
+
+/// ffprobe reports the display matrix as a signed angle (e.g. -90); normalize to 0..360
+fn normalize_rotation(degrees: f64) -> i32 {
+    ((degrees.round() as i32 % 360) + 360) % 360
+}
+
+fn rotation_from_side_data(side_data_list: &[StreamSideData]) -> i32 {
+    side_data_list
+        .iter()
+        .find_map(|sd| sd.rotation)
+        .map_or(0, normalize_rotation)
+}
+
+#[derive(Deserialize)]
+struct RotationSideData {
+    rotation: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct RotationProbeStream {
+    #[serde(default)]
+    side_data_list: Vec<RotationSideData>,
+}
+
+#[derive(Deserialize)]
+struct RotationProbeOutput {
+    #[serde(default)]
+    streams: Vec<RotationProbeStream>,
 }
 
 fn has_hdr10_side_data(side_data_list: &[StreamSideData]) -> bool {
@@ -482,11 +521,68 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 has_hdr10_metadata: has_hdr10_side_data(&output_stream.side_data_list),
             },
             field_order: output_stream.field_order.clone(),
+            rotation: Some(rotation_from_side_data(&output_stream.side_data_list)),
             frame_rate: FrameRate::parse(&output_stream.r_frame_rate.clone()?),
             sample_aspect_ratio: output_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
         }))),
         _ => None,
+    }
+}
+
+pub async fn probe_rotation(
+    probe_deps: &ProbeDeps<'_>,
+    source: &LocalInputSource,
+    stream_index: u32,
+) -> Option<i32> {
+    let path = source.input_path()?;
+    let mut args: ArgVec = args![
+        "-hide_banner",
+        "-print_format",
+        "json",
+        "-select_streams",
+        stream_index.to_string(),
+        "-show_entries",
+        "stream_side_data=rotation",
+    ];
+    args.extend(source.args_for_input().iter().cloned());
+    args.extend(args!["-i", path]);
+
+    let output = tokio::time::timeout(
+        FRAME_PROBE_TIMEOUT,
+        Command::new(probe_deps.ffprobe_path)
+            .args(args.iter().map(Cow::as_ref))
+            .output(),
+    )
+    .await;
+
+    let Ok(Ok(output)) = output else {
+        log::warn!("ffprobe rotation probe timed out or failed on stream {stream_index}");
+        return None;
+    };
+
+    if !output.status.success() {
+        log::warn!(
+            "error executing ffprobe rotation probe: {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
+
+    match serde_json::from_slice::<RotationProbeOutput>(&output.stdout) {
+        Ok(probe) => Some(
+            probe
+                .streams
+                .iter()
+                .flat_map(|s| s.side_data_list.iter())
+                .find_map(|sd| sd.rotation)
+                .map_or(0, normalize_rotation),
+        ),
+        Err(err) => {
+            log::warn!("failed to parse ffprobe rotation probe: {err}");
+            None
+        }
     }
 }
 
@@ -586,6 +682,7 @@ mod tests {
             pix_fmt: String::from("yuv420p"),
             color_params: ProbeResultColorParams::default(),
             field_order: None,
+            rotation: Some(0),
         }
     }
 
@@ -629,5 +726,57 @@ mod tests {
     fn is_anamorphic_without_size() {
         let stream = video_stream(None, None, Some("0:0"), Some("16:9"));
         assert!(!stream.is_anamorphic());
+    }
+
+    #[rstest]
+    #[case(0.0, 0)]
+    #[case(90.0, 90)]
+    #[case(-90.0, 270)]
+    #[case(180.0, 180)]
+    #[case(-180.0, 180)]
+    #[case(270.0, 270)]
+    #[case(-270.0, 90)]
+    #[case(450.0, 90)]
+    #[case(89.9, 90)]
+    fn rotation_is_normalized(#[case] degrees: f64, #[case] expected: i32) {
+        assert_eq!(normalize_rotation(degrees), expected);
+    }
+
+    fn probed_video(stdout: &str) -> ProbeResultVideoStream {
+        let result = parse_ffprobe_stdout(String::from("test.mp4"), stdout.as_bytes().to_vec())
+            .expect("probe output should parse");
+        match result.streams.first() {
+            Some(ProbeResultStream::Video(v)) => *v.clone(),
+            _ => panic!("no video stream"),
+        }
+    }
+
+    #[test]
+    fn rotation_comes_from_display_matrix_side_data() {
+        let stream = probed_video(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,
+            "height":1080,"r_frame_rate":"30/1","side_data_list":[{"side_data_type":"Display Matrix",
+            "displaymatrix":"","rotation":-90}]}],"format":{}}"#,
+        );
+        assert_eq!(stream.rotation, Some(270));
+        assert!(stream.is_quarter_turn());
+    }
+
+    #[test]
+    fn rotation_is_zero_without_display_matrix() {
+        let stream = probed_video(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,
+            "height":1080,"r_frame_rate":"30/1"}],"format":{}}"#,
+        );
+        assert_eq!(stream.rotation, Some(0));
+        assert!(!stream.is_quarter_turn());
+    }
+
+    #[test]
+    fn rotation_unknown_when_hint_omits_it() {
+        let mut stream = video_stream(Some(1920), Some(1080), Some("1:1"), Some("16:9"));
+        stream.rotation = None;
+        assert_eq!(stream.rotation_degrees(), 0);
+        assert!(!stream.is_quarter_turn());
     }
 }

@@ -380,6 +380,7 @@ mod tests {
             surface: FrameSurface::Amf,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::Hdr10,
+            rotation: None,
         }
     }
 
@@ -488,6 +489,7 @@ mod tests {
             pix_fmt: String::from(pix_fmt),
             color_params: Default::default(),
             field_order: None,
+            rotation: None,
         }
     }
 

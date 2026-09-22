@@ -47,6 +47,22 @@ pub const MFX_FOURCC_RGB4: u32 = u32::from_ne_bytes(*b"RGB4");
 
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN: u32 = u32::from_ne_bytes(*b"VSII");
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT: u32 = u32::from_ne_bytes(*b"VSIO");
+pub const MFX_EXTBUFF_VPP_ROTATION: u32 = u32::from_ne_bytes(*b"ROT ");
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxExtBuffer {
+    pub BufferId: u32,
+    pub BufferSz: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxExtVPPRotation {
+    pub Header: mfxExtBuffer,
+    pub Angle: u16,
+    pub reserved: [u16; 11],
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -345,6 +361,14 @@ mod layout_tests {
     use std::mem::{align_of, offset_of, size_of};
 
     use super::*;
+
+    #[test]
+    fn rotation_extension_matches_header() {
+        assert_eq!(size_of::<mfxExtBuffer>(), 8);
+        assert_eq!(size_of::<mfxExtVPPRotation>(), 32);
+        assert_eq!(align_of::<mfxExtVPPRotation>(), 4);
+        assert_eq!(offset_of!(mfxExtVPPRotation, Angle), 8);
+    }
 
     // values taken from the oneVPL headers with offsetof and sizeof on x86_64
     #[test]

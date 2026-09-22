@@ -13,7 +13,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 4,
+    compatible: 5,
 };
 const VERSION_URI_PREFIX: &str = "https://ersatztv.org/playout/version/0.";
 
@@ -355,6 +355,8 @@ pub struct VideoHint {
     pub dv_profile: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_hdr10_metadata: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 impl VideoHint {
@@ -528,10 +530,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schema_003_and_004_files_load() {
+    async fn schema_003_to_005_files_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        for version in ["0.0.3", "0.0.4"] {
+        for version in ["0.0.3", "0.0.4", "0.0.5"] {
             let mut item = item_json();
             let mut graphics = layer("canvas.nut");
             if version == "0.0.4" {

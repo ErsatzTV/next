@@ -879,9 +879,36 @@ impl ChannelSession {
         match src.probe_hint() {
             Some(hint) => {
                 let path = input.input_path().ok_or(ChannelError::ProbeHintFailure)?;
-                Ok(probe_hint_to_result(hint, path))
+                let mut result = probe_hint_to_result(hint, path);
+                self.fill_missing_rotation(&mut result, input).await;
+                Ok(result)
             }
             None => self.probe_source(input).await,
+        }
+    }
+
+    /// Media servers rarely know a stream's display rotation, so hints often omit it; read it
+    /// from the file header rather than treating the video as unrotated
+    async fn fill_missing_rotation(&self, result: &mut ProbeResult, input: &InputSource) {
+        let InputSource::Local(local) = input else {
+            return;
+        };
+
+        let probe_deps = probe::ProbeDeps {
+            ffprobe_path: &self.ffprobe_path,
+            ffmpeg_path: &self.ffmpeg_path,
+        };
+
+        for stream in result.streams.iter_mut() {
+            let ProbeResultStream::Video(video) = stream else {
+                continue;
+            };
+
+            if video.codec_type != CodecType::Video || video.rotation.is_some() {
+                continue;
+            }
+
+            video.rotation = probe::probe_rotation(&probe_deps, local, video.stream_index).await;
         }
     }
 
@@ -1524,6 +1551,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
                 has_hdr10_metadata: v.has_hdr10_metadata.unwrap_or(false),
             },
             field_order: v.field_order.clone(),
+            rotation: v.rotation,
             frame_rate: v
                 .frame_rate
                 .as_deref()
@@ -1554,6 +1582,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
             pix_fmt: String::new(),
             color_params: ProbeResultColorParams::default(),
             field_order: None,
+            rotation: None,
             frame_rate: FrameRate::default(),
             sample_aspect_ratio: None,
             display_aspect_ratio: None,

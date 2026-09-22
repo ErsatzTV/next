@@ -13,7 +13,8 @@ use crate::pipeline::{
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp,
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, TransposeDir, TransposeFilter,
+    VideoFilter, VideoFilterOp,
 };
 
 const VPP_QSV_PAD_OPTION: &str = "pad_w";
@@ -60,6 +61,13 @@ impl HwAccel for Qsv {
                 && current_state.hdr_format == HdrFormat::Hdr10 =>
             {
                 VppQsv::tonemap(self.output_format(format)).into()
+            }
+            VideoFilter::Transpose(TransposeFilter { dir: Some(dir) })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                    && self.capabilities.can_rotate(&current_state.pixel_format)
+                    && !current_state.is_interlaced =>
+            {
+                VppQsv::transpose(*dir).into()
             }
             _ => video_filter.clone(),
         }
@@ -225,6 +233,7 @@ pub struct VppQsv {
     pub(crate) size: Option<FrameSize>,
     pub(crate) pad: Option<FrameSize>,
     pub(crate) format: Option<PixelFormat>,
+    pub(crate) transpose: Option<TransposeDir>,
 }
 
 impl VppQsv {
@@ -264,10 +273,20 @@ impl VppQsv {
         }
     }
 
+    pub(crate) fn transpose(dir: TransposeDir) -> VppQsv {
+        VppQsv {
+            transpose: Some(dir),
+            ..VppQsv::default()
+        }
+    }
+
     pub(crate) fn fuse(&self, next: &VppQsv) -> Option<VppQsv> {
+        // vpp_qsv evaluates w/h in the stored orientation and swaps them after a quarter turn,
+        // so a fused scale would need a pre-rotation target size
         if (self.deinterlace.is_some() && next.deinterlace.is_some())
             || (self.size.is_some() && next.size.is_some())
             || (self.pad.is_some() && (next.pad.is_some() || next.size.is_some()))
+            || (self.transpose.is_some() && next.size.is_some())
         {
             return None;
         }
@@ -279,10 +298,13 @@ impl VppQsv {
             pad: self.pad.or(next.pad),
             // later format conversion wins
             format: next.format.or(self.format),
+            transpose: self.transpose.or(next.transpose),
         };
 
         // composition cannot perform tonemapping or deinterlacing
-        if fused.pad.is_some() && (fused.tonemap || fused.deinterlace.is_some()) {
+        if fused.pad.is_some()
+            && (fused.tonemap || fused.deinterlace.is_some() || fused.transpose.is_some())
+        {
             return None;
         }
 
@@ -321,6 +343,10 @@ impl VideoFilterOp for VppQsv {
         if let Some(format) = &self.format {
             state.pixel_format = *format;
         }
+
+        if self.transpose.is_some() {
+            state.apply_rotation();
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -353,6 +379,10 @@ impl VideoFilterOp for VppQsv {
             options.push(format!("format={}", format.as_arg()));
         }
 
+        if let Some(transpose) = &self.transpose {
+            options.push(format!("transpose={}", *transpose as u32));
+        }
+
         if options.is_empty() {
             None
         } else {
@@ -381,6 +411,7 @@ mod tests {
                 supported_encoders: HashMap::new(),
                 vpp_pixel_formats: HashSet::new(),
                 vpp_filters: HashSet::new(),
+                rotation_formats: HashSet::new(),
                 runtime_api: None,
             },
         }
@@ -423,6 +454,7 @@ mod tests {
             surface: FrameSurface::Qsv,
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
+            rotation: None,
         }
     }
 
@@ -434,6 +466,57 @@ mod tests {
             }),
             scaling_mode: ScalingMode::ScaleAndPad,
         })
+    }
+
+    #[test]
+    fn transpose_requires_runtime_format_support() {
+        use crate::capabilities::qsv::QsvFourCC;
+        for api in [
+            None,
+            Some((1, 16)),
+            Some((1, 17)),
+            Some((1, 35)),
+            Some((2, 17)),
+        ] {
+            for supported in [false, true] {
+                for pixel_format in [PixelFormat::Nv12, PixelFormat::P010le] {
+                    let mut qsv = make_qsv();
+                    qsv.capabilities.runtime_api = api;
+                    if supported {
+                        qsv.capabilities
+                            .rotation_formats
+                            .insert(QsvFourCC(libvpl_sys::MFX_FOURCC_NV12));
+                    }
+                    let filter = TransposeFilter {
+                        dir: Some(TransposeDir::Clock),
+                    }
+                    .into();
+                    let state = FrameState {
+                        pixel_format,
+                        ..make_frame_state()
+                    };
+                    let result = qsv.best_filter(
+                        &filter,
+                        &make_ffmpeg_info(false),
+                        &state,
+                        &VideoFilterOptions::default(),
+                    );
+                    assert_eq!(
+                        matches!(result, VideoFilter::VppQsv(_)),
+                        supported
+                            && pixel_format == PixelFormat::Nv12
+                            && api.is_some_and(|v| v >= (1, 17))
+                    );
+                    let result = qsv.best_filter(
+                        &filter,
+                        &FfmpegInfo::default(),
+                        &state,
+                        &VideoFilterOptions::default(),
+                    );
+                    assert!(matches!(result, VideoFilter::Transpose(_)));
+                }
+            }
+        }
     }
 
     #[test]

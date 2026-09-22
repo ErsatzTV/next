@@ -786,6 +786,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities::default(),
@@ -846,6 +847,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap,
                 can_hdr_to_hdr_tonemap,
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -879,6 +881,7 @@ mod tests {
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::Pq,
+            rotation: None,
         }
     }
 
@@ -1300,6 +1303,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -1322,6 +1326,7 @@ mod tests {
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
+            rotation: None,
         }
     }
 
@@ -1642,6 +1647,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1719,6 +1725,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1772,6 +1779,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1839,6 +1847,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1905,6 +1914,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());

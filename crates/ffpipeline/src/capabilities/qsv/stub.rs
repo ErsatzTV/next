@@ -10,6 +10,7 @@ impl QsvCapabilities {
             supported_encoders: HashMap::new(),
             vpp_pixel_formats: HashSet::new(),
             vpp_filters: HashSet::new(),
+            rotation_formats: HashSet::new(),
             runtime_api: None,
         })
     }

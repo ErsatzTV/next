@@ -13,7 +13,7 @@ use crate::error::FFPipelineError;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::filter_chain::{FilterChain, PipelineFilter};
 use crate::frame_rate::FrameRate;
-use crate::frame_size::FrameSize;
+use crate::frame_size::{FrameSize, parse_aspect_ratio};
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{
@@ -31,7 +31,7 @@ use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, FadeFilter,
     FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
     SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
-    VideoFilter,
+    TransposeDir, TransposeFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -212,6 +212,29 @@ pub struct FrameState {
     pub(crate) surface: FrameSurface,
     pub(crate) pixel_format: PixelFormat,
     pub(crate) hdr_format: HdrFormat,
+    pub(crate) rotation: Option<i32>,
+}
+
+impl FrameState {
+    pub(crate) fn apply_rotation(&mut self) {
+        if let Some(dir) = self.rotation.and_then(TransposeDir::from_rotation)
+            && dir.is_quarter_turn()
+        {
+            std::mem::swap(&mut self.size.width, &mut self.size.height);
+            // rotation does not make pixels square. hints may omit SAR, so keep DAR.
+            for ratio in [
+                &mut self.sample_aspect_ratio,
+                &mut self.display_aspect_ratio,
+            ] {
+                *ratio = ratio
+                    .as_deref()
+                    .and_then(parse_aspect_ratio)
+                    .map(|value| (1.0 / value).to_string());
+            }
+        }
+
+        self.rotation = None;
+    }
 }
 
 pub enum PipelineInput {
@@ -378,6 +401,7 @@ impl Pipeline {
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
             hdr_format: hdr,
+            rotation: video_stream.rotation,
         };
 
         let preferred_pixel_format = match final_output_settings.bit_depth {
@@ -441,6 +465,7 @@ impl Pipeline {
                 }
                 .into(),
             ),
+            PipelineFilter::Video(TransposeFilter::default().into()),
             PipelineFilter::Video(
                 ScaleFilter {
                     size: final_output_settings.video_size,
@@ -522,6 +547,7 @@ impl Pipeline {
                         PixelFormat::parse(&subtitle_stream.pix_fmt)
                     },
                     hdr_format: HdrFormat::None,
+                    rotation: None,
                 };
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
@@ -661,6 +687,7 @@ impl Pipeline {
                     PixelFormat::parse(&graphics_stream.pix_fmt)
                 },
                 hdr_format: HdrFormat::None,
+                rotation: None,
             };
 
             let video_size = final_output_settings
@@ -684,7 +711,11 @@ impl Pipeline {
             }
 
             let source_content_size = match final_output_settings.scaling_mode {
-                ScalingMode::ScaleAndPad => video_size.square_pixel_size_contain(&initial_state),
+                ScalingMode::ScaleAndPad => {
+                    let mut rotated_state = initial_state.clone();
+                    rotated_state.apply_rotation();
+                    video_size.square_pixel_size_contain(&rotated_state)
+                }
                 ScalingMode::Crop | ScalingMode::Stretch => *video_size,
             };
 
@@ -1002,6 +1033,10 @@ impl Pipeline {
                         result.extend(args!["-readrate", "1.0"]);
                     }
 
+                    // ffmpeg's autorotate only applies to system-memory frames and would run
+                    // ahead of deinterlacing, so TransposeFilter rotates explicitly instead
+                    result.extend(args!["-noautorotate"]);
+
                     result.extend(input_source.args_for_input());
 
                     result.extend(args!["-i", path.to_owned()]);
@@ -1163,6 +1198,7 @@ mod tests {
                         pix_fmt: "yuv420p".to_owned(),
                         color_params: Default::default(),
                         field_order: None,
+                        rotation: None,
                     },
                 )),
                 crate::probe::ProbeResultStream::Audio(crate::probe::ProbeResultAudioStream {

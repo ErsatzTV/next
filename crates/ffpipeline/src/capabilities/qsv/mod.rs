@@ -33,11 +33,12 @@ pub struct QsvCapabilities {
     pub(crate) supported_encoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) vpp_pixel_formats: HashSet<QsvFourCC>,
     pub(crate) vpp_filters: HashSet<QsvFourCC>,
+    pub(crate) rotation_formats: HashSet<QsvFourCC>,
     pub(crate) runtime_api: Option<(u16, u16)>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize)]
-pub struct QsvFourCC(u32);
+pub struct QsvFourCC(pub(crate) u32);
 
 impl Debug for QsvFourCC {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -59,6 +60,10 @@ impl QsvCapabilities {
     }
 
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
+        Self::fourcc(pixel_format).is_some_and(|c| self.vpp_pixel_formats.contains(&c))
+    }
+
+    fn fourcc(pixel_format: &PixelFormat) -> Option<QsvFourCC> {
         let fourcc = match pixel_format {
             PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(MFX_FOURCC_NV12),
             PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(MFX_FOURCC_P010),
@@ -66,7 +71,12 @@ impl QsvCapabilities {
             _ => None,
         };
 
-        fourcc.is_some_and(|c| self.vpp_pixel_formats.contains(&QsvFourCC(c)))
+        fourcc.map(QsvFourCC)
+    }
+
+    pub fn can_rotate(&self, pixel_format: &PixelFormat) -> bool {
+        self.runtime_api.is_some_and(|version| version >= (1, 17))
+            && Self::fourcc(pixel_format).is_some_and(|c| self.rotation_formats.contains(&c))
     }
 
     // this is just a heuristic; and p010 support could mean input or output to any filter
@@ -111,6 +121,7 @@ mod tests {
             supported_encoders: HashMap::new(),
             vpp_pixel_formats: formats.iter().map(|f| QsvFourCC(*f)).collect(),
             vpp_filters: filters.iter().map(|f| QsvFourCC(*f)).collect(),
+            rotation_formats: HashSet::new(),
             runtime_api,
         }
     }
