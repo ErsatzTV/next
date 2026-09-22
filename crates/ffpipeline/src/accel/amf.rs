@@ -380,6 +380,7 @@ mod tests {
             surface: FrameSurface::Amf,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::Hdr10,
+            rotation: None,
         }
     }
 

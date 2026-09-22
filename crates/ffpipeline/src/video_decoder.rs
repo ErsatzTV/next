@@ -27,12 +27,6 @@ impl VideoDecoder {
             return VideoDecoder::None;
         }
 
-        // hardware decoders bypass ffmpeg's auto-rotation (the transpose is only inserted for
-        // system-memory frames), so rotated video plays sideways unless decoded in software
-        if video_stream.rotation_degrees() != 0 {
-            return VideoDecoder::Software;
-        }
-
         match &output_settings.accel {
             Some(accel) => {
                 if let Some(decoder) = accel.make_decoder(ffmpeg_info, video_stream) {

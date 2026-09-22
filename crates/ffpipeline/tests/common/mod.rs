@@ -635,12 +635,12 @@ pub fn assert_accel_usage(
     let hw_decode = args.contains(&"-hwaccel");
     let pixel_format = PixelFormat::parse(&source.pix_fmt);
     if source.rotation_degrees() != 0 {
-        // hardware decoders bypass ffmpeg's auto-rotation
         assert!(
-            !hw_decode,
-            "rotated source must be decoded in software but the pipeline used hardware decode:\n{cmd}"
+            cmd.contains("transpose="),
+            "rotated source must be transposed by the pipeline but no transpose filter was used:\n{cmd}"
         );
-    } else if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
+    }
+    if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
         assert!(
             hw_decode,
             "{accel} reports it can decode {} {} but the pipeline used software decode:\n{cmd}",

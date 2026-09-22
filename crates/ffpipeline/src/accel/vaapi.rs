@@ -571,6 +571,7 @@ mod tests {
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
+            rotation: None,
         }
     }
 

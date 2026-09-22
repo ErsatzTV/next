@@ -148,6 +148,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -172,6 +173,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -206,6 +208,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -238,6 +241,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -286,6 +290,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -316,6 +321,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {

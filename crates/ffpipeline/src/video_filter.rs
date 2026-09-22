@@ -43,6 +43,7 @@ pub enum VideoFilter {
     Format(FormatFilter),
     ToneMap(ToneMapFilter),
     Deinterlace(DeinterlaceFilter),
+    Transpose(TransposeFilter),
     HwMap(HwMapFilter),
     Subtitles(SubtitlesFilter),
     SubtitleImageScale(SubtitleImageScaleFilter),
@@ -424,6 +425,59 @@ impl VideoFilterOp for DeinterlaceFilter {
                 Some(format!("w3fdif=mode={mode}"))
             }
         }
+    }
+}
+
+/// Discriminants are the `dir`/`transpose` option values shared by ffmpeg's transpose filters
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransposeDir {
+    Clock = 1,
+    CClock = 2,
+    Reversal = 4,
+}
+
+impl TransposeDir {
+    /// ffprobe reports `av_display_rotation_get` (counter-clockwise positive) while ffmpeg's
+    /// autorotate applies the negated angle, so a probed 270 is a clockwise quarter turn
+    pub fn from_rotation(degrees: i32) -> Option<TransposeDir> {
+        match degrees {
+            270 => Some(TransposeDir::Clock),
+            90 => Some(TransposeDir::CClock),
+            180 => Some(TransposeDir::Reversal),
+            _ => None,
+        }
+    }
+
+    pub fn is_quarter_turn(&self) -> bool {
+        matches!(self, TransposeDir::Clock | TransposeDir::CClock)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TransposeFilter {
+    pub dir: Option<TransposeDir>,
+}
+
+impl VideoFilterOp for TransposeFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        let dir = TransposeDir::from_rotation(state.rotation?)?;
+        Some(TransposeFilter { dir: Some(dir) }.into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.apply_rotation();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        // the software transpose filter has no half-turn direction
+        self.dir.map(|dir| match dir {
+            TransposeDir::Reversal => String::from("hflip,vflip"),
+            dir => format!("transpose={}", dir as u32),
+        })
     }
 }
 
@@ -886,6 +940,7 @@ mod tests {
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::Pq,
+            rotation: None,
         };
 
         let filter: VideoFilter = HwMapFilter {

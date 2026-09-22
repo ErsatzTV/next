@@ -31,7 +31,7 @@ use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, FadeFilter,
     FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
     SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
-    VideoFilter,
+    TransposeDir, TransposeFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -212,6 +212,23 @@ pub struct FrameState {
     pub(crate) surface: FrameSurface,
     pub(crate) pixel_format: PixelFormat,
     pub(crate) hdr_format: HdrFormat,
+    pub(crate) rotation: Option<i32>,
+}
+
+impl FrameState {
+    pub(crate) fn apply_rotation(&mut self) {
+        if let Some(dir) = self.rotation.and_then(TransposeDir::from_rotation)
+            && dir.is_quarter_turn()
+        {
+            std::mem::swap(&mut self.size.width, &mut self.size.height);
+            // quarter-turn video (phone recordings) has square pixels
+            self.sample_aspect_ratio = Some(String::from("1:1"));
+            self.display_aspect_ratio = None;
+            self.is_anamorphic = false;
+        }
+
+        self.rotation = None;
+    }
 }
 
 pub enum PipelineInput {
@@ -360,46 +377,25 @@ impl Pipeline {
             _ => HdrFormat::None,
         };
 
-        let stored_width = video_stream
-            .width
-            .ok_or(FFPipelineError::VideoInputIsRequired)?;
-        let stored_height = video_stream
-            .height
-            .ok_or(FFPipelineError::VideoInputIsRequired)?;
-
-        // ffmpeg auto-rotates on decode, so a quarter-turn display matrix (phone video) means
-        // the decoded frame has the stored width and height swapped; such video has square pixels
-        let is_quarter_turn = video_stream.is_quarter_turn();
-
         let initial_state = FrameState {
-            size: if is_quarter_turn {
-                FrameSize {
-                    width: stored_height,
-                    height: stored_width,
-                }
-            } else {
-                FrameSize {
-                    width: stored_width,
-                    height: stored_height,
-                }
+            size: FrameSize {
+                width: video_stream
+                    .width
+                    .ok_or(FFPipelineError::VideoInputIsRequired)?,
+                height: video_stream
+                    .height
+                    .ok_or(FFPipelineError::VideoInputIsRequired)?,
             },
-            is_anamorphic: !is_quarter_turn && video_stream.is_anamorphic(),
+            is_anamorphic: video_stream.is_anamorphic(),
             // if user does not want to deinterlace, pretend content is not interlaced
             is_interlaced: final_output_settings.deinterlace && video_stream.is_interlaced(),
-            sample_aspect_ratio: if is_quarter_turn {
-                Some(String::from("1:1"))
-            } else {
-                video_stream.sample_aspect_ratio.to_owned()
-            },
-            display_aspect_ratio: if is_quarter_turn {
-                None
-            } else {
-                video_stream.display_aspect_ratio.to_owned()
-            },
+            sample_aspect_ratio: video_stream.sample_aspect_ratio.to_owned(),
+            display_aspect_ratio: video_stream.display_aspect_ratio.to_owned(),
             surface: video_decoder.output_surface(),
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
             hdr_format: hdr,
+            rotation: video_stream.rotation,
         };
 
         let preferred_pixel_format = match final_output_settings.bit_depth {
@@ -463,6 +459,7 @@ impl Pipeline {
                 }
                 .into(),
             ),
+            PipelineFilter::Video(TransposeFilter::default().into()),
             PipelineFilter::Video(
                 ScaleFilter {
                     size: final_output_settings.video_size,
@@ -544,6 +541,7 @@ impl Pipeline {
                         PixelFormat::parse(&subtitle_stream.pix_fmt)
                     },
                     hdr_format: HdrFormat::None,
+                    rotation: None,
                 };
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
@@ -683,6 +681,7 @@ impl Pipeline {
                     PixelFormat::parse(&graphics_stream.pix_fmt)
                 },
                 hdr_format: HdrFormat::None,
+                rotation: None,
             };
 
             let video_size = final_output_settings
@@ -706,7 +705,11 @@ impl Pipeline {
             }
 
             let source_content_size = match final_output_settings.scaling_mode {
-                ScalingMode::ScaleAndPad => video_size.square_pixel_size_contain(&initial_state),
+                ScalingMode::ScaleAndPad => {
+                    let mut rotated_state = initial_state.clone();
+                    rotated_state.apply_rotation();
+                    video_size.square_pixel_size_contain(&rotated_state)
+                }
                 ScalingMode::Crop | ScalingMode::Stretch => *video_size,
             };
 
@@ -1023,6 +1026,10 @@ impl Pipeline {
                     if *realtime {
                         result.extend(args!["-readrate", "1.0"]);
                     }
+
+                    // ffmpeg's autorotate only applies to system-memory frames and would run
+                    // ahead of deinterlacing, so TransposeFilter rotates explicitly instead
+                    result.extend(args!["-noautorotate"]);
 
                     result.extend(input_source.args_for_input());
 

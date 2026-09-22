@@ -879,6 +879,7 @@ mod tests {
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::Pq,
+            rotation: None,
         }
     }
 
@@ -1322,6 +1323,7 @@ mod tests {
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
+            rotation: None,
         }
     }
 
@@ -1642,6 +1644,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::P010le,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1719,6 +1722,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Nv12,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1772,6 +1776,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1839,6 +1844,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1905,6 +1911,7 @@ mod tests {
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
