@@ -16,8 +16,8 @@ use crate::pipeline::{
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, VideoFilter,
-    VideoFilterOp,
+    DeinterlaceFilter, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, TransposeDir,
+    TransposeFilter, VideoFilter, VideoFilterOp,
 };
 
 #[derive(Debug, Clone, PartialEq, strum::Display, Serialize)]
@@ -134,6 +134,12 @@ impl HwAccel for Vaapi {
                 } else {
                     video_filter.clone()
                 }
+            }
+
+            VideoFilter::Transpose(TransposeFilter { dir: Some(dir), .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeVaapi) =>
+            {
+                TransposeVaapi { dir: *dir }.into()
             }
 
             _ => video_filter.clone(),
@@ -503,6 +509,29 @@ impl VideoFilterOp for DeinterlaceVaapi {
     fn as_arg(&self) -> Option<String> {
         let mode = self.mode.as_deref().unwrap_or("0");
         Some(format!("deinterlace_vaapi=mode={mode}"))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TransposeVaapi {
+    pub(crate) dir: TransposeDir,
+}
+
+impl VideoFilterOp for TransposeVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.apply_rotation();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("transpose_vaapi={}", self.dir as u32))
     }
 }
 

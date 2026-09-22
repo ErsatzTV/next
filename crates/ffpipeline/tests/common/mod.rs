@@ -635,22 +635,28 @@ pub fn assert_accel_usage(
     let hw_decode = args.contains(&"-hwaccel");
     let pixel_format = PixelFormat::parse(&source.pix_fmt);
     if source.rotation_degrees() != 0 {
-        assert!(
-            cmd.contains("transpose="),
-            "rotated source must be transposed by the pipeline but no transpose filter was used:\n{cmd}"
-        );
+        match accel {
+            HardwareAccel::Vaapi(_) => assert!(
+                cmd.contains("transpose_vaapi="),
+                "rotated source must be transposed by the pipeline but no transpose filter was used"
+            ),
+            _ => assert!(
+                cmd.contains("transpose="),
+                "rotated source must be transposed by the pipeline but no transpose filter was used"
+            ),
+        };
     }
     if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
         assert!(
             hw_decode,
-            "{accel} reports it can decode {} {} but the pipeline used software decode:\n{cmd}",
+            "{accel} reports it can decode {} {} but the pipeline used software decode",
             source.codec, source.pix_fmt
         );
     } else if !source_is_hdr {
         // HDR sources may take an accel-specific decode path (e.g. AMF decode-for-tonemap)
         assert!(
             !hw_decode,
-            "{accel} reports it cannot decode {} {} but the pipeline used hardware decode:\n{cmd}",
+            "{accel} reports it cannot decode {} {} but the pipeline used hardware decode",
             source.codec, source.pix_fmt
         );
     }
@@ -674,12 +680,12 @@ pub fn assert_accel_usage(
             });
         assert_eq!(
             actual, expected,
-            "{accel} reports it can encode {bit_depth}-bit {format} but the pipeline used {actual}:\n{cmd}"
+            "{accel} reports it can encode {bit_depth}-bit {format} but the pipeline used {actual}"
         );
     } else {
         assert!(
             actual.starts_with("libx"),
-            "{accel} reports it cannot encode {bit_depth}-bit {format} but the pipeline used {actual}:\n{cmd}"
+            "{accel} reports it cannot encode {bit_depth}-bit {format} but the pipeline used {actual}"
         );
     }
 }

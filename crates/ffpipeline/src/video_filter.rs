@@ -66,6 +66,7 @@ pub enum VideoFilter {
     PadVaapi(accel::vaapi::PadVaapi),
     FormatVaapi(accel::vaapi::FormatVaapi),
     TonemapVaapi(accel::vaapi::TonemapVaapi),
+    TransposeVaapi(accel::vaapi::TransposeVaapi),
     // OpenCL hardware filters
     PadOpencl(accel::opencl::PadOpencl),
     TonemapOpencl(accel::opencl::TonemapOpencl),
