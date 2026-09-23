@@ -421,6 +421,18 @@ async fn motion_check_rejects_missing_deinterlace(
     );
 }
 
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn canvas(
+    #[values(("ffv1", "bgra"), ("ffv1", "yuva420p"), ("ffv1", "yuva444p"), ("png", "rgba"))]
+    source: (&'static str, &'static str),
+) {
+    if let Some(env) = test_env().await {
+        run_canvas_test(env, None, source.0, source.1).await;
+    }
+}
+
 /// Generate both inputs locally so this test needs no checked-in media fixtures.
 #[tokio::test]
 #[ignore = "requires local ffmpeg and ffprobe"]

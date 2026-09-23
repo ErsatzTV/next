@@ -148,6 +148,26 @@ async fn watermark(
     }
 }
 
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn canvas(
+    #[values(("ffv1", "bgra"), ("ffv1", "yuva420p"), ("ffv1", "yuva444p"), ("png", "rgba"))]
+    source: (&'static str, &'static str),
+) {
+    if let Some(env) = test_env().await {
+        if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Rkmpp) {
+            panic!("rkmpp not available");
+        }
+
+        let Some(accel) = make_rkmpp_accel().await else {
+            panic!("rkmpp accel failed to probe any capabilities");
+        };
+
+        run_canvas_test(env, Some(accel.clone()), source.0, source.1).await;
+    }
+}
+
 async fn run_rkmpp_test_case(mut test_case: TestCase) {
     if let Some(env) = test_env().await {
         if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Rkmpp) {

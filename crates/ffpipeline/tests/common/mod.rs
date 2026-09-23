@@ -193,6 +193,224 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     }
 }
 
+/// Canvas sources may use any pixel format with alpha, not just the bgra that legacy sends, so
+/// this checks that opaque, half-transparent and transparent regions all survive the overlay.
+#[allow(dead_code)]
+pub async fn run_canvas_test(
+    test_env: &TestEnv,
+    accel: Option<HardwareAccel>,
+    codec: &str,
+    pix_fmt: &str,
+) {
+    let size = FrameSize {
+        width: 640,
+        height: 360,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.mkv");
+    let canvas = dir.path().join("canvas.nut");
+    let canvas_source = format!(
+        "color=black@0:s={}x{}:r=24,format=bgra,\
+         drawbox=x=0:y=0:w=160:h=160:color=red@1:t=fill:replace=1,\
+         drawbox=x=320:y=0:w=160:h=160:color=red@0.5:t=fill:replace=1",
+        size.width, size.height
+    );
+    let main_source = format!("color=blue:s={}x{}:r=24", size.width, size.height);
+    for (path, args) in [
+        (
+            &main,
+            vec![
+                "-f",
+                "lavfi",
+                "-i",
+                &main_source,
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=48000:cl=stereo",
+                "-t",
+                "4",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "pcm_s16le",
+            ],
+        ),
+        (
+            &canvas,
+            vec![
+                "-f",
+                "lavfi",
+                "-i",
+                &canvas_source,
+                "-t",
+                "4",
+                "-c:v",
+                codec,
+                "-pix_fmt",
+                pix_fmt,
+                "-f",
+                "nut",
+            ],
+        ),
+    ] {
+        let generated = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new(&test_env.ffmpeg)
+                .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
+                .args(args)
+                .arg(path)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("fixture generation timed out")
+        .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+    }
+
+    let canvas_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &canvas).await;
+    let canvas_pix_fmt = canvas_probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.pix_fmt.clone()),
+            _ => None,
+        })
+        .expect("no video stream in canvas");
+    assert_eq!(
+        canvas_pix_fmt, pix_fmt,
+        "canvas fixture has the wrong pixel format"
+    );
+
+    let graphics = WatermarkInput {
+        layer_index: 0,
+        input_source: InputSource::Local(LocalInputSource {
+            path: canvas.to_string_lossy().into_owned(),
+        }),
+        probe_result: canvas_probe,
+        stream_index: None,
+        location: WatermarkLocation::TopLeft,
+        width_percent: None,
+        within_source_content: None,
+        horizontal_margin_percent: None,
+        vertical_margin_percent: None,
+        opacity_percent: None,
+        kind: GraphicsKind::Canvas,
+        in_point: Duration::ZERO,
+        timing: None,
+    };
+    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
+    let source_video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.clone()),
+            _ => None,
+        })
+        .expect("no video stream in main");
+    let input = build_input(&main, probe, Duration::from_secs(1), Some(graphics));
+    let output = build_output(
+        dir.path(),
+        TestOutputParams {
+            video_size: Some(size),
+            accel: accel.clone(),
+            ..TestOutputParams::default()
+        },
+    );
+    let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
+    pipeline.optimize();
+    let args = pipeline.args();
+
+    let filter = args
+        .windows(2)
+        .filter(|a| a[0] == "-filter_complex")
+        .map(|a| a[1].as_ref())
+        .collect::<Vec<_>>()
+        .join(";");
+    let canvas_chain = filter
+        .split(';')
+        .find(|chain| chain.ends_with("[v_s0]"))
+        .unwrap_or_else(|| panic!("no canvas chain in {filter}"));
+    assert!(
+        !canvas_chain.contains("yuva420p,format=bgra"),
+        "canvas is converted to yuva420p and back: {canvas_chain}"
+    );
+    if pix_fmt == "bgra" {
+        assert!(
+            !canvas_chain.contains("format=bgra"),
+            "bgra canvas is converted to bgra: {canvas_chain}"
+        );
+    }
+
+    let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
+    assert!(success, "ffmpeg failed:\n{stderr}");
+
+    if let Some(accel) = &accel {
+        assert_accel_usage(
+            accel,
+            &source_video,
+            false,
+            Some(VideoFormat::H264),
+            8,
+            Some(size),
+            &args,
+        );
+    }
+
+    let segment = find_first_segment(dir.path());
+    let decoded = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(&test_env.ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(&segment)
+            .args([
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("frame decode timed out")
+    .unwrap();
+    assert!(
+        decoded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&decoded.stderr)
+    );
+    let width = size.width as usize;
+    assert_eq!(decoded.stdout.len(), width * size.height as usize * 3);
+    let pixel = |x: usize, y: usize| &decoded.stdout[(y * width + x) * 3..(y * width + x) * 3 + 3];
+
+    let opaque = pixel(80, 80);
+    assert!(
+        opaque[0] > 200 && opaque[1] < 50 && opaque[2] < 50,
+        "opaque canvas region should be red: {opaque:?} ({pix_fmt})"
+    );
+    let half = pixel(400, 80);
+    assert!(
+        (90..=170).contains(&half[0]) && half[1] < 50 && (90..=170).contains(&half[2]),
+        "half-transparent canvas region should blend red over blue: {half:?} ({pix_fmt})"
+    );
+    let transparent = pixel(480, 270);
+    assert!(
+        transparent[0] < 50 && transparent[1] < 50 && transparent[2] > 200,
+        "transparent canvas region should show the blue main video: {transparent:?} ({pix_fmt})"
+    );
+}
+
 /// A quarter-turn source is taller than it is wide, so scale-and-pad output must have black
 /// pillars on both sides with the picture in the middle. Stretched or sideways output has
 /// picture at the edges instead.
