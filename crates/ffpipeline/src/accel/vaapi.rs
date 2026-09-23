@@ -33,7 +33,8 @@ pub enum VaapiDriver {
 #[derive(Debug, Clone, Serialize)]
 pub struct Vaapi {
     pub device: String,
-    pub driver: VaapiDriver,
+    /// `None` leaves driver selection to libva.
+    pub driver: Option<VaapiDriver>,
     pub capabilities: VaapiCapabilities,
     pub opencl_capabilities: OpenCLCapabilities,
 }
@@ -240,10 +241,13 @@ impl HwAccel for Vaapi {
     }
 
     fn envs(&self) -> Vec<EnvironmentVariable> {
-        vec![EnvironmentVariable {
-            key: String::from("LIBVA_DRIVER_NAME"),
-            value: self.driver.to_string(),
-        }]
+        self.driver
+            .iter()
+            .map(|driver| EnvironmentVariable {
+                key: String::from("LIBVA_DRIVER_NAME"),
+                value: driver.to_string(),
+            })
+            .collect()
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
@@ -571,7 +575,7 @@ mod tests {
     fn make_vaapi() -> Vaapi {
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: VaapiDriver::Ihd,
+            driver: Some(VaapiDriver::Ihd),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
@@ -604,6 +608,18 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
         }
+    }
+
+    #[test]
+    fn envs_sets_driver_name_only_when_driver_is_set() {
+        let mut vaapi = make_vaapi();
+        let envs = vaapi.envs();
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].key, "LIBVA_DRIVER_NAME");
+        assert_eq!(envs[0].value, "iHD");
+
+        vaapi.driver = None;
+        assert!(vaapi.envs().is_empty());
     }
 
     #[test]
