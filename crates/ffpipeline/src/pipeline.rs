@@ -751,7 +751,15 @@ impl Pipeline {
 
             let mut secondary_filters: Vec<VideoFilter> =
                 if graphics_input.kind == GraphicsKind::Canvas {
-                    let mut filters = vec![format_filter];
+                    // convert to bgra, not yuva420p: most hw overlays upload bgra, and yuva420p
+                    // removes chroma detail. evaluate removes this filter for a bgra canvas. the
+                    // filter also keeps alpha for formats that `PixelFormat::parse` does not know
+                    let mut filters: Vec<VideoFilter> = vec![
+                        FormatFilter {
+                            format: PixelFormat::Bgra,
+                        }
+                        .into(),
+                    ];
                     if canvas_needs_scale {
                         // stretch, not contain: the canvas has to stay exactly the output size or
                         // the (0,0) overlay would pin a smaller canvas to the top left corner
