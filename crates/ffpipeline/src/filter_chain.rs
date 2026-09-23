@@ -778,7 +778,7 @@ mod tests {
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: VaapiDriver::Ihd,
+            driver: Some(VaapiDriver::Ihd),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
@@ -839,7 +839,7 @@ mod tests {
         }
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver,
+            driver: Some(driver),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
@@ -1295,7 +1295,7 @@ mod tests {
     fn vaapi_accel_with_opencl(opencl: bool) -> Vaapi {
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: VaapiDriver::Ihd,
+            driver: Some(VaapiDriver::Ihd),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),

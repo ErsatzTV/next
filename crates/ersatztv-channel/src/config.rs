@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use ffpipeline::capabilities::amf::AmfDeviceTarget;
-use ffpipeline::capabilities::vulkan::VulkanCapabilities;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -18,6 +16,8 @@ pub const PATH_FIELDS: &[&str] = &[
     "/ffmpeg/reports_folder",
     "/normalization/subtitle/fonts_folder",
 ];
+
+const DEFAULT_VAAPI_DEVICE: &str = "/dev/dri/renderD128";
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
@@ -60,8 +60,12 @@ pub struct FfmpegConfig {
     pub reports_folder: Option<String>,
 }
 
+/// Controls the content that replaces scheduled content when there is nothing to play
+/// (a gap in the playout) or when the scheduled item fails
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
 pub struct FallbackConfig {
+    /// Burn the reason for the fallback into the fallback video; this is always burned,
+    /// regardless of the normalization subtitle mode
     #[serde(default)]
     pub show_error: bool,
 }
@@ -138,7 +142,9 @@ pub struct VideoNormalizationConfig {
     pub accel: Option<HardwareAccel>,
     /// Windows only. Unset picks the discrete AMD adapter.
     pub amf_device: Option<u32>,
+    /// Unset uses `/dev/dri/renderD128`.
     pub vaapi_device: Option<PathBuf>,
+    /// Unset lets libva select the driver for `vaapi_device`.
     pub vaapi_driver: Option<VaapiDriver>,
     #[serde(default)]
     pub deinterlace: bool,
@@ -327,11 +333,10 @@ impl HardwareAccel {
     ) -> Option<ffpipeline::hw_accel::HardwareAccel> {
         match self {
             HardwareAccel::Amf => {
-                let target = channel_config
-                    .normalization
-                    .video
-                    .amf_device
-                    .map_or(AmfDeviceTarget::Auto, AmfDeviceTarget::Adapter);
+                let target = channel_config.normalization.video.amf_device.map_or(
+                    ffpipeline::capabilities::amf::AmfDeviceTarget::Auto,
+                    ffpipeline::capabilities::amf::AmfDeviceTarget::Adapter,
+                );
                 let capabilities =
                     ffpipeline::capabilities::amf::AmfCapabilities::probe_with(target);
                 match capabilities {
@@ -360,11 +365,13 @@ impl HardwareAccel {
                     Ok(capabilities) => {
                         log::debug!("detected NVIDIA capabilities: {:?}", capabilities);
                         let vulkan =
-                            VulkanCapabilities::probe_for_nvidia(capabilities.device_uuid())
-                                .inspect_err(|e| {
-                                    log::debug!("Vulkan unavailable for CUDA tonemapping: {e}")
-                                })
-                                .ok();
+                            ffpipeline::capabilities::vulkan::VulkanCapabilities::probe_for_nvidia(
+                                capabilities.device_uuid(),
+                            )
+                            .inspect_err(|e| {
+                                log::debug!("Vulkan unavailable for CUDA tonemapping: {e}")
+                            })
+                            .ok();
                         Some(ffpipeline::hw_accel::HardwareAccel::Cuda(
                             ffpipeline::accel::cuda::Cuda::new(capabilities, vulkan),
                         ))
@@ -406,54 +413,51 @@ impl HardwareAccel {
                 }
             }
             HardwareAccel::Vaapi => {
-                if let Some(vaapi_device) = &channel_config.normalization.video.vaapi_device
-                    && let Some(vaapi_driver) = &channel_config.normalization.video.vaapi_driver
-                {
-                    if vaapi_device.exists() {
-                        let pipeline_driver: ffpipeline::accel::vaapi::VaapiDriver =
-                            vaapi_driver.clone().into();
+                let video = &channel_config.normalization.video;
+                let vaapi_device = video
+                    .vaapi_device
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(DEFAULT_VAAPI_DEVICE));
+                if vaapi_device.exists() {
+                    let driver: Option<ffpipeline::accel::vaapi::VaapiDriver> =
+                        video.vaapi_driver.clone().map(Into::into);
 
-                        let capabilities =
-                            ffpipeline::capabilities::vaapi::VaapiCapabilities::probe(
-                                vaapi_device.to_str()?,
-                                Some(pipeline_driver.to_string().as_str()),
+                    let capabilities = ffpipeline::capabilities::vaapi::VaapiCapabilities::probe(
+                        vaapi_device.to_str()?,
+                        driver.as_ref().map(|d| d.to_string()).as_deref(),
+                    );
+
+                    match capabilities {
+                        Ok(capabilities) => {
+                            log::debug!(
+                                "detected {} VAAPI entrypoints on {} using {}",
+                                capabilities.count(),
+                                vaapi_device.display(),
+                                capabilities.vendor()
                             );
 
-                        match capabilities {
-                            Ok(capabilities) => {
-                                log::debug!(
-                                    "detected {} VAAPI entrypoints using {}",
-                                    capabilities.count(),
-                                    capabilities.vendor()
-                                );
+                            let opencl_capabilities =
+                                ffpipeline::capabilities::opencl::OpenCLCapabilities::probe()
+                                    .unwrap_or_default();
 
-                                let opencl_capabilities =
-                                    ffpipeline::capabilities::opencl::OpenCLCapabilities::probe()
-                                        .unwrap_or_default();
-
-                                Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
-                                    ffpipeline::accel::vaapi::Vaapi {
-                                        device: vaapi_device.to_str()?.to_owned(),
-                                        driver: vaapi_driver.clone().into(),
-                                        capabilities,
-                                        opencl_capabilities,
-                                    },
-                                ))
-                            }
-                            Err(e) => {
-                                log::error!("failed to probe VAAPI capabilities: {}", e);
-                                None
-                            }
+                            Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
+                                ffpipeline::accel::vaapi::Vaapi {
+                                    device: vaapi_device.to_str()?.to_owned(),
+                                    driver,
+                                    capabilities,
+                                    opencl_capabilities,
+                                },
+                            ))
                         }
-                    } else {
-                        log::error!(
-                            "`vaapi_device` does not exist! channel will not use hardware accel"
-                        );
-                        None
+                        Err(e) => {
+                            log::error!("failed to probe VAAPI capabilities: {}", e);
+                            None
+                        }
                     }
                 } else {
                     log::error!(
-                        "hardware accel `vaapi` requires `vaapi_device` and `vaapi_driver`"
+                        "vaapi device `{}` does not exist! channel will not use hardware accel",
+                        vaapi_device.display()
                     );
                     None
                 }

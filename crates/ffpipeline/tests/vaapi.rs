@@ -38,26 +38,24 @@ fn find_vaapi_driver() -> Option<VaapiDriver> {
     None
 }
 
-fn probe_vaapi() -> Option<(String, VaapiDriver, VaapiCapabilities, OpenCLCapabilities)> {
+fn probe_vaapi() -> Option<(
+    String,
+    Option<VaapiDriver>,
+    VaapiCapabilities,
+    OpenCLCapabilities,
+)> {
     let device = find_vaapi_device()?;
     let device_str = device.to_str()?;
+    let driver = find_vaapi_driver();
 
-    if let Some(driver) = find_vaapi_driver() {
-        let caps = VaapiCapabilities::probe(device_str, Some(&driver.to_string())).ok()?;
-        let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
-        return Some((device_str.to_owned(), driver, caps, opencl_caps));
-    }
-
-    for driver in [VaapiDriver::Ihd, VaapiDriver::I965, VaapiDriver::RadeonSI] {
-        if let Ok(caps) = VaapiCapabilities::probe(device_str, Some(&driver.to_string()))
-            && caps.count() > 0
-        {
-            let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
-            return Some((device_str.to_owned(), driver, caps, opencl_caps));
-        }
-    }
-
-    None
+    let caps = VaapiCapabilities::probe(
+        device_str,
+        driver.as_ref().map(|d| d.to_string()).as_deref(),
+    )
+    .ok()
+    .filter(|caps| caps.count() > 0)?;
+    let opencl_caps = OpenCLCapabilities::probe().unwrap_or_default();
+    Some((device_str.to_owned(), driver, caps, opencl_caps))
 }
 
 async fn make_vaapi_accel() -> Option<&'static HardwareAccel> {
