@@ -28,8 +28,8 @@ use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOv
 use crate::video_codec::VideoCodec;
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, FadeFilter,
-    FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
+    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, EnsureAlphaFilter,
+    FadeFilter, FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
     SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
     TransposeDir, TransposeFilter, VideoFilter,
 };
@@ -748,10 +748,10 @@ impl Pipeline {
                 )
             };
 
-            let format_filter: VideoFilter = FormatFilter {
+            let ensure_alpha_filter: VideoFilter = EnsureAlphaFilter {
                 format: match secondary_initial_state.pixel_format.bit_depth() {
                     10 => PixelFormat::Yuva420p10le,
-                    _ => PixelFormat::Yuva420p,
+                    _ => PixelFormat::Bgra,
                 },
             }
             .into();
@@ -782,11 +782,11 @@ impl Pipeline {
                     filters
                 } else {
                     vec![
+                        ensure_alpha_filter,
                         ColorChannelMixerFilter {
                             alpha: graphics_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
                         }
                         .into(),
-                        format_filter,
                         ScaleFilter {
                             size: Some(scaled_size),
                             scaling_mode: ScalingMode::ScaleAndPad,

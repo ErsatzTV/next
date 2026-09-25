@@ -340,6 +340,38 @@ async fn watermark_animated(
     }
 }
 
+/// Exercises a watermark without alpha, which needs an alpha channel before opacity is applied.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn watermark_no_alpha(
+    #[values("1080p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+) {
+    let res = FrameSize::from_str("1920x1080").unwrap();
+    let (vf_str, bpp) = vf;
+    if let Ok(vf) = VideoFormat::from_str(vf_str) {
+        run_software_test_case(TestCase {
+            fixture_name: src,
+            params: TestOutputParams {
+                video_format: Some(vf),
+                video_size: Some(res),
+                bit_depth: Some(bpp),
+                watermark: Some(TestWatermark {
+                    fixture_name: "watermark.jpg",
+                    opacity_percent: Some(50.0),
+                    ..TestWatermark::default()
+                }),
+                ..TestOutputParams::default()
+            },
+            expected_video_codec: vf.to_string(),
+            expected_video_size: res,
+            expected_audio_codec: AudioFormat::Aac.to_string(),
+        })
+        .await;
+    }
+}
+
 /// Exercises fades over a still image, which need the looped (repeated) frames to carry timestamps.
 #[rstest]
 #[tokio::test]

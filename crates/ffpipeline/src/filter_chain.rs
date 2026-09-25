@@ -259,7 +259,7 @@ impl FilterChain {
         }
 
         if current_state.surface != *encoder_surface {
-            log::debug!(
+            log::trace!(
                 "current surface {:?} doesn't match encoder {:?}",
                 current_state.surface,
                 *encoder_surface
