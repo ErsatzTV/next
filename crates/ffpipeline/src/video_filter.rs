@@ -51,6 +51,7 @@ pub enum VideoFilter {
     Fade(FadeFilter),
     Crop(CropFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
+    EnsureAlpha(EnsureAlphaFilter),
     // AMF hardware filters
     VppAmf(accel::amf::VppAmf),
     // CUDA hardware filters
@@ -882,6 +883,33 @@ impl VideoFilterOp for Dv5WorkaroundFilter {
         Some(String::from(
             "setparams=color_trc=smpte2084:colorspace=bt2020nc:color_primaries=bt2020",
         ))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnsureAlphaFilter {
+    pub format: PixelFormat,
+}
+
+impl VideoFilterOp for EnsureAlphaFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if state.pixel_format.has_alpha() {
+            None
+        } else {
+            Some(self.clone().into())
+        }
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = self.format;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("format={}", self.format.as_arg()))
     }
 }
 
