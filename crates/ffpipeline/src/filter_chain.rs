@@ -216,9 +216,8 @@ impl FilterChain {
                     // ensure secondary input matches overlay required surface, pixel format
                     let sec_req = best.kind.secondary_input_state(&current_state);
                     let mut sec = FilterChain::new(
-                        best.secondary
-                            .iter()
-                            .cloned()
+                        Self::convert_before_loop(&best.secondary, &sec_req, accel)
+                            .into_iter()
                             .map(PipelineFilter::Video)
                             .collect(),
                     );
@@ -303,6 +302,40 @@ impl FilterChain {
         let mut new_filters = filters;
         new_filters.append(&mut self.filters);
         self.filters = new_filters;
+    }
+
+    /// convert a still image to the overlay's secondary format before it is looped, so the
+    /// conversion runs once instead of on every repeated frame
+    fn convert_before_loop(
+        secondary: &[VideoFilter],
+        sec_req: &FrameState,
+        accel: &Option<HardwareAccel>,
+    ) -> Vec<VideoFilter> {
+        let mut filters = secondary.to_vec();
+        let Some(loop_index) = filters
+            .iter()
+            .position(|f| matches!(f, VideoFilter::Loop(l) if l.is_still_image))
+        else {
+            return filters;
+        };
+
+        // fade is the only filter known to accept and preserve an alpha format after the loop
+        let format = sec_req.pixel_format;
+        let safe_after_loop = format.has_alpha()
+            && filters[loop_index + 1..]
+                .iter()
+                .all(|f| matches!(f, VideoFilter::Fade(_)));
+
+        // otherwise the upload would convert again to a format it accepts
+        let uploadable = sec_req.surface == FrameSurface::System
+            || accel
+                .as_ref()
+                .is_none_or(|a| a.accepts_upload_format(&format));
+
+        if safe_after_loop && uploadable {
+            filters.insert(loop_index, FormatFilter { format }.into());
+        }
+        filters
     }
 
     fn transfer_surface(
@@ -759,6 +792,9 @@ impl FilterChain {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::time::Duration;
+
+    use time::OffsetDateTime;
 
     use super::*;
     use crate::accel::opencl::{PadOpencl, TonemapOpencl};
@@ -768,11 +804,13 @@ mod tests {
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
+    use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
     use crate::output_settings::ScalingMode;
     use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
     use crate::pipeline::{HdrFormat, HwPixelFormat};
     use crate::video_filter::{
-        FormatFilter, HwMapFilter, HwUploadFilter, PadFilter, ScaleFilter, ToneMapFilter,
+        FadeFilter, FormatFilter, HwMapFilter, HwUploadFilter, LoopFilter, PadFilter, ScaleFilter,
+        ToneMapFilter,
     };
 
     fn vaapi_accel() -> HardwareAccel {
@@ -821,6 +859,161 @@ mod tests {
             lower < upper,
             "layers must be composited from first to last"
         );
+    }
+
+    fn sdr_state(surface: FrameSurface, pixel_format: PixelFormat) -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface,
+            pixel_format,
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    fn periodic_watermark(after_loop: Vec<VideoFilter>) -> PipelineFilter {
+        let fades = FadeFilter::for_graphics(
+            Some(&WatermarkTiming::Periodic(PeriodicTiming {
+                clock: PeriodicClock::Content,
+                frequency_ms: 2000,
+                phase_offset_ms: None,
+                disable_after_ms: None,
+                fade_ms: Some(200),
+                hold_ms: 400,
+            })),
+            OffsetDateTime::UNIX_EPOCH,
+            Duration::ZERO,
+            Duration::from_secs(4),
+        );
+
+        let mut secondary: Vec<VideoFilter> = vec![
+            ScaleFilter {
+                size: Some(FrameSize {
+                    width: 192,
+                    height: 192,
+                }),
+                scaling_mode: ScalingMode::ScaleAndPad,
+                input_is_anamorphic: false,
+            }
+            .into(),
+            LoopFilter {
+                is_still_image: true,
+            }
+            .into(),
+        ];
+        secondary.extend(fades.into_iter().map(VideoFilter::from));
+        secondary.extend(after_loop);
+
+        PipelineFilter::Overlay(OverlayFilter {
+            kind: SoftwareOverlay::default().into(),
+            secondary,
+            secondary_initial_state: FrameState {
+                size: FrameSize {
+                    width: 200,
+                    height: 200,
+                },
+                ..sdr_state(FrameSurface::System, PixelFormat::Rgba)
+            },
+            secondary_source: OverlaySource::Graphics(0),
+            location: None,
+        })
+    }
+
+    fn secondary_chain(
+        overlay: PipelineFilter,
+        accel: Option<HardwareAccel>,
+        ffmpeg_info: &FfmpegInfo,
+        main: FrameState,
+    ) -> String {
+        let mut chain = FilterChain::new(vec![overlay]);
+        chain.resolve(
+            ffmpeg_info,
+            &accel,
+            &VideoFilterOptions::default(),
+            &main,
+            &main.surface,
+            &Some(main.pixel_format),
+        );
+        chain.build("0:a", "0:v", None, &[Some(String::from("1:0"))]);
+
+        let filter_complex = &chain.as_arg()[1];
+        let start = filter_complex.find("[1:0]").unwrap();
+        let end = filter_complex[start..].find(';').unwrap();
+        filter_complex[start..start + end].to_owned()
+    }
+
+    #[test]
+    fn software_overlay_converts_still_image_before_loop() {
+        let sec = secondary_chain(
+            periodic_watermark(Vec::new()),
+            None,
+            &FfmpegInfo::default(),
+            sdr_state(FrameSurface::System, PixelFormat::Yuv420p),
+        );
+
+        assert!(
+            sec.contains("setsar=1,format=yuva420p,loop=-1:1,fade="),
+            "unexpected secondary: {sec}"
+        );
+        assert_eq!(sec.matches("format=").count(), 1, "{sec}");
+    }
+
+    #[test]
+    fn vaapi_overlay_converts_still_image_before_loop_and_only_uploads_after() {
+        let accel = HardwareAccel::Vaapi(Vaapi {
+            capabilities: VaapiCapabilities {
+                vpp_pixel_formats: HashSet::from([
+                    libva_sys::VA_FOURCC_NV12,
+                    libva_sys::VA_FOURCC_BGRA,
+                ]),
+                can_overlay: true,
+                ..vaapi_accel_with_tonemap(VaapiDriver::Ihd, false, false, false).capabilities
+            },
+            ..vaapi_accel_with_tonemap(VaapiDriver::Ihd, false, false, false)
+        });
+
+        let sec = secondary_chain(
+            periodic_watermark(Vec::new()),
+            Some(accel),
+            &ffmpeg_info_with_filters(&[KnownVideoFilter::OverlayVaapi]),
+            sdr_state(FrameSurface::Vaapi, PixelFormat::Nv12),
+        );
+
+        assert!(
+            sec.contains("setsar=1,format=bgra,loop=-1:1,fade="),
+            "unexpected secondary: {sec}"
+        );
+        assert!(sec.ends_with("',hwupload[v_s0]"), "{sec}");
+        assert_eq!(sec.matches("format=").count(), 1, "{sec}");
+    }
+
+    #[test]
+    fn unknown_filter_after_loop_keeps_conversion_at_the_end() {
+        let after_loop = ScaleFilter {
+            size: Some(FrameSize {
+                width: 96,
+                height: 96,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+            input_is_anamorphic: false,
+        };
+
+        let sec = secondary_chain(
+            periodic_watermark(vec![after_loop.into()]),
+            None,
+            &FfmpegInfo::default(),
+            sdr_state(FrameSurface::System, PixelFormat::Yuv420p),
+        );
+
+        assert!(sec.contains("setsar=1,loop=-1:1,fade="), "{sec}");
+        assert!(sec.ends_with("setsar=1,format=yuva420p[v_s0]"), "{sec}");
     }
 
     fn vaapi_accel_with_tonemap(
