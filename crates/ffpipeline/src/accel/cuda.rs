@@ -204,7 +204,9 @@ impl HwAccel for Cuda {
                 "-init_hw_device",
                 "cuda=nv",
                 "-init_hw_device",
-                "vulkan=vk@nv"
+                "vulkan=vk@nv",
+                "-filter_hw_device",
+                "vk"
             ]
         } else {
             args!["-init_hw_device", "cuda"]
