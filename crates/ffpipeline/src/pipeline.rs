@@ -119,6 +119,7 @@ pub type SurfaceSet = std::collections::HashSet<FrameSurface>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
     Bgra,
+    Rgba,
     Yuv420p,
     Yuv420p10le,
     Yuva420p,
@@ -135,6 +136,7 @@ impl PixelFormat {
     pub fn parse(pix_fmt: &str) -> PixelFormat {
         match pix_fmt.to_lowercase().as_str() {
             "bgra" => PixelFormat::Bgra,
+            "rgba" => PixelFormat::Rgba,
             "yuv420p" => PixelFormat::Yuv420p,
             "yuv420p10le" => PixelFormat::Yuv420p10le,
             "yuva420p" => PixelFormat::Yuva420p,
@@ -152,6 +154,7 @@ impl PixelFormat {
     pub(crate) fn bit_depth(&self) -> u8 {
         match self {
             PixelFormat::Bgra
+            | PixelFormat::Rgba
             | PixelFormat::Yuv420p
             | PixelFormat::Yuva420p
             | PixelFormat::Nv12 => 8,
@@ -166,13 +169,17 @@ impl PixelFormat {
     pub(crate) fn has_alpha(&self) -> bool {
         matches!(
             self,
-            PixelFormat::Bgra | PixelFormat::Yuva420p | PixelFormat::Yuva420p10le
+            PixelFormat::Bgra
+                | PixelFormat::Rgba
+                | PixelFormat::Yuva420p
+                | PixelFormat::Yuva420p10le
         )
     }
 
     pub(crate) fn as_arg(&self) -> &str {
         match self {
             PixelFormat::Bgra => "bgra",
+            PixelFormat::Rgba => "rgba",
             PixelFormat::Yuv420p => "yuv420p",
             PixelFormat::Yuv420p10le => "yuv420p10le",
             PixelFormat::Yuva420p => "yuva420p",

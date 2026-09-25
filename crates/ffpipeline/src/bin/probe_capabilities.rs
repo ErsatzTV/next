@@ -80,6 +80,7 @@ fn pixel_format_name(f: &PixelFormat) -> &'static str {
         PixelFormat::Yuv420p => "yuv420p",
         PixelFormat::Yuv420p10le => "yuv420p10le",
         PixelFormat::Bgra => "bgra",
+        PixelFormat::Rgba => "rgba",
         PixelFormat::Yuva420p => "yuva420p",
         PixelFormat::Yuva420p10le => "yuva420p10le",
         PixelFormat::P016 => "p016",
