@@ -167,6 +167,17 @@ jobs:
           mv "target/${{ matrix.rust_target }}/release/ersatztv-channel${{ matrix.exe_ext }}" "$release_name/"
           mv "target/${{ matrix.rust_target }}/release/ersatztv${{ matrix.exe_ext }}" "$release_name/"
 
+      - name: Build libvpl
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git clone --depth 1 --branch v2.17.0 https://github.com/intel/libvpl.git libvpl-src
+          cmake -S libvpl-src -B libvpl-build -DUSE_MSVC_STATIC_RUNTIME=ON
+          cmake --build libvpl-build --config Release --target VPL
+          cp libvpl-build/Release/libvpl.dll "$RELEASE_NAME/"
+          cp libvpl-src/LICENSE "$RELEASE_NAME/libvpl-LICENSE.txt"
+          rm -rf libvpl-src libvpl-build
+
       - name: Azure login
         if: runner.os == 'Windows'
         uses: azure/login@v3
@@ -185,7 +196,7 @@ jobs:
           certificate-profile-name: ErsatzTV
           files-folder: ${{ github.workspace }}/${{ env.RELEASE_NAME }}
           files-folder-recurse: false
-          files-folder-filter: ersatztv.exe,ersatztv-channel.exe,ersatztv-playout-generator.exe
+          files-folder-filter: ersatztv.exe,ersatztv-channel.exe,ersatztv-playout-generator.exe,libvpl.dll
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
