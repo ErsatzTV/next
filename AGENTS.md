@@ -277,7 +277,7 @@ maintainer handles the legacy side. Your job is to call it out explicitly in the
   optionally scoped like `feat(pipeline):`); PRs are squash-merged and the title becomes the commit message.
 - Before opening: `cargo +nightly fmt --all`, the clippy command above with `RUSTFLAGS=-Dwarnings`, `cargo test`,
   and `cargo test --package ffpipeline --test software -- --ignored --test-threads 1`. CI builds on Windows, Linux
-  (glibc + musl, x64 + arm + arm64) and macOS (x64 + arm64), so platform-specific code needs a stub path for the
+  (glibc + musl x64, glibc arm64) and macOS (x64 + arm64), so platform-specific code needs a stub path for the
   others.
 - In the PR description, state: which integration suites you ran and on what hardware/ffmpeg build, and any
   cross-repo follow-ups from the table above.

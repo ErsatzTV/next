@@ -31,30 +31,15 @@ jobs:
             os: ubuntu-latest
             suffix: '-amd64'
             platform: 'linux/amd64'
-            extra_cache: ''
-          # Cross-compiled on amd64, so the toolchain layers match the amd64 cache.
-          - name: arm32v7
-            os: ubuntu-latest
-            suffix: '-arm'
-            platform: 'linux/arm/v7'
-            extra_cache: 'type=gha,scope=next-amd64'
           - name: arm64
             os: ubuntu-24.04-arm
             suffix: '-arm64'
             platform: 'linux/arm64'
-            extra_cache: ''
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      # Rust is cross-compiled. QEMU runs only the ARMv7 image setup and smoke test.
-      - name: Set up QEMU
-        if: matrix.name == 'arm32v7'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -85,7 +70,6 @@ jobs:
           cache-from: |
             type=gha,scope=next-${{ matrix.name }}
             type=gha,scope=next-test-${{ matrix.name }}
-            ${{ matrix.extra_cache }}
           cache-to: type=gha,mode=max,scope=next-${{ matrix.name }}
           build-args: |
             INFO_VERSION=${{ inputs.info_version }}-docker${{ matrix.suffix }}
@@ -166,11 +150,10 @@ jobs:
         id: digests
         run: |
           AMD64_HASH=$(cat digests/digest-amd64.txt)
-          ARM32V7_HASH=$(cat digests/digest-arm32v7.txt)
           ARM64_HASH=$(cat digests/digest-arm64.txt)
 
-          DOCKER_HUB_DIGESTS="ersatztv/next@${AMD64_HASH} ersatztv/next@${ARM64_HASH} ersatztv/next@${ARM32V7_HASH}"
-          GHCR_DIGESTS="ghcr.io/ersatztv/next@${AMD64_HASH} ghcr.io/ersatztv/next@${ARM64_HASH} ghcr.io/ersatztv/next@${ARM32V7_HASH}"
+          DOCKER_HUB_DIGESTS="ersatztv/next@${AMD64_HASH} ersatztv/next@${ARM64_HASH}"
+          GHCR_DIGESTS="ghcr.io/ersatztv/next@${AMD64_HASH} ghcr.io/ersatztv/next@${ARM64_HASH}"
 
           echo "docker_hub_digests=${DOCKER_HUB_DIGESTS}" >> "$GITHUB_OUTPUT"
           echo "ghcr_digests=${GHCR_DIGESTS}" >> "$GITHUB_OUTPUT"
@@ -216,11 +199,10 @@ jobs:
         id: digests
         run: |
           AMD64_HASH=$(cat digests/digest-amd64.txt)
-          ARM32V7_HASH=$(cat digests/digest-arm32v7.txt)
           ARM64_HASH=$(cat digests/digest-arm64.txt)
 
-          DOCKER_HUB_DIGESTS="ersatztv/next-test@${AMD64_HASH} ersatztv/next-test@${ARM64_HASH} ersatztv/next-test@${ARM32V7_HASH}"
-          GHCR_DIGESTS="ghcr.io/ersatztv/next-test@${AMD64_HASH} ghcr.io/ersatztv/next-test@${ARM64_HASH} ghcr.io/ersatztv/next-test@${ARM32V7_HASH}"
+          DOCKER_HUB_DIGESTS="ersatztv/next-test@${AMD64_HASH} ersatztv/next-test@${ARM64_HASH}"
+          GHCR_DIGESTS="ghcr.io/ersatztv/next-test@${AMD64_HASH} ghcr.io/ersatztv/next-test@${ARM64_HASH}"
 
           echo "docker_hub_digests=${DOCKER_HUB_DIGESTS}" >> "$GITHUB_OUTPUT"
           echo "ghcr_digests=${GHCR_DIGESTS}" >> "$GITHUB_OUTPUT"
