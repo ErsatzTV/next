@@ -1,8 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# The ARMv7 FFmpeg base image is Jammy. Build on Jammy for all platforms so the
-# binaries link against its glibc. Build on BUILDPLATFORM so the compiler does
-# not run under QEMU.
+# Build on BUILDPLATFORM so the compiler does not run under QEMU.
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS chef
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl build-essential cmake pkg-config jq \
@@ -20,7 +18,6 @@ ARG BUILDARCH
 RUN case "$TARGETARCH/$TARGETVARIANT" in \
         amd64/) target=x86_64-unknown-linux-gnu; compiler=x86_64-linux-gnu; pkg=x86-64-linux-gnu ;; \
         arm64/|arm64/v8) target=aarch64-unknown-linux-gnu; compiler=aarch64-linux-gnu; pkg=$compiler ;; \
-        arm/v7) target=armv7-unknown-linux-gnueabihf; compiler=arm-linux-gnueabihf; pkg=$compiler ;; \
         *) echo "Unsupported target: $TARGETARCH/$TARGETVARIANT" >&2; exit 1 ;; \
     esac && \
     if [ "$BUILDARCH" != "$TARGETARCH" ]; then \
@@ -31,8 +28,7 @@ RUN case "$TARGETARCH/$TARGETVARIANT" in \
     printf 'export CARGO_BUILD_TARGET=%s\nexport TARGET_CC=%s-gcc\nexport TARGET_CXX=%s-g++\nexport TARGET_AR=%s-ar\nexport TARGET_STRIP=%s-strip\n' \
         "$target" "$compiler" "$compiler" "$compiler" "$compiler" > /target-env
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 WORKDIR /build
 
 FROM chef AS planner
@@ -71,7 +67,7 @@ RUN . /target-env && \
         done && \
     test -x /out/tests/software
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2 AS test-runtime
+FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-1@sha256:21a0ef02ba357b0488962b2aa020536e77aec706cc07656fb34808ce54d3c4a6 AS test-runtime
 
 COPY --from=testbuild /out/tests /app/tests
 # The test binaries contain the compile-time CARGO_MANIFEST_DIR under /build.
@@ -114,10 +110,9 @@ RUN chmod +x /app/run-tests
 
 ENTRYPOINT ["/app/run-tests"]
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2 AS runtime
+FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-1@sha256:21a0ef02ba357b0488962b2aa020536e77aec706cc07656fb34808ce54d3c4a6 AS runtime
 
-# The ARMv7 base image already has a group with GID 1000.
-RUN (getent group 1000 || groupadd --gid 1000 ersatztv) && \
+RUN groupadd --gid 1000 ersatztv && \
     useradd --uid 1000 --gid 1000 --no-create-home --shell /sbin/nologin ersatztv && \
     mkdir -p /config && \
     chown 1000:1000 /config

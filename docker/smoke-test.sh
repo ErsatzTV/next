@@ -18,6 +18,6 @@ docker run --rm --platform "$platform" --entrypoint sh "$app_image" -ec '
         -of default=noprint_wrappers=1:nokey=1 /tmp/smoke.mp4 | grep -x h264
 '
 
-# Run the Rust -> FFmpeg -> ffprobe path with a fixture file. On ARMv7 this
-# also checks that the cross-compiled test binary runs under QEMU.
+# Run the Rust -> FFmpeg -> ffprobe path with a fixture file. On a foreign
+# platform this also checks that the cross-compiled test binary runs under QEMU.
 docker run --rm --platform "$platform" "$test_image" software codec_copy -- --exact

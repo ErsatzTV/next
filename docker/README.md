@@ -1,18 +1,17 @@
 # Docker builds
 
 `docker/Dockerfile` builds the application image (target `runtime`) and the
-test image (target `test-runtime`) for `linux/amd64`, `linux/arm64`, and
-`linux/arm/v7`.
+test image (target `test-runtime`) for `linux/amd64` and `linux/arm64`.
 
 Build and smoke-test from the repository root. Change the platform and tags as
 needed:
 
 ```sh
-docker buildx build --platform linux/arm/v7 --target runtime \
-    -f docker/Dockerfile -t next:local-armv7 --load .
-docker buildx build --platform linux/arm/v7 --target test-runtime \
-    -f docker/Dockerfile -t next-test:local-armv7 --load .
-sh docker/smoke-test.sh linux/arm/v7 next:local-armv7 next-test:local-armv7
+docker buildx build --platform linux/arm64 --target runtime \
+    -f docker/Dockerfile -t next:local-arm64 --load .
+docker buildx build --platform linux/arm64 --target test-runtime \
+    -f docker/Dockerfile -t next-test:local-arm64 --load .
+sh docker/smoke-test.sh linux/arm64 next:local-arm64 next-test:local-arm64
 ```
 
 Rust is compiled on the build host. A cross compiler is used when the target
