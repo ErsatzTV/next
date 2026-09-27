@@ -172,7 +172,7 @@ jobs:
         shell: bash
         run: |
           git clone --depth 1 --branch v2.17.0 https://github.com/intel/libvpl.git libvpl-src
-          cmake -S libvpl-src -B libvpl-build -DUSE_MSVC_STATIC_RUNTIME=ON
+          cmake -S libvpl-src -B libvpl-build -DUSE_MSVC_STATIC_RUNTIME=ON -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
           cmake --build libvpl-build --config Release --target VPL
           cp libvpl-build/Release/libvpl.dll "$RELEASE_NAME/"
           cp libvpl-src/LICENSE "$RELEASE_NAME/libvpl-LICENSE.txt"
