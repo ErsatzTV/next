@@ -31,6 +31,9 @@ const VPP_FORMATS: &[(u32, u8)] = &[
     (MFX_FOURCC_RGB4, 8),
 ];
 
+/// No rgb4: pad runs on decoded video.
+const COMPOSITE_FORMATS: &[(u32, u8)] = &[(MFX_FOURCC_NV12, 8), (MFX_FOURCC_P010, 10)];
+
 /// A legacy session needs a device before it can answer capability questions. On
 /// Linux the caller must supply a VA display, or every query returns
 /// `MFX_ERR_UNSUPPORTED`. On Windows the runtime makes its own D3D device, so
@@ -182,6 +185,12 @@ impl<'a> Session<'a> {
                 })
                 .map(|(fourcc, _)| QsvFourCC(*fourcc))
                 .collect(),
+            composite_formats: COMPOSITE_FORMATS
+                .iter()
+                .flat_map(|from| COMPOSITE_FORMATS.iter().map(move |to| (*from, *to)))
+                .filter(|(from, to)| self.can_composite(*from, *to))
+                .map(|(from, to)| (QsvFourCC(from.0), QsvFourCC(to.0)))
+                .collect(),
             runtime_api: self.api_version(),
         }
     }
@@ -277,6 +286,67 @@ impl<'a> Session<'a> {
         let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
         // Warnings can mean the runtime skipped rotation or changed the requested settings.
         status == MFX_ERR_NONE && output_rotation.Angle == angle
+    }
+
+    /// The patched vpp_qsv pads with a single-stream composite, so query a sample 4:3
+    /// frame in a 16:9 canvas. Composite docs list only NV12 -> NV12 and RGB output,
+    /// and legacy runtimes do reject P010 output, so query each format pair.
+    fn can_composite(&self, from: (u32, u8), to: (u32, u8)) -> bool {
+        let mut input_stream = mfxVPPCompInputStream {
+            DstX: 240,
+            DstY: 0,
+            DstW: 1440,
+            DstH: 1080,
+            ..Default::default()
+        };
+        let mut output_stream = input_stream;
+        let mut composite = mfxExtVPPComposite {
+            Header: mfxExtBuffer {
+                BufferId: MFX_EXTBUFF_VPP_COMPOSITE,
+                BufferSz: std::mem::size_of::<mfxExtVPPComposite>() as u32,
+            },
+            Y: 16 << (to.1 - 8),
+            U: 128 << (to.1 - 8),
+            V: 128 << (to.1 - 8),
+            NumTiles: 0,
+            reserved1: [0; 23],
+            NumInputStream: 1,
+            InputStream: &mut input_stream,
+        };
+        let mut output_composite = composite;
+        output_composite.InputStream = &mut output_stream;
+        let mut input_ext = &mut composite as *mut mfxExtVPPComposite;
+        let mut output_ext = &mut output_composite as *mut mfxExtVPPComposite;
+
+        let mut source = frame_info(from.0, from.1);
+        source.Width = 640;
+        source.Height = 480;
+        source.CropW = 640;
+        source.CropH = 480;
+
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion {
+            vpp: mfxInfoVPP {
+                In: source,
+                Out: frame_info(to.0, to.1),
+                ..Default::default()
+            },
+        };
+        input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        input.ExtParam = (&mut input_ext as *mut *mut mfxExtVPPComposite).cast();
+        input.NumExtParam = 1;
+        let mut output = input;
+        output.ExtParam = (&mut output_ext as *mut *mut mfxExtVPPComposite).cast();
+
+        let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
+        log::debug!(
+            "[qsv] legacy composite query {:?} -> {:?}: {status}",
+            QsvFourCC(from.0),
+            QsvFourCC(to.0)
+        );
+
+        // unlike query(), a warning fails: it can mean the runtime ignored the composite
+        status == MFX_ERR_NONE
     }
 
     fn query(&self, kind: Query, codec_id: u32, input: &mut mfxVideoParam) -> bool {

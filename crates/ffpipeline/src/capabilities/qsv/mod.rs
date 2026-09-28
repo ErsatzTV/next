@@ -34,6 +34,8 @@ pub struct QsvCapabilities {
     pub(crate) vpp_pixel_formats: HashSet<QsvFourCC>,
     pub(crate) vpp_filters: HashSet<QsvFourCC>,
     pub(crate) rotation_formats: HashSet<QsvFourCC>,
+    /// (input, output) composite pairs. the patched vpp_qsv pads with a composite
+    pub(crate) composite_formats: HashSet<(QsvFourCC, QsvFourCC)>,
     pub(crate) runtime_api: Option<(u16, u16)>,
 }
 
@@ -79,6 +81,12 @@ impl QsvCapabilities {
             && Self::fourcc(pixel_format).is_some_and(|c| self.rotation_formats.contains(&c))
     }
 
+    pub fn can_pad(&self, input: &PixelFormat, output: &PixelFormat) -> bool {
+        Self::fourcc(input)
+            .zip(Self::fourcc(output))
+            .is_some_and(|pair| self.composite_formats.contains(&pair))
+    }
+
     // this is just a heuristic; and p010 support could mean input or output to any filter
     // something to tighten up if we encounter tonemapping failures
     pub fn can_tonemap(&self) -> bool {
@@ -122,6 +130,7 @@ mod tests {
             vpp_pixel_formats: formats.iter().map(|f| QsvFourCC(*f)).collect(),
             vpp_filters: filters.iter().map(|f| QsvFourCC(*f)).collect(),
             rotation_formats: HashSet::new(),
+            composite_formats: HashSet::new(),
             runtime_api,
         }
     }
