@@ -25,7 +25,28 @@ enum Accel {
         adapter: Option<u32>,
     },
     Cuda,
-    Qsv,
+    Qsv {
+        /// Also dump the raw VPL tree and MFXVideoVPP_Query statuses
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Run hwupload and vpp_qsv through ffmpeg and compare the results with what the
+    /// probe predicts
+    QsvVerify {
+        #[arg(long, default_value = "ffmpeg")]
+        ffmpeg: String,
+        /// Device arguments, split on whitespace. The default matches ErsatzTV.
+        #[arg(
+            long,
+            default_value = "-init_hw_device qsv=hw -filter_hw_device hw",
+            allow_hyphen_values = true
+        )]
+        device_args: String,
+        /// An HDR10 file with mastering metadata, to tonemap frames from the QSV decoder.
+        /// Defaults to the 1080p_hevc_10_hdr.ts test fixture
+        #[arg(long)]
+        hdr_input: Option<String>,
+    },
     Rkmpp,
     Vaapi {
         #[arg(long, default_value = "/dev/dri/renderD128")]
@@ -93,7 +114,12 @@ fn main() {
     let result = match cli.accel {
         Accel::Amf { adapter } => print_amf(adapter),
         Accel::Cuda => print_cuda(),
-        Accel::Qsv => print_qsv(),
+        Accel::Qsv { raw } => print_qsv(raw),
+        Accel::QsvVerify {
+            ffmpeg,
+            device_args,
+            hdr_input,
+        } => qsv_verify::run(&ffmpeg, &device_args, hdr_input.as_deref()),
         Accel::Rkmpp => print_rkmpp(),
         Accel::Vaapi { device, driver } => print_vaapi(&device, driver.as_deref()),
         Accel::VideoToolbox => print_videotoolbox(),
@@ -268,7 +294,7 @@ fn print_cuda_vulkan_tonemap(caps: &NvidiaCapabilities) {
     println!("  Also requires ffmpeg with the vulkan hwaccel and the libplacebo filter.");
 }
 
-fn print_qsv() -> Result<(), String> {
+fn print_qsv(raw: bool) -> Result<(), String> {
     let caps = QsvCapabilities::probe().map_err(|e| e.to_string())?;
     println!("=== QSV (Intel VPL) Capabilities ===");
     println!();
@@ -308,6 +334,14 @@ fn print_qsv() -> Result<(), String> {
                 yn(caps.can_pad(&input, &output))
             );
         }
+    }
+
+    if raw {
+        println!();
+        print!(
+            "{}",
+            QsvCapabilities::diagnostics().map_err(|e| e.to_string())?
+        );
     }
 
     Ok(())
@@ -506,5 +540,277 @@ fn default_profile(format: &VideoFormat, bit_depth: u8) -> (&'static str, &'stat
         (VideoFormat::Vp9, 10) => ("vp9", "profile 2"),
         (VideoFormat::Vp9, _) => ("vp9", "profile 0"),
         (VideoFormat::Av1, _) => ("av1", "main"),
+    }
+}
+
+/// Runs the filter chains ErsatzTV builds for QSV through a real ffmpeg, and puts
+/// each result next to what `QsvCapabilities` predicts.
+mod qsv_verify {
+    use std::process::Command;
+
+    use ffpipeline::capabilities::qsv::QsvCapabilities;
+    use ffpipeline::pipeline::{PixelFormat, VideoFormat};
+
+    use super::{pixel_format_name, yn};
+
+    const FORMATS: [PixelFormat; 3] = [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra];
+    const UPLOAD: &str = "hwupload=extra_hw_frames=16";
+    /// HEVC 10-bit with HDR10 metadata, used when `--hdr-input` is not given
+    const HDR10_FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/1080p_hevc_10_hdr.ts"
+    );
+
+    struct Case {
+        group: &'static str,
+        name: String,
+        predicted: bool,
+        note: &'static str,
+        input: Vec<String>,
+        filter: String,
+        /// The same chain without the operation under test. When both run and hash
+        /// the same, ffmpeg skipped the operation, so the case counts as a failure.
+        baseline: Option<String>,
+    }
+
+    fn lavfi(size: &str) -> Vec<String> {
+        vec![
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("testsrc2=size={size}:rate=30"),
+        ]
+    }
+
+    pub fn run(ffmpeg: &str, device_args: &str, hdr_input: Option<&str>) -> Result<(), String> {
+        let caps = QsvCapabilities::probe().map_err(|e| e.to_string())?;
+        let version = Command::new(ffmpeg)
+            .args(["-hide_banner", "-version"])
+            .output()
+            .map_err(|e| format!("cannot run {ffmpeg}: {e}"))?;
+        let help = Command::new(ffmpeg)
+            .args(["-hide_banner", "-h", "filter=vpp_qsv"])
+            .output()
+            .map_err(|e| format!("cannot run {ffmpeg}: {e}"))?;
+        let help = String::from_utf8_lossy(&help.stdout);
+        let has_pad = help.contains("pad_w");
+
+        println!("=== QSV verify ===");
+        println!(
+            "ffmpeg:      {}",
+            String::from_utf8_lossy(&version.stdout)
+                .lines()
+                .next()
+                .unwrap_or("?")
+        );
+        println!("device args: {device_args}");
+        match caps.runtime_api() {
+            Some((major, minor)) => println!("runtime API: {major}.{minor}"),
+            None => println!("runtime API: unknown"),
+        }
+        println!("vpp_qsv pad: {}", yn(has_pad));
+        println!();
+
+        let mut cases = Vec::new();
+        let supported = |pf: &PixelFormat| caps.vpp_supports_format(pf);
+
+        for pf in &FORMATS {
+            let name = pixel_format_name(pf);
+            cases.push(Case {
+                group: "upload",
+                name: name.into(),
+                // Qsv::accepts_upload_format
+                predicted: supported(pf),
+                note: "",
+                input: lavfi("1920x1080"),
+                filter: format!("format={name},{UPLOAD},hwdownload,format={name}"),
+                baseline: None,
+            });
+        }
+
+        for from in &FORMATS {
+            for to in FORMATS.iter().filter(|to| *to != from) {
+                let (from, to_name) = (pixel_format_name(from), pixel_format_name(to));
+                cases.push(Case {
+                    group: "convert",
+                    name: format!("{from} -> {to_name}"),
+                    // accepts_upload_format(from) and can_convert_pixel_format(to)
+                    predicted: supported(&PixelFormat::parse(from)) && supported(to),
+                    note: if *to == PixelFormat::Bgra {
+                        "format_filter never emits bgra"
+                    } else {
+                        ""
+                    },
+                    input: lavfi("1920x1080"),
+                    filter: format!(
+                        "format={from},{UPLOAD},vpp_qsv=format={to_name},hwdownload,format={to_name}"
+                    ),
+                    baseline: None,
+                });
+            }
+        }
+
+        for pf in &FORMATS {
+            let name = pixel_format_name(pf);
+            for (dir, dir_name) in [(1, "clock"), (2, "cclock"), (4, "reversal")] {
+                cases.push(Case {
+                    group: "rotate",
+                    name: format!("{name} {dir_name}"),
+                    predicted: supported(pf) && caps.can_rotate(pf),
+                    note: "",
+                    input: lavfi("1920x1080"),
+                    filter: format!(
+                        "format={name},{UPLOAD},vpp_qsv=transpose={dir},hwdownload,format={name}"
+                    ),
+                    baseline: None,
+                });
+            }
+        }
+
+        if has_pad {
+            for from in [PixelFormat::Nv12, PixelFormat::P010le] {
+                for to in [PixelFormat::Nv12, PixelFormat::P010le] {
+                    let (from_name, to_name) = (pixel_format_name(&from), pixel_format_name(&to));
+                    let format = if from == to {
+                        String::new()
+                    } else {
+                        format!(":format={to_name}")
+                    };
+                    cases.push(Case {
+                        group: "pad",
+                        name: format!("{from_name} -> {to_name}"),
+                        predicted: supported(&from) && caps.can_pad(&from, &to),
+                        note: "",
+                        input: lavfi("1440x1080"),
+                        filter: format!(
+                            "format={from_name},{UPLOAD},vpp_qsv=pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black{format},hwdownload,format={to_name}"
+                        ),
+                        baseline: None,
+                    });
+                }
+            }
+        }
+
+        // vpp_qsv tonemaps only frames that carry mastering display or content light
+        // metadata, which lavfi sources cannot attach, so tonemap needs a real HDR10 file
+        let hdr_input = hdr_input.unwrap_or(HDR10_FIXTURE);
+        if !std::path::Path::new(hdr_input).exists() {
+            println!("tonemap:     skipped, no HDR10 input at {hdr_input}");
+            println!();
+        }
+
+        for to in [PixelFormat::Nv12, PixelFormat::P010le] {
+            let to_name = pixel_format_name(&to);
+            if std::path::Path::new(hdr_input).exists() {
+                cases.push(Case {
+                    group: "tonemap",
+                    name: format!("decoded hdr -> {to_name}"),
+                    predicted: caps.can_decode(&VideoFormat::Hevc, 10) && caps.can_tonemap(),
+                    note: "",
+                    input: vec![
+                        "-hwaccel".into(),
+                        "qsv".into(),
+                        "-hwaccel_output_format".into(),
+                        "qsv".into(),
+                        "-i".into(),
+                        hdr_input.into(),
+                    ],
+                    filter: format!(
+                        "vpp_qsv=tonemap=1:format={to_name},hwdownload,format={to_name}"
+                    ),
+                    baseline: Some(format!(
+                        "vpp_qsv=format={to_name},hwdownload,format={to_name}"
+                    )),
+                });
+            }
+        }
+
+        println!(
+            "{:<8} {:<26} {:<10} {:<8}",
+            "group", "case", "predicted", "ffmpeg"
+        );
+        println!(
+            "{:<8} {:<26} {:<10} {:<8}",
+            "-----", "----", "---------", "------"
+        );
+
+        let mut mismatches = 0;
+        for case in &cases {
+            let (args, result) = run_ffmpeg(ffmpeg, device_args, &case.input, &case.filter);
+            let (mut passed, mut error) = match &result {
+                Ok(_) => (true, String::new()),
+                Err(error) => (false, error.clone()),
+            };
+
+            if let (Ok(hash), Some(baseline)) = (&result, &case.baseline)
+                && let (_, Ok(baseline_hash)) =
+                    run_ffmpeg(ffmpeg, device_args, &case.input, baseline)
+                && *hash == baseline_hash
+            {
+                passed = false;
+                error = String::from("ran, but the output matches the chain without it (skipped)");
+            }
+
+            let mismatch = passed != case.predicted;
+            if mismatch {
+                mismatches += 1;
+            }
+            let flag = if mismatch { "MISMATCH" } else { "" };
+            println!(
+                "{:<8} {:<26} {:<10} {:<8} {} {}",
+                case.group,
+                case.name,
+                yn(case.predicted),
+                yn(passed),
+                flag,
+                case.note
+            );
+            if mismatch || !passed {
+                if !error.is_empty() {
+                    println!("         ffmpeg: {error}");
+                }
+                if mismatch {
+                    println!("         cmd: {ffmpeg} {}", args.join(" "));
+                }
+            }
+        }
+
+        println!();
+        println!("{mismatches} mismatches in {} cases", cases.len());
+        Ok(())
+    }
+
+    /// Returns the arguments, and the md5 of the output or the first error line.
+    fn run_ffmpeg(
+        ffmpeg: &str,
+        device_args: &str,
+        input: &[String],
+        filter: &str,
+    ) -> (Vec<String>, Result<String, String>) {
+        let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-v", "error"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        args.extend(device_args.split_whitespace().map(String::from));
+        args.extend(input.iter().cloned());
+        args.extend(
+            ["-frames:v", "10", "-vf", filter, "-f", "md5", "-"]
+                .into_iter()
+                .map(String::from),
+        );
+
+        let result = match Command::new(ffmpeg).args(&args).output() {
+            Ok(output) if output.status.success() => {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            }
+            Ok(output) => Err(String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("exited with an error")
+                .to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+
+        (args, result)
     }
 }

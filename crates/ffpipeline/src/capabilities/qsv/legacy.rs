@@ -9,6 +9,7 @@
 //! format at a time.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
 use libvpl_sys::*;
 
@@ -49,6 +50,37 @@ const IMPL_CANDIDATES: &[mfxIMPL] = &[
 ];
 
 pub(crate) fn probe(vpl: &VplLib) -> Option<QsvCapabilities> {
+    first_session(vpl, |session, candidate| {
+        let capabilities = session.probe_capabilities();
+        if capabilities.count() > 0 {
+            return Some(capabilities);
+        }
+
+        log::debug!("[qsv] legacy probe found no codecs using impl 0x{candidate:x}");
+        None
+    })
+}
+
+/// Raw `MFXVideoVPP_Query` statuses for the queries the probe makes, plus a few it
+/// does not. API 2.x runtimes still accept the 1.x entry points through the
+/// dispatcher, so this runs on both kinds of runtime.
+pub(crate) fn dump(vpl: &VplLib, out: &mut String) {
+    let _ = writeln!(out, "== MFXVideoVPP_Query (API 1.x session) ==");
+    let opened = first_session(vpl, |session, candidate| {
+        session.dump(candidate, out);
+        Some(())
+    });
+    if opened.is_none() {
+        let _ = writeln!(out, "no session could be opened");
+    }
+}
+
+/// Opens a session on each implementation candidate in turn, until `visit` returns
+/// `Some`.
+fn first_session<T>(
+    vpl: &VplLib,
+    mut visit: impl FnMut(&Session, mfxIMPL) -> Option<T>,
+) -> Option<T> {
     #[cfg(target_os = "linux")]
     let display = match display::VaDisplay::open() {
         Some(display) => display,
@@ -71,12 +103,9 @@ pub(crate) fn probe(vpl: &VplLib) -> Option<QsvCapabilities> {
 
         session.log_identity(*candidate);
 
-        let capabilities = session.probe_capabilities();
-        if capabilities.count() > 0 {
-            return Some(capabilities);
+        if let Some(result) = visit(&session, *candidate) {
+            return Some(result);
         }
-
-        log::debug!("[qsv] legacy probe found no codecs using impl 0x{candidate:x}");
     }
 
     None
@@ -114,7 +143,7 @@ impl<'a> Session<'a> {
         true
     }
 
-    fn log_identity(&self, requested: mfxIMPL) {
+    fn identity(&self, requested: mfxIMPL) -> String {
         let mut version = mfxVersion::default();
         let mut implementation: mfxIMPL = 0;
         let mut platform = mfxPlatform::default();
@@ -129,12 +158,105 @@ impl<'a> Session<'a> {
             }
         }
 
+        format!(
+            "requested impl 0x{requested:x}, got impl 0x{implementation:x}, API {}.{}, device 0x{:x}, code name {}",
+            version.Major, version.Minor, platform.DeviceId, platform.CodeName,
+        )
+    }
+
+    fn log_identity(&self, requested: mfxIMPL) {
         log::debug!(
-            "[qsv] legacy Media SDK session: requested impl 0x{requested:x}, got impl 0x{implementation:x}, API {}.{}, device 0x{:x}",
-            version.Major,
-            version.Minor,
-            platform.DeviceId,
+            "[qsv] legacy Media SDK session: {}",
+            self.identity(requested)
         );
+    }
+
+    fn dump(&self, requested: mfxIMPL, out: &mut String) {
+        let _ = writeln!(out, "session: {}", self.identity(requested));
+        let _ = writeln!(
+            out,
+            "cells are raw mfxStatus. the probe accepts only NONE for upload, rotation and\n\
+             composite, and any warning but PARTIAL_ACCEL for convert. RGB4 is sent as 4:2:0\n\
+             like the probe does; RGB4/444 is the chroma format ffmpeg uses for bgra frames"
+        );
+
+        let formats: Vec<(&str, mfxFrameInfo)> = DUMP_FORMATS
+            .iter()
+            .map(|(name, fourcc, bit_depth, chroma)| {
+                let mut info = frame_info(*fourcc, *bit_depth);
+                info.ChromaFormat = *chroma;
+                (*name, info)
+            })
+            .collect();
+        let columns: Vec<&str> = formats.iter().map(|(name, _)| *name).collect();
+
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "convert, video -> video (rows: input, columns: output)"
+        );
+        dump_header(out, &columns);
+        for (name, input) in &formats {
+            let cells: Vec<String> = formats
+                .iter()
+                .map(|(_, output)| status_name(self.vpp_status(*input, *output)))
+                .collect();
+            dump_row(out, name, &cells);
+        }
+
+        let _ = writeln!(out);
+        let _ = writeln!(out, "upload, system -> video, same format (hwupload)");
+        for (name, info) in &formats {
+            dump_row(out, name, &[status_name(self.upload_status(*info))]);
+        }
+
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "rotation, video -> video, same format (status / angle the runtime echoed)"
+        );
+        dump_header(out, &["90", "180", "270"]);
+        for (name, info) in &formats {
+            let cells: Vec<String> = [90u16, 180, 270]
+                .into_iter()
+                .map(|angle| {
+                    let (status, echoed) = self.rotate_status(*info, angle);
+                    format!("{} / {echoed}", status_name(status))
+                })
+                .collect();
+            dump_row(out, name, &cells);
+        }
+
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "composite, 640x480 into 1920x1080 (vpp_qsv pad; rows: input, columns: output)"
+        );
+        dump_header(out, &columns);
+        for (name, input) in &formats {
+            let cells: Vec<String> = formats
+                .iter()
+                .map(|(_, output)| status_name(self.composite_status(*input, *output)))
+                .collect();
+            dump_row(out, name, &cells);
+        }
+
+        for (init, label) in [(false, "Query"), (true, "Init, system memory")] {
+            let _ = writeln!(out);
+            let _ = writeln!(
+                out,
+                "tonemap {label}, VIDEO_SIGNAL_INFO_IN bt2020/PQ -> _OUT bt709 (rows: input, columns: output)"
+            );
+            dump_header(out, &columns);
+            for (name, input) in &formats {
+                let cells: Vec<String> = formats
+                    .iter()
+                    .map(|(_, output)| status_name(self.tonemap_status(*input, *output, init)))
+                    .collect();
+                dump_row(out, name, &cells);
+            }
+        }
+        let _ = writeln!(out);
     }
 
     fn probe_capabilities(&self) -> QsvCapabilities {
@@ -240,9 +362,13 @@ impl<'a> Session<'a> {
     }
 
     fn can_vpp(&self, from: (u32, u8), to: (u32, u8)) -> bool {
+        accepted(self.vpp_status(frame_info(from.0, from.1), frame_info(to.0, to.1)))
+    }
+
+    fn vpp_status(&self, from: mfxFrameInfo, to: mfxFrameInfo) -> mfxStatus {
         let vpp = mfxInfoVPP {
-            In: frame_info(from.0, from.1),
-            Out: frame_info(to.0, to.1),
+            In: from,
+            Out: to,
             ..Default::default()
         };
 
@@ -250,7 +376,7 @@ impl<'a> Session<'a> {
         input.u = mfxVideoParamUnion { vpp };
         input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
 
-        self.query(Query::Vpp, 0, &mut input)
+        self.query_status(Query::Vpp, 0, &mut input)
     }
 
     /// hwupload uses a VPP session to copy frames into video memory. This session
@@ -259,9 +385,13 @@ impl<'a> Session<'a> {
     /// NV12. It returns partial acceleration for P010 to P010. Thus hwupload cannot
     /// copy P010 frames to the GPU on Haswell.
     fn can_upload(&self, fourcc: u32, bit_depth: u8) -> bool {
+        self.upload_status(frame_info(fourcc, bit_depth)) == MFX_ERR_NONE
+    }
+
+    fn upload_status(&self, info: mfxFrameInfo) -> mfxStatus {
         let vpp = mfxInfoVPP {
-            In: frame_info(fourcc, bit_depth),
-            Out: frame_info(fourcc, bit_depth),
+            In: info,
+            Out: info,
             ..Default::default()
         };
 
@@ -273,13 +403,20 @@ impl<'a> Session<'a> {
         let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
         log::debug!(
             "[qsv] legacy upload query {:?}: {status}",
-            QsvFourCC(fourcc)
+            QsvFourCC(info.FourCC)
         );
 
-        status == MFX_ERR_NONE
+        status
     }
 
     fn can_rotate(&self, fourcc: u32, bit_depth: u8, angle: u16) -> bool {
+        // Warnings can mean the runtime skipped rotation or changed the requested settings.
+        let (status, echoed) = self.rotate_status(frame_info(fourcc, bit_depth), angle);
+        status == MFX_ERR_NONE && echoed == angle
+    }
+
+    /// Returns the status and the angle the runtime wrote back.
+    fn rotate_status(&self, source: mfxFrameInfo, angle: u16) -> (mfxStatus, u16) {
         let mut rotation = mfxExtVPPRotation {
             Header: mfxExtBuffer {
                 BufferId: MFX_EXTBUFF_VPP_ROTATION,
@@ -291,7 +428,6 @@ impl<'a> Session<'a> {
         let mut output_rotation = rotation;
         let mut input_ext = &mut rotation as *mut mfxExtVPPRotation;
         let mut output_ext = &mut output_rotation as *mut mfxExtVPPRotation;
-        let source = frame_info(fourcc, bit_depth);
         let mut target = source;
         if angle != 180 {
             std::mem::swap(&mut target.Width, &mut target.Height);
@@ -311,14 +447,19 @@ impl<'a> Session<'a> {
         let mut output = input;
         output.ExtParam = (&mut output_ext as *mut *mut mfxExtVPPRotation).cast();
         let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
-        // Warnings can mean the runtime skipped rotation or changed the requested settings.
-        status == MFX_ERR_NONE && output_rotation.Angle == angle
+        (status, output_rotation.Angle)
     }
 
     /// The patched vpp_qsv pads with a single-stream composite, so query a sample 4:3
     /// frame in a 16:9 canvas. Composite docs list only NV12 -> NV12 and RGB output,
     /// and legacy runtimes do reject P010 output, so query each format pair.
     fn can_composite(&self, from: (u32, u8), to: (u32, u8)) -> bool {
+        // unlike query(), a warning fails: it can mean the runtime ignored the composite
+        self.composite_status(frame_info(from.0, from.1), frame_info(to.0, to.1)) == MFX_ERR_NONE
+    }
+
+    fn composite_status(&self, from: mfxFrameInfo, to: mfxFrameInfo) -> mfxStatus {
+        let bit_depth = to.BitDepthLuma.max(8);
         let mut input_stream = mfxVPPCompInputStream {
             DstX: 240,
             DstY: 0,
@@ -332,9 +473,9 @@ impl<'a> Session<'a> {
                 BufferId: MFX_EXTBUFF_VPP_COMPOSITE,
                 BufferSz: std::mem::size_of::<mfxExtVPPComposite>() as u32,
             },
-            Y: 16 << (to.1 - 8),
-            U: 128 << (to.1 - 8),
-            V: 128 << (to.1 - 8),
+            Y: 16 << (bit_depth - 8),
+            U: 128 << (bit_depth - 8),
+            V: 128 << (bit_depth - 8),
             NumTiles: 0,
             reserved1: [0; 23],
             NumInputStream: 1,
@@ -345,7 +486,7 @@ impl<'a> Session<'a> {
         let mut input_ext = &mut composite as *mut mfxExtVPPComposite;
         let mut output_ext = &mut output_composite as *mut mfxExtVPPComposite;
 
-        let mut source = frame_info(from.0, from.1);
+        let mut source = from;
         source.Width = 640;
         source.Height = 480;
         source.CropW = 640;
@@ -355,7 +496,7 @@ impl<'a> Session<'a> {
         input.u = mfxVideoParamUnion {
             vpp: mfxInfoVPP {
                 In: source,
-                Out: frame_info(to.0, to.1),
+                Out: to,
                 ..Default::default()
             },
         };
@@ -368,15 +509,75 @@ impl<'a> Session<'a> {
         let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
         log::debug!(
             "[qsv] legacy composite query {:?} -> {:?}: {status}",
-            QsvFourCC(from.0),
-            QsvFourCC(to.0)
+            QsvFourCC(from.FourCC),
+            QsvFourCC(to.FourCC)
         );
 
-        // unlike query(), a warning fails: it can mean the runtime ignored the composite
-        status == MFX_ERR_NONE
+        status
+    }
+
+    /// The ext buffers vpp_qsv sends for tonemap=1: signal info in (bt2020/PQ) and out
+    /// (bt709). Diagnostic only; the probe does not check tonemap on this path yet.
+    ///
+    /// On vpl-gpu-rt, Query answers NONE even when the driver has no HDR tonemap
+    /// filter. Only Init reports that, as FILTER_SKIPPED, so `init` also runs Init
+    /// (in system memory, which needs no allocator) and closes it again.
+    fn tonemap_status(&self, from: mfxFrameInfo, to: mfxFrameInfo, init: bool) -> mfxStatus {
+        let signal_info = |buffer_id, primaries, transfer, matrix| mfxExtVideoSignalInfo {
+            Header: mfxExtBuffer {
+                BufferId: buffer_id,
+                BufferSz: std::mem::size_of::<mfxExtVideoSignalInfo>() as u32,
+            },
+            // 5 is "unspecified"
+            VideoFormat: 5,
+            VideoFullRange: 0,
+            ColourDescriptionPresent: 1,
+            ColourPrimaries: primaries,
+            TransferCharacteristics: transfer,
+            MatrixCoefficients: matrix,
+        };
+        let mut input_buffers = [
+            signal_info(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN, 9, 16, 9),
+            signal_info(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT, 1, 1, 1),
+        ];
+        let mut output_buffers = input_buffers;
+        let mut input_ext: [*mut mfxExtVideoSignalInfo; 2] =
+            [&mut input_buffers[0], &mut input_buffers[1]];
+        let mut output_ext: [*mut mfxExtVideoSignalInfo; 2] =
+            [&mut output_buffers[0], &mut output_buffers[1]];
+
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion {
+            vpp: mfxInfoVPP {
+                In: from,
+                Out: to,
+                ..Default::default()
+            },
+        };
+        input.ExtParam = input_ext.as_mut_ptr().cast();
+        input.NumExtParam = 2;
+
+        if init {
+            input.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+            let status = unsafe { (self.vpl.MFXVideoVPP_Init)(self.handle, &mut input) };
+            if status >= MFX_ERR_NONE {
+                unsafe { (self.vpl.MFXVideoVPP_Close)(self.handle) };
+            }
+            return status;
+        }
+
+        input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        let mut output = input;
+        output.ExtParam = output_ext.as_mut_ptr().cast();
+
+        unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) }
     }
 
     fn query(&self, kind: Query, codec_id: u32, input: &mut mfxVideoParam) -> bool {
+        accepted(self.query_status(kind, codec_id, input))
+    }
+
+    fn query_status(&self, kind: Query, codec_id: u32, input: &mut mfxVideoParam) -> mfxStatus {
         let mut output = mfxVideoParam::zeroed();
 
         // ENCODE_Query and DECODE_Query pick the handler from the *output* codec id.
@@ -395,13 +596,58 @@ impl<'a> Session<'a> {
             Query::Vpp => self.vpl.MFXVideoVPP_Query,
         };
 
-        let status = unsafe { query(self.handle, input, &mut output) };
-
-        // a warning means the runtime changed the parameters but can still use the
-        // hardware. partial acceleration means it falls back to software, which is
-        // not a capability
-        status >= MFX_ERR_NONE && status != MFX_WRN_PARTIAL_ACCELERATION
+        unsafe { query(self.handle, input, &mut output) }
     }
+}
+
+/// A warning means the runtime changed the parameters but can still use the
+/// hardware. Partial acceleration means it falls back to software, which is not a
+/// capability.
+fn accepted(status: mfxStatus) -> bool {
+    status >= MFX_ERR_NONE && status != MFX_WRN_PARTIAL_ACCELERATION
+}
+
+/// (label, fourcc, bit depth, chroma format) for the diagnostic dump
+const DUMP_FORMATS: &[(&str, u32, u8, u16)] = &[
+    ("NV12", MFX_FOURCC_NV12, 8, MFX_CHROMAFORMAT_YUV420),
+    ("P010", MFX_FOURCC_P010, 10, MFX_CHROMAFORMAT_YUV420),
+    ("RGB4", MFX_FOURCC_RGB4, 8, MFX_CHROMAFORMAT_YUV420),
+    ("RGB4/444", MFX_FOURCC_RGB4, 8, MFX_CHROMAFORMAT_YUV444),
+];
+
+const DUMP_CELL: usize = 22;
+
+fn dump_header(out: &mut String, columns: &[&str]) {
+    let _ = write!(out, "  {:<10}", "");
+    for column in columns {
+        let _ = write!(out, "{column:<DUMP_CELL$}");
+    }
+    let _ = writeln!(out);
+}
+
+fn dump_row(out: &mut String, name: &str, cells: &[String]) {
+    let _ = write!(out, "  {name:<10}");
+    for cell in cells {
+        let _ = write!(out, "{cell:<DUMP_CELL$}");
+    }
+    let _ = writeln!(out);
+}
+
+pub(crate) fn status_name(status: mfxStatus) -> String {
+    let name = match status {
+        MFX_ERR_NONE => "NONE",
+        MFX_ERR_UNSUPPORTED => "UNSUPPORTED",
+        MFX_ERR_INCOMPATIBLE_VIDEO_PARAM => "ERR_INCOMPAT",
+        MFX_ERR_INVALID_VIDEO_PARAM => "INVALID_PARAM",
+        MFX_ERR_UNDEFINED_BEHAVIOR => "UNDEFINED",
+        MFX_WRN_PARTIAL_ACCELERATION => "PARTIAL_ACCEL",
+        MFX_WRN_INCOMPATIBLE_VIDEO_PARAM => "WRN_INCOMPAT",
+        MFX_WRN_VALUE_NOT_CHANGED => "VALUE_NOT_CHANGED",
+        MFX_WRN_OUT_OF_RANGE => "OUT_OF_RANGE",
+        MFX_WRN_FILTER_SKIPPED => "FILTER_SKIPPED",
+        _ => "",
+    };
+    format!("{status} {name}").trim_end().to_string()
 }
 
 impl Drop for Session<'_> {

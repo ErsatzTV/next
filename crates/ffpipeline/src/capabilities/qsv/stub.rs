@@ -15,4 +15,10 @@ impl QsvCapabilities {
             runtime_api: None,
         })
     }
+
+    pub fn diagnostics() -> Result<String, FFPipelineError> {
+        Err(FFPipelineError::QsvCapabilitiesError(
+            "QSV is not supported on this platform".into(),
+        ))
+    }
 }

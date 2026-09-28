@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
 use libvpl_sys::*;
 
@@ -8,6 +9,8 @@ use crate::pipeline::VideoFormat;
 
 // byte offsets of dec and enc inside mfxImplDescription (API 2.x, x86_64)
 const IMPL_DESC_API_VERSION_OFFSET: usize = 12;
+const IMPL_DESC_IMPL_NAME_OFFSET: usize = 16;
+const IMPL_DESC_IMPL_NAME_LEN: usize = 32;
 const IMPL_DESC_DEC_OFFSET: usize = 472;
 const IMPL_DESC_ENC_OFFSET: usize = 504;
 const IMPL_DESC_VPP_OFFSET: usize = 536;
@@ -26,26 +29,7 @@ impl QsvCapabilities {
             .map_err(|e| FFPipelineError::QsvCapabilitiesError(format!("libvpl not found: {e}")))?;
 
         unsafe {
-            let loader = (vpl.MFXLoad)();
-            if loader.is_null() {
-                return Err(FFPipelineError::QsvCapabilitiesError(
-                    "MFXLoad failed".into(),
-                ));
-            }
-
-            // filter for hardware implementations only
-            let config = (vpl.MFXCreateConfig)(loader);
-            if !config.is_null() {
-                let variant = mfxVariant {
-                    Version: 0,
-                    Type: MFX_VARIANT_TYPE_U32,
-                    Data: mfxVariantValue {
-                        U32: MFX_IMPL_TYPE_HARDWARE,
-                    },
-                };
-                let name = b"mfxImplDescription.Impl\0";
-                (vpl.MFXSetConfigFilterProperty)(config, name.as_ptr(), variant);
-            }
+            let loader = hardware_loader(&vpl)?;
 
             // request the implementation description struct from the first matching impl
             let mut hdl: mfxHDL = std::ptr::null_mut();
@@ -133,6 +117,165 @@ impl QsvCapabilities {
             runtime_api,
         })
     }
+
+    /// What the runtime reports and answers, as text, for checking the probe against
+    /// real hardware.
+    pub fn diagnostics() -> Result<String, FFPipelineError> {
+        let vpl = VplLib::load()
+            .map_err(|e| FFPipelineError::QsvCapabilitiesError(format!("libvpl not found: {e}")))?;
+
+        let mut out = String::new();
+        unsafe { dump_impl_descriptions(&vpl, &mut out)? };
+        legacy::dump(&vpl, &mut out);
+        Ok(out)
+    }
+}
+
+/// A loader filtered to hardware implementations. The caller must `MFXUnload` it.
+unsafe fn hardware_loader(vpl: &VplLib) -> Result<mfxLoader, FFPipelineError> {
+    let loader = unsafe { (vpl.MFXLoad)() };
+    if loader.is_null() {
+        return Err(FFPipelineError::QsvCapabilitiesError(
+            "MFXLoad failed".into(),
+        ));
+    }
+
+    let config = unsafe { (vpl.MFXCreateConfig)(loader) };
+    if !config.is_null() {
+        let variant = mfxVariant {
+            Version: 0,
+            Type: MFX_VARIANT_TYPE_U32,
+            Data: mfxVariantValue {
+                U32: MFX_IMPL_TYPE_HARDWARE,
+            },
+        };
+        let name = b"mfxImplDescription.Impl\0";
+        unsafe { (vpl.MFXSetConfigFilterProperty)(config, name.as_ptr(), variant) };
+    }
+
+    Ok(loader)
+}
+
+/// Every hardware implementation's VPP tree. The probe reads only the first one.
+unsafe fn dump_impl_descriptions(vpl: &VplLib, out: &mut String) -> Result<(), FFPipelineError> {
+    let _ = writeln!(out, "== MFXQueryImplsDescription (API 2.x tree) ==");
+
+    let loader = unsafe { hardware_loader(vpl)? };
+    let mut index = 0;
+    loop {
+        let mut hdl: mfxHDL = std::ptr::null_mut();
+        let status = unsafe {
+            (vpl.MFXEnumImplementations)(loader, index, MFX_IMPLCAPS_IMPLDESCSTRUCTURE, &mut hdl)
+        };
+        if status != MFX_ERR_NONE || hdl.is_null() {
+            break;
+        }
+
+        let base = hdl as *const u8;
+        let api = unsafe { &*(base.add(IMPL_DESC_API_VERSION_OFFSET) as *const mfxVersion) };
+        let name = unsafe {
+            std::slice::from_raw_parts(
+                base.add(IMPL_DESC_IMPL_NAME_OFFSET),
+                IMPL_DESC_IMPL_NAME_LEN,
+            )
+        };
+        let name = String::from_utf8_lossy(name.split(|b| *b == 0).next().unwrap_or_default());
+        let _ = writeln!(out, "impl {index}: {name}, API {}.{}", api.Major, api.Minor);
+
+        let vpp = unsafe { &*(base.add(IMPL_DESC_VPP_OFFSET) as *const mfxVPPDescription) };
+        unsafe { dump_filters(vpp, out) };
+
+        unsafe { (vpl.MFXDispReleaseImplDescription)(loader, hdl) };
+        index += 1;
+    }
+
+    if index == 0 {
+        let _ = writeln!(out, "no hardware implementation described");
+    }
+    let _ = writeln!(out);
+
+    unsafe { (vpl.MFXUnload)(loader) };
+    Ok(())
+}
+
+/// One line per filter and memory type: the input formats, and the output formats
+/// with a note when they differ by input.
+unsafe fn dump_filters(vpp: &mfxVPPDescription, out: &mut String) {
+    if vpp.NumFilters == 0 || vpp.Filters.is_null() {
+        let _ = writeln!(out, "  (no VPP filters)");
+        return;
+    }
+
+    for i in 0..vpp.NumFilters as usize {
+        let filter = unsafe { &*vpp.Filters.add(i) };
+        let _ = writeln!(out, "  filter {}", fourcc_name(filter.FilterFourCC));
+        if filter.NumMemTypes == 0 || filter.MemDesc.is_null() {
+            continue;
+        }
+
+        for j in 0..filter.NumMemTypes as usize {
+            let memdesc = unsafe { &*filter.MemDesc.add(j) };
+            let mut inputs = Vec::new();
+            let mut output_lists: Vec<Vec<String>> = Vec::new();
+            if memdesc.NumInFormats > 0 && !memdesc.Formats.is_null() {
+                for k in 0..memdesc.NumInFormats as usize {
+                    let format = unsafe { &*memdesc.Formats.add(k) };
+                    inputs.push(fourcc_name(format.InFormat));
+                    let mut outputs = Vec::new();
+                    if format.NumOutFormat > 0 && !format.OutFormats.is_null() {
+                        for l in 0..format.NumOutFormat as usize {
+                            outputs.push(fourcc_name(unsafe { *format.OutFormats.add(l) }));
+                        }
+                    }
+                    output_lists.push(outputs);
+                }
+            }
+
+            let same_outputs = output_lists.windows(2).all(|w| w[0] == w[1]);
+            let _ = writeln!(
+                out,
+                "    {} {}-{}x{}-{}: in [{}] out [{}]{}",
+                resource_name(memdesc.MemHandleType),
+                memdesc.Width.Min,
+                memdesc.Width.Max,
+                memdesc.Height.Min,
+                memdesc.Height.Max,
+                inputs.join(" "),
+                output_lists
+                    .first()
+                    .map(|o| o.join(" "))
+                    .unwrap_or_default(),
+                if same_outputs {
+                    ""
+                } else {
+                    " (outputs differ by input)"
+                },
+            );
+            if !same_outputs {
+                for (input, outputs) in inputs.iter().zip(&output_lists) {
+                    let _ = writeln!(out, "      {input} -> [{}]", outputs.join(" "));
+                }
+            }
+        }
+    }
+}
+
+fn fourcc_name(fourcc: u32) -> String {
+    String::from_utf8_lossy(&fourcc.to_ne_bytes()).into_owned()
+}
+
+fn resource_name(resource: u32) -> String {
+    let name = match resource {
+        MFX_RESOURCE_SYSTEM_SURFACE => "system",
+        MFX_RESOURCE_VA_SURFACE => "va_surface",
+        MFX_RESOURCE_VA_BUFFER => "va_buffer",
+        MFX_RESOURCE_DX9_SURFACE => "dx9",
+        MFX_RESOURCE_DX11_TEXTURE => "dx11",
+        MFX_RESOURCE_DX12_RESOURCE => "dx12",
+        MFX_RESOURCE_DMA_RESOURCE => "dma",
+        _ => "unknown",
+    };
+    format!("{name}({resource})")
 }
 
 /// Returns true if the decoder description lists the given codec.

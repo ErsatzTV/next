@@ -28,6 +28,8 @@ pub struct VplLib {
         unsafe extern "C" fn(mfxSession, *mut mfxVideoParam, *mut mfxVideoParam) -> mfxStatus,
     pub MFXVideoVPP_Query:
         unsafe extern "C" fn(mfxSession, *mut mfxVideoParam, *mut mfxVideoParam) -> mfxStatus,
+    pub MFXVideoVPP_Init: unsafe extern "C" fn(mfxSession, *mut mfxVideoParam) -> mfxStatus,
+    pub MFXVideoVPP_Close: unsafe extern "C" fn(mfxSession) -> mfxStatus,
 }
 
 impl VplLib {
@@ -53,6 +55,8 @@ impl VplLib {
             let MFXVideoENCODE_Query = *lib.get(b"MFXVideoENCODE_Query\0")?;
             let MFXVideoDECODE_Query = *lib.get(b"MFXVideoDECODE_Query\0")?;
             let MFXVideoVPP_Query = *lib.get(b"MFXVideoVPP_Query\0")?;
+            let MFXVideoVPP_Init = *lib.get(b"MFXVideoVPP_Init\0")?;
+            let MFXVideoVPP_Close = *lib.get(b"MFXVideoVPP_Close\0")?;
             Ok(Self {
                 _lib: lib,
                 MFXLoad,
@@ -70,6 +74,8 @@ impl VplLib {
                 MFXVideoENCODE_Query,
                 MFXVideoDECODE_Query,
                 MFXVideoVPP_Query,
+                MFXVideoVPP_Init,
+                MFXVideoVPP_Close,
             })
         }
     }

@@ -49,6 +49,17 @@ pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN: u32 = u32::from_ne_bytes(*b"VSII");
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT: u32 = u32::from_ne_bytes(*b"VSIO");
 pub const MFX_EXTBUFF_VPP_ROTATION: u32 = u32::from_ne_bytes(*b"ROT ");
 pub const MFX_EXTBUFF_VPP_COMPOSITE: u32 = u32::from_ne_bytes(*b"VCMP");
+pub const MFX_EXTBUFF_VPP_COLOR_CONVERSION: u32 = u32::from_ne_bytes(*b"VCSC");
+pub const MFX_EXTBUFF_VPP_SCALING: u32 = u32::from_ne_bytes(*b"VSCL");
+
+/// mfxResourceType, the memory type of a `mfxVPPDescription_filter_memdesc`
+pub const MFX_RESOURCE_SYSTEM_SURFACE: u32 = 1;
+pub const MFX_RESOURCE_VA_SURFACE: u32 = 2;
+pub const MFX_RESOURCE_VA_BUFFER: u32 = 3;
+pub const MFX_RESOURCE_DX9_SURFACE: u32 = 4;
+pub const MFX_RESOURCE_DX11_TEXTURE: u32 = 5;
+pub const MFX_RESOURCE_DX12_RESOURCE: u32 = 6;
+pub const MFX_RESOURCE_DMA_RESOURCE: u32 = 7;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -63,6 +74,19 @@ pub struct mfxExtVPPRotation {
     pub Header: mfxExtBuffer,
     pub Angle: u16,
     pub reserved: [u16; 11],
+}
+
+/// Used with `MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN` and `_OUT` for VPP colour conversion.
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxExtVideoSignalInfo {
+    pub Header: mfxExtBuffer,
+    pub VideoFormat: u16,
+    pub VideoFullRange: u16,
+    pub ColourDescriptionPresent: u16,
+    pub ColourPrimaries: u16,
+    pub TransferCharacteristics: u16,
+    pub MatrixCoefficients: u16,
 }
 
 #[repr(C)]
@@ -258,7 +282,14 @@ pub type mfxSession = *mut c_void;
 pub type mfxIMPL = i32;
 
 pub const MFX_ERR_UNSUPPORTED: mfxStatus = -3;
+pub const MFX_ERR_INCOMPATIBLE_VIDEO_PARAM: mfxStatus = -14;
+pub const MFX_ERR_INVALID_VIDEO_PARAM: mfxStatus = -15;
+pub const MFX_ERR_UNDEFINED_BEHAVIOR: mfxStatus = -16;
 pub const MFX_WRN_PARTIAL_ACCELERATION: mfxStatus = 4;
+pub const MFX_WRN_INCOMPATIBLE_VIDEO_PARAM: mfxStatus = 5;
+pub const MFX_WRN_VALUE_NOT_CHANGED: mfxStatus = 6;
+pub const MFX_WRN_OUT_OF_RANGE: mfxStatus = 7;
+pub const MFX_WRN_FILTER_SKIPPED: mfxStatus = 10;
 
 pub const MFX_IMPL_HARDWARE_ANY: mfxIMPL = 0x0004;
 pub const MFX_IMPL_VIA_D3D9: mfxIMPL = 0x0200;
@@ -272,9 +303,11 @@ pub const MFX_HANDLE_VA_DISPLAY: u32 = 4;
 pub const MFX_IOPATTERN_IN_VIDEO_MEMORY: u16 = 0x01;
 pub const MFX_IOPATTERN_IN_SYSTEM_MEMORY: u16 = 0x02;
 pub const MFX_IOPATTERN_OUT_VIDEO_MEMORY: u16 = 0x10;
+pub const MFX_IOPATTERN_OUT_SYSTEM_MEMORY: u16 = 0x20;
 
 pub const MFX_PICSTRUCT_PROGRESSIVE: u16 = 0x01;
 pub const MFX_CHROMAFORMAT_YUV420: u16 = 1;
+pub const MFX_CHROMAFORMAT_YUV444: u16 = 3;
 pub const MFX_RATECONTROL_CQP: u16 = 3;
 pub const MFX_TARGETUSAGE_BALANCED: u16 = 4;
 
@@ -410,6 +443,13 @@ mod layout_tests {
     }
 
     // values taken from the oneVPL headers with offsetof and sizeof on x86_64
+    #[test]
+    fn video_signal_info_matches_header() {
+        assert_eq!(size_of::<mfxExtVideoSignalInfo>(), 20);
+        assert_eq!(offset_of!(mfxExtVideoSignalInfo, VideoFormat), 8);
+        assert_eq!(offset_of!(mfxExtVideoSignalInfo, MatrixCoefficients), 18);
+    }
+
     #[test]
     fn mfx_frame_info_matches_header() {
         assert_eq!(size_of::<mfxFrameInfo>(), 68);
