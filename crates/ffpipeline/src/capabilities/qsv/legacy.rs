@@ -162,8 +162,9 @@ impl<'a> Session<'a> {
         let mut vpp_pixel_formats = HashSet::new();
         for (fourcc, bit_depth) in VPP_FORMATS {
             // VPP accepts rgb4 only as an input, so test both directions
-            if self.can_vpp((*fourcc, *bit_depth), (MFX_FOURCC_NV12, 8))
-                || self.can_vpp((MFX_FOURCC_NV12, 8), (*fourcc, *bit_depth))
+            if self.can_upload(*fourcc, *bit_depth)
+                && (self.can_vpp((*fourcc, *bit_depth), (MFX_FOURCC_NV12, 8))
+                    || self.can_vpp((MFX_FOURCC_NV12, 8), (*fourcc, *bit_depth)))
             {
                 vpp_pixel_formats.insert(QsvFourCC(*fourcc));
             }
@@ -250,6 +251,32 @@ impl<'a> Session<'a> {
         input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
 
         self.query(Query::Vpp, 0, &mut input)
+    }
+
+    /// hwupload uses a VPP session to copy frames into video memory. This session
+    /// keeps the same format (hwcontext_qsv). The session opens only when the
+    /// runtime returns `MFX_ERR_NONE`. Haswell returns `MFX_ERR_NONE` for P010 to
+    /// NV12. It returns partial acceleration for P010 to P010. Thus hwupload cannot
+    /// copy P010 frames to the GPU on Haswell.
+    fn can_upload(&self, fourcc: u32, bit_depth: u8) -> bool {
+        let vpp = mfxInfoVPP {
+            In: frame_info(fourcc, bit_depth),
+            Out: frame_info(fourcc, bit_depth),
+            ..Default::default()
+        };
+
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion { vpp };
+        input.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        let mut output = input;
+
+        let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
+        log::debug!(
+            "[qsv] legacy upload query {:?}: {status}",
+            QsvFourCC(fourcc)
+        );
+
+        status == MFX_ERR_NONE
     }
 
     fn can_rotate(&self, fourcc: u32, bit_depth: u8, angle: u16) -> bool {
