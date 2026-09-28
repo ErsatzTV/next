@@ -299,6 +299,16 @@ fn print_qsv() -> Result<(), String> {
             yn(caps.can_rotate(&pf))
         );
     }
+    for input in [PixelFormat::Nv12, PixelFormat::P010le] {
+        for output in [PixelFormat::Nv12, PixelFormat::P010le] {
+            println!(
+                "Pad {} -> {}: {}",
+                pixel_format_name(&input),
+                pixel_format_name(&output),
+                yn(caps.can_pad(&input, &output))
+            );
+        }
+    }
 
     Ok(())
 }

@@ -48,6 +48,7 @@ pub const MFX_FOURCC_RGB4: u32 = u32::from_ne_bytes(*b"RGB4");
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN: u32 = u32::from_ne_bytes(*b"VSII");
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT: u32 = u32::from_ne_bytes(*b"VSIO");
 pub const MFX_EXTBUFF_VPP_ROTATION: u32 = u32::from_ne_bytes(*b"ROT ");
+pub const MFX_EXTBUFF_VPP_COMPOSITE: u32 = u32::from_ne_bytes(*b"VCMP");
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -63,6 +64,43 @@ pub struct mfxExtVPPRotation {
     pub Angle: u16,
     pub reserved: [u16; 11],
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxVPPCompInputStream {
+    pub DstX: u32,
+    pub DstY: u32,
+    pub DstW: u32,
+    pub DstH: u32,
+    pub LumaKeyEnable: u16,
+    pub LumaKeyMin: u16,
+    pub LumaKeyMax: u16,
+    pub GlobalAlphaEnable: u16,
+    pub GlobalAlpha: u16,
+    pub PixelAlphaEnable: u16,
+    pub TileId: u16,
+    pub reserved2: [u16; 17],
+}
+
+/// In the C header, Y/U/V are unions with R/G/B. Only the YUV names are here.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxExtVPPComposite {
+    pub Header: mfxExtBuffer,
+    pub Y: u16,
+    pub U: u16,
+    pub V: u16,
+    pub NumTiles: u16,
+    pub reserved1: [u16; 23],
+    pub NumInputStream: u16,
+    pub InputStream: *mut mfxVPPCompInputStream,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(std::mem::size_of::<mfxVPPCompInputStream>() == 64);
+    assert!(std::mem::size_of::<mfxExtVPPComposite>() == 72);
+};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
