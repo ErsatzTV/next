@@ -58,7 +58,7 @@ impl HwAccel for VideoToolbox {
     fn codec_for_format(
         &self,
         format: &VideoFormat,
-        _bit_depth: u8,
+        bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
@@ -71,7 +71,11 @@ impl HwAccel for VideoToolbox {
             }),
             VideoFormat::Hevc if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_videotoolbox",
-                options: Vec::new(),
+                options: match bit_depth {
+                    10 => args!["-profile:v", "main10"],
+                    8 => args!["-profile:v", "main"],
+                    _ => Vec::new(),
+                },
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
