@@ -798,8 +798,10 @@ mod tests {
 
     use super::*;
     use crate::accel::opencl::{PadOpencl, TonemapOpencl};
+    use crate::accel::qsv::Qsv;
     use crate::accel::vaapi::{PadVaapi, TonemapVaapi, Vaapi, VaapiDriver};
     use crate::capabilities::opencl::OpenCLCapabilities;
+    use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
     use crate::capabilities::vaapi::VaapiCapabilities;
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
@@ -1194,6 +1196,95 @@ mod tests {
         assert!(
             filter_complex.contains(expected_order),
             "hwmap to opencl should appear immediately before tonemap_opencl: {filter_complex}"
+        );
+    }
+
+    // vpp_qsv lists RGB4 but its format= cannot emit bgra, so the conversion must go
+    // through software instead of silently leaving the frame in the wrong format
+    fn qsv_accel_with_rgb4() -> HardwareAccel {
+        HardwareAccel::Qsv(Qsv {
+            capabilities: QsvCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                vpp_pixel_formats: HashSet::from([
+                    QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4),
+                ]),
+                vpp_filters: HashSet::new(),
+                rotation_formats: HashSet::new(),
+                composite_formats: HashSet::new(),
+                runtime_api: None,
+            },
+        })
+    }
+
+    fn sdr_1080p_state(surface: FrameSurface, pixel_format: PixelFormat) -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface,
+            pixel_format,
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    fn resolve_to_qsv_bgra(initial_state: &FrameState) -> Vec<PipelineFilter> {
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(qsv_accel_with_rgb4()),
+            &VideoFilterOptions::default(),
+            initial_state,
+            &FrameSurface::Qsv,
+            &Some(PixelFormat::Bgra),
+        );
+        chain.filters
+    }
+
+    #[test]
+    fn resolve_converts_to_bgra_in_software_on_the_qsv_surface() {
+        let filters = resolve_to_qsv_bgra(&sdr_1080p_state(FrameSurface::Qsv, PixelFormat::Nv12));
+
+        assert!(
+            matches!(
+                filters.as_slice(),
+                [
+                    PipelineFilter::Video(VideoFilter::HwDownload(_)),
+                    PipelineFilter::Video(VideoFilter::Format(FormatFilter {
+                        format: PixelFormat::Bgra
+                    })),
+                    PipelineFilter::Video(VideoFilter::HwUpload(_)),
+                ]
+            ),
+            "expected hwdownload -> format=bgra -> hwupload, got {:?}",
+            filters
+        );
+    }
+
+    #[test]
+    fn resolve_converts_to_bgra_before_upload_to_qsv() {
+        let filters =
+            resolve_to_qsv_bgra(&sdr_1080p_state(FrameSurface::System, PixelFormat::Yuv420p));
+
+        assert!(
+            matches!(
+                filters.as_slice(),
+                [
+                    PipelineFilter::Video(VideoFilter::Format(FormatFilter {
+                        format: PixelFormat::Bgra
+                    })),
+                    PipelineFilter::Video(VideoFilter::HwUpload(_)),
+                ]
+            ),
+            "expected format=bgra -> hwupload, got {:?}",
+            filters
         );
     }
 

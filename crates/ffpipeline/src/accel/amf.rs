@@ -223,7 +223,7 @@ impl HwAccel for Amf {
         _ffmpeg_info: &FfmpegInfo,
         pixel_format: &PixelFormat,
     ) -> bool {
-        self.capabilities.vpp_supports_format(pixel_format)
+        !pixel_format.has_alpha() && self.capabilities.vpp_supports_format(pixel_format)
     }
 }
 
@@ -630,7 +630,8 @@ mod tests {
         let ffmpeg_info = FfmpegInfo::default();
         assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12));
         assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Yuv420p));
-        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
+        // the converter lists BGRA, but vpp_amf format= cannot emit alpha formats
+        assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
         assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::P010le));
         assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Yuv420p10le));
 
