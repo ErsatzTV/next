@@ -40,6 +40,15 @@ impl HwAccel for VideoToolbox {
         }
     }
 
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        pixel_format: &PixelFormat,
+    ) -> bool {
+        // TODO: clean this up when we can model things more accurately
+        pixel_format.bit_depth() == 8
+    }
+
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         let format = match codec {
             "av1" => Some(VideoFormat::Av1),
@@ -58,20 +67,25 @@ impl HwAccel for VideoToolbox {
     fn codec_for_format(
         &self,
         format: &VideoFormat,
-        _bit_depth: u8,
+        bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
             VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_videotoolbox",
-                options: Vec::new(),
+                // m1 mac mini was observed not to tag SAR with h264 encoder
+                options: args!["-bsf:v", "h264_metadata=sample_aspect_ratio=1/1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
             }),
             VideoFormat::Hevc if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_videotoolbox",
-                options: Vec::new(),
+                options: match bit_depth {
+                    10 => args!["-profile:v", "main10"],
+                    8 => args!["-profile:v", "main"],
+                    _ => Vec::new(),
+                },
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,

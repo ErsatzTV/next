@@ -154,6 +154,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
         test_case.expected_video_size.width,
         test_case.expected_video_size.height,
         &expected_frame_rate,
+        video_format.map(|_| bit_depth),
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
@@ -777,6 +778,7 @@ pub fn assert_video(
     width: u32,
     height: u32,
     frame_rate: &FrameRate,
+    bit_depth: Option<u8>,
     accel: Option<HardwareAccel>,
 ) {
     let video = probe
@@ -788,6 +790,14 @@ pub fn assert_video(
         })
         .expect("no video stream found in output");
     assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
+    if let Some(bit_depth) = bit_depth {
+        assert_eq!(
+            pix_fmt_bit_depth(&video.pix_fmt),
+            bit_depth,
+            "unexpected video bit depth (pix_fmt {})",
+            video.pix_fmt
+        );
+    }
     assert_eq!(video.width, Some(width), "unexpected video width");
     assert_eq!(video.height, Some(height), "unexpected video height");
     assert!(
@@ -804,6 +814,15 @@ pub fn assert_video(
             Some(String::from("1:1")),
             "unexpected SAR"
         );
+    }
+}
+
+/// `PixelFormat::parse` falls back to yuv420p for unknown names, which would hide a mismatch here
+fn pix_fmt_bit_depth(pix_fmt: &str) -> u8 {
+    match pix_fmt {
+        "yuv420p" | "yuvj420p" | "nv12" | "yuv422p" | "yuv444p" => 8,
+        "yuv420p10le" | "p010le" | "yuv422p10le" | "yuv444p10le" => 10,
+        _ => panic!("unknown bit depth for output pix_fmt {pix_fmt}"),
     }
 }
 
