@@ -40,6 +40,15 @@ impl HwAccel for VideoToolbox {
         }
     }
 
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        pixel_format: &PixelFormat,
+    ) -> bool {
+        // TODO: clean this up when we can model things more accurately
+        pixel_format.bit_depth() == 8
+    }
+
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         let format = match codec {
             "av1" => Some(VideoFormat::Av1),
