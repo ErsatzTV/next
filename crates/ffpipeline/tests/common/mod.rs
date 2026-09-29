@@ -147,6 +147,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     }
 
     let segment = find_first_segment(dir.path());
+    assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
     let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
     assert_video(
         &output_probe,
@@ -366,6 +367,7 @@ pub async fn run_canvas_test(
     }
 
     let segment = find_first_segment(dir.path());
+    assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
     let decoded = tokio::time::timeout(
         Duration::from_secs(30),
         tokio::process::Command::new(&test_env.ffmpeg)
@@ -409,6 +411,28 @@ pub async fn run_canvas_test(
     assert!(
         transparent[0] < 50 && transparent[1] < 50 && transparent[2] > 200,
         "transparent canvas region should show the blue main video: {transparent:?} ({pix_fmt})"
+    );
+}
+
+/// ffprobe reads the stream parameters from headers alone, so a segment whose parameter sets
+/// don't match its slices (e.g. a 10-bit SPS in front of 8-bit slices) still probes fine.
+pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(ffmpeg)
+            .args(["-nostdin", "-hide_banner", "-v", "error", "-i"])
+            .arg(path)
+            .args(["-f", "null", "-"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("decode check timed out")
+    .expect("failed to spawn ffmpeg for decode check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stderr.trim().is_empty(),
+        "output segment does not decode cleanly:\n{stderr}"
     );
 }
 
