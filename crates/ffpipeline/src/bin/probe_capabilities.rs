@@ -565,6 +565,9 @@ mod qsv_verify {
         group: &'static str,
         name: String,
         predicted: bool,
+        /// We took the software path on purpose, so ffmpeg succeeding is an
+        /// unused hw path rather than a probe error
+        sw_by_design: bool,
         note: &'static str,
         input: Vec<String>,
         filter: String,
@@ -621,6 +624,7 @@ mod qsv_verify {
                 name: name.into(),
                 // Qsv::accepts_upload_format
                 predicted: supported(pf),
+                sw_by_design: false,
                 note: "",
                 input: lavfi("1920x1080"),
                 filter: format!("format={name},{UPLOAD},hwdownload,format={name}"),
@@ -631,12 +635,15 @@ mod qsv_verify {
         for from in &FORMATS {
             for to in FORMATS.iter().filter(|to| *to != from) {
                 let (from, to_name) = (pixel_format_name(from), pixel_format_name(to));
+                // the only alpha format here; Qsv::can_convert_pixel_format rejects alpha
+                let alpha = *to == PixelFormat::Bgra;
                 cases.push(Case {
                     group: "convert",
                     name: format!("{from} -> {to_name}"),
                     // accepts_upload_format(from) and can_convert_pixel_format(to)
-                    predicted: supported(&PixelFormat::parse(from)) && supported(to),
-                    note: if *to == PixelFormat::Bgra {
+                    predicted: !alpha && supported(&PixelFormat::parse(from)) && supported(to),
+                    sw_by_design: alpha,
+                    note: if alpha {
                         "format_filter never emits bgra"
                     } else {
                         ""
@@ -657,6 +664,7 @@ mod qsv_verify {
                     group: "rotate",
                     name: format!("{name} {dir_name}"),
                     predicted: supported(pf) && caps.can_rotate(pf),
+                    sw_by_design: false,
                     note: "",
                     input: lavfi("1920x1080"),
                     filter: format!(
@@ -680,6 +688,7 @@ mod qsv_verify {
                         group: "pad",
                         name: format!("{from_name} -> {to_name}"),
                         predicted: supported(&from) && caps.can_pad(&from, &to),
+                        sw_by_design: false,
                         note: "",
                         input: lavfi("1440x1080"),
                         filter: format!(
@@ -706,6 +715,7 @@ mod qsv_verify {
                     group: "tonemap",
                     name: format!("decoded hdr -> {to_name}"),
                     predicted: caps.can_decode(&VideoFormat::Hevc, 10) && caps.can_tonemap(),
+                    sw_by_design: false,
                     note: "",
                     input: vec![
                         "-hwaccel".into(),
@@ -751,11 +761,18 @@ mod qsv_verify {
                 error = String::from("ran, but the output matches the chain without it (skipped)");
             }
 
-            let mismatch = passed != case.predicted;
+            let unused = passed && !case.predicted && case.sw_by_design;
+            let mismatch = passed != case.predicted && !unused;
             if mismatch {
                 mismatches += 1;
             }
-            let flag = if mismatch { "MISMATCH" } else { "" };
+            let flag = if mismatch {
+                "MISMATCH"
+            } else if unused {
+                "unused hw"
+            } else {
+                ""
+            };
             println!(
                 "{:<8} {:<26} {:<10} {:<8} {} {}",
                 case.group,
