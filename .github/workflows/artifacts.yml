@@ -165,7 +165,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          git clone --depth 1 --branch v2.17.0 https://github.com/intel/libvpl.git libvpl-src
+          # keep in sync with ErsatzTV-ffmpeg native/FFmpeg-Builds (scripts.d/50-onevpl.sh, patches/libvpl)
+          # force LF so the patch applies despite the runner's global core.autocrlf=true
+          git init -q libvpl-src
+          git -C libvpl-src config core.autocrlf false
+          git -C libvpl-src config core.eol lf
+          git -C libvpl-src fetch -q --depth 1 https://github.com/intel/libvpl.git 674d015bcb294bc39fa276e99a652ea045423e82
+          git -C libvpl-src checkout -q FETCH_HEAD
+          git -C libvpl-src apply --verbose "$GITHUB_WORKSPACE"/.github/patches/libvpl/*.patch
           cmake -S libvpl-src -B libvpl-build -DUSE_MSVC_STATIC_RUNTIME=ON -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
           cmake --build libvpl-build --config Release --target VPL
           cp libvpl-build/Release/libvpl.dll "$RELEASE_NAME/"
