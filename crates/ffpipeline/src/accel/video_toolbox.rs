@@ -73,7 +73,8 @@ impl HwAccel for VideoToolbox {
         match format {
             VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_videotoolbox",
-                options: Vec::new(),
+                // m1 mac mini was observed not to tag SAR with h264 encoder
+                options: args!["-bsf:v", "h264_metadata=sample_aspect_ratio=1/1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
