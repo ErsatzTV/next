@@ -1181,6 +1181,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn video_format_parses_ffmpeg_codec_names() {
+        for (codec, format) in [
+            ("av1", VideoFormat::Av1),
+            ("h264", VideoFormat::H264),
+            ("hevc", VideoFormat::Hevc),
+            ("mpeg2video", VideoFormat::Mpeg2Video),
+            ("vc1", VideoFormat::Vc1),
+            ("vp8", VideoFormat::Vp8),
+            ("vp9", VideoFormat::Vp9),
+        ] {
+            assert_eq!(codec.parse::<VideoFormat>().ok(), Some(format));
+        }
+        assert!("prores".parse::<VideoFormat>().is_err());
+    }
+
+    #[test]
     fn device_name_returns_correct_ffmpeg_device_strings() {
         assert_eq!(FrameSurface::Cuda.device_name(), Some("cuda"));
         assert_eq!(FrameSurface::OpenCL.device_name(), Some("opencl"));

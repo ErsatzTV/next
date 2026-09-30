@@ -34,18 +34,9 @@ impl Cuda {
         }
     }
 
-    fn vulkan_decode_format(codec: &str) -> Option<VideoFormat> {
-        match codec {
-            "av1" => Some(VideoFormat::Av1),
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            _ => None,
-        }
-    }
-
     fn can_vulkan_decode(&self, video_stream: &ProbeResultVideoStream) -> bool {
         self.vulkan_capabilities.as_ref().is_some_and(|vk| {
-            Self::vulkan_decode_format(&video_stream.codec).is_some_and(|f| {
+            video_stream.codec.parse::<VideoFormat>().is_ok_and(|f| {
                 vk.can_decode(&f, PixelFormat::parse(&video_stream.pix_fmt).bit_depth())
             })
         })
@@ -139,17 +130,9 @@ impl HwAccel for Cuda {
     }
 
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        let format = match codec {
-            "av1" => Some(VideoFormat::Av1),
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            "mpeg2video" => Some(VideoFormat::Mpeg2Video),
-            "vc1" => Some(VideoFormat::Vc1),
-            "vp8" => Some(VideoFormat::Vp8),
-            "vp9" => Some(VideoFormat::Vp9),
-            _ => None,
-        };
-        format.is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+        codec
+            .parse::<VideoFormat>()
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
     fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
