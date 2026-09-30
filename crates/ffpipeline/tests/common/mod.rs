@@ -938,8 +938,15 @@ pub fn assert_accel_usage(
             "{accel} reports it can encode {bit_depth}-bit {format} but the pipeline used {actual}"
         );
     } else {
-        assert!(
-            actual.starts_with("libx"),
+        let expected = match video_format {
+            Some(VideoFormat::Mpeg2Video) => "mpeg2video",
+            Some(VideoFormat::H264) => "libx264",
+            Some(VideoFormat::Hevc) => "libx265",
+            _ => panic!("unsupported output format"),
+        };
+
+        assert_eq!(
+            actual, expected,
             "{accel} reports it cannot encode {bit_depth}-bit {format} but the pipeline used {actual}"
         );
     }

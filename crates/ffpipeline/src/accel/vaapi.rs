@@ -236,6 +236,20 @@ impl HwAccel for Vaapi {
                     preferred_surface: FrameSurface::Vaapi,
                 })
             }
+            VideoFormat::Mpeg2Video => {
+                let mut options = Vec::new();
+                if force_cqp {
+                    options.extend(args!["-rc_mode", "1"]);
+                }
+
+                Some(VideoCodec {
+                    codec_name: "mpeg2_vaapi",
+                    options,
+                    preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                    preferred_pixel_format_10bit: None,
+                    preferred_surface: FrameSurface::Vaapi,
+                })
+            }
             _ => None,
         }
     }
