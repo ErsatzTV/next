@@ -132,6 +132,15 @@ impl HwAccel for Amf {
         }
     }
 
+    // polaris (vce 3.4) ignores the output color properties, so set the tags after encode
+    fn color_metadata_bsf(&self, codec: &VideoCodec) -> Option<&'static str> {
+        match codec.codec_name {
+            "h264_amf" => Some("h264_metadata"),
+            "hevc_amf" => Some("hevc_metadata"),
+            _ => None,
+        }
+    }
+
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         if pixel_format.has_alpha() {
             None

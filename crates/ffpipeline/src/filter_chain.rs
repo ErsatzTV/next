@@ -52,7 +52,11 @@ impl FilterChain {
 
     /// Optimizes the filter chain by passing the frame state through each filter.
     /// Filters will be dropped when the input state already matches the desired output state.
-    pub(crate) fn evaluate(&mut self, initial_state: &FrameState, ffmpeg_info: &FfmpegInfo) {
+    pub(crate) fn evaluate(
+        &mut self,
+        initial_state: &FrameState,
+        ffmpeg_info: &FfmpegInfo,
+    ) -> FrameState {
         let mut state = initial_state.to_owned();
         let mut active_filters = Vec::new();
 
@@ -79,6 +83,7 @@ impl FilterChain {
         }
 
         self.filters = active_filters;
+        state
     }
 
     /// Resolves the filter chain by walking each filter in order, tracking the

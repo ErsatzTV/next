@@ -10,6 +10,7 @@ use crate::video_codec::VideoCodec;
 pub enum OutputOption {
     Format(OutputFormat),
     VideoCodec(VideoCodec),
+    VideoBt709Metadata(&'static str),
     VideoBitrate(Option<Kbps>),
     VideoBuffer(Option<Kbps>),
     VideoTrackTimeScale(u64),
@@ -32,6 +33,12 @@ impl OutputOption {
         match self {
             OutputOption::Format(format) => format.as_arg(output_context),
             OutputOption::VideoCodec(codec) => codec.as_arg(),
+            OutputOption::VideoBt709Metadata(bsf) => args![
+                "-bsf:v",
+                format!(
+                    "{bsf}=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"
+                ),
+            ],
             OutputOption::VideoBitrate(Some(bitrate_kbps)) => {
                 args![
                     "-b:v",
