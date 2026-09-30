@@ -11,7 +11,7 @@ use crate::pipeline::{
     VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
-use crate::video_codec::VideoCodec;
+use crate::video_codec::{MetadataBsf, VideoCodec};
 use crate::video_filter::VideoFilter;
 use crate::{ArgVec, accel};
 
@@ -54,7 +54,8 @@ pub trait HwAccel {
         bit_depth: u8,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec>;
-    fn color_metadata_bsf(&self, _codec: &VideoCodec) -> Option<&'static str> {
+    /// `bt709` is only applied when the pipeline tonemaps
+    fn metadata_bsf(&self, _codec: &VideoCodec) -> Option<MetadataBsf> {
         None
     }
     fn envs(&self) -> Vec<EnvironmentVariable> {

@@ -25,7 +25,7 @@ use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
 };
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOverlay};
-use crate::video_codec::VideoCodec;
+use crate::video_codec::{MetadataBsf, VideoCodec};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, EnsureAlphaFilter,
@@ -955,20 +955,25 @@ impl Pipeline {
             .filter_chain
             .evaluate(&self.initial_state, &self.ffmpeg_info);
 
-        // some encoders do not write the bt709 tags from tonemap
-        if self.initial_state.hdr_format != HdrFormat::None
-            && final_state.hdr_format == HdrFormat::None
-            && let Some(bsf) = self
-                .accel
-                .as_ref()
-                .and_then(|a| a.color_metadata_bsf(&self.output_context.video_codec))
+        // ffmpeg keeps only the last -bsf:v, so all header fixups share one filter
+        let tonemapped = self.initial_state.hdr_format != HdrFormat::None
+            && final_state.hdr_format == HdrFormat::None;
+        if let Some(bsf) = self
+            .accel
+            .as_ref()
+            .and_then(|a| a.metadata_bsf(&self.output_context.video_codec))
+            .map(|bsf| MetadataBsf {
+                bt709: bsf.bt709 && tonemapped,
+                ..bsf
+            })
+            .filter(|bsf| !bsf.is_empty())
             && let Some(index) = self
                 .output_options
                 .iter()
                 .position(|o| matches!(o, OutputOption::VideoCodec(_)))
         {
             self.output_options
-                .insert(index + 1, OutputOption::VideoBt709Metadata(bsf));
+                .insert(index + 1, OutputOption::VideoMetadata(bsf));
         }
         self.filter_chain.resolve(
             &self.ffmpeg_info,
@@ -1430,6 +1435,69 @@ mod tests {
     fn amf_without_tonemap_has_no_bsf() {
         let args = amf_args(false, VideoFormat::Hevc);
         assert!(!args.iter().any(|a| a == "-bsf:v"), "{args:?}");
+    }
+
+    fn video_toolbox_args(format: VideoFormat) -> ArgVec {
+        use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
+
+        let accel = HardwareAccel::VideoToolbox(crate::accel::video_toolbox::VideoToolbox {
+            capabilities: VideoToolboxCapabilities {
+                supported_decoders: Default::default(),
+                supported_encoders: [(VideoFormat::H264, 8), (VideoFormat::Hevc, 8)].into(),
+            },
+        });
+        let output = OutputSettings {
+            video_format: Some(format),
+            accel: Some(accel),
+            ..stereo_output()
+        };
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::VideoToolbox.to_string()].into(),
+            ..FfmpegInfo::default()
+        };
+        let mut pipeline =
+            Pipeline::full(&ffmpeg_info, multichannel_ac3_input("main.mkv"), output).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+        assert!(
+            args.iter().any(|a| a.ends_with("_videotoolbox")),
+            "videotoolbox encoder not used: {args:?}"
+        );
+        args
+    }
+
+    #[test]
+    fn video_toolbox_h264_writes_sar_with_bsf() {
+        let args = video_toolbox_args(VideoFormat::H264);
+        let bsfs: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-bsf:v")
+            .map(|(i, _)| &args[i + 1])
+            .collect();
+        assert_eq!(bsfs, ["h264_metadata=sample_aspect_ratio=1/1"], "{args:?}");
+    }
+
+    #[test]
+    fn video_toolbox_hevc_has_no_bsf() {
+        let args = video_toolbox_args(VideoFormat::Hevc);
+        assert!(!args.iter().any(|a| a == "-bsf:v"), "{args:?}");
+    }
+
+    #[test]
+    fn metadata_bsf_combines_fixups_into_one_filter() {
+        let bsf = MetadataBsf {
+            filter: "h264_metadata",
+            square_pixels: true,
+            bt709: true,
+        };
+        assert_eq!(
+            bsf.as_arg(),
+            [
+                "-bsf:v",
+                "h264_metadata=sample_aspect_ratio=1/1:colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+            ]
+        );
     }
 
     fn canvas_input(source: InputSource) -> GraphicsInput {

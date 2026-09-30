@@ -1,6 +1,31 @@
 use crate::ArgVec;
 use crate::pipeline::{FrameSurface, PixelFormat};
 
+/// Header fixups applied after encode with `h264_metadata` / `hevc_metadata`
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MetadataBsf {
+    pub(crate) filter: &'static str,
+    pub(crate) square_pixels: bool,
+    pub(crate) bt709: bool,
+}
+
+impl MetadataBsf {
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.square_pixels && !self.bt709
+    }
+
+    pub(crate) fn as_arg(&self) -> ArgVec {
+        let mut params = Vec::new();
+        if self.square_pixels {
+            params.push("sample_aspect_ratio=1/1");
+        }
+        if self.bt709 {
+            params.push("colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1");
+        }
+        args!["-bsf:v", format!("{}={}", self.filter, params.join(":"))]
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct VideoCodec {
     pub(crate) codec_name: &'static str,

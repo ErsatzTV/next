@@ -8,7 +8,7 @@ use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
 use crate::probe::ProbeResultVideoStream;
-use crate::video_codec::VideoCodec;
+use crate::video_codec::{MetadataBsf, VideoCodec};
 use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,8 +69,7 @@ impl HwAccel for VideoToolbox {
         match format {
             VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_videotoolbox",
-                // m1 mac mini was observed not to tag SAR with h264 encoder
-                options: args!["-bsf:v", "h264_metadata=sample_aspect_ratio=1/1"],
+                options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
@@ -88,6 +87,15 @@ impl HwAccel for VideoToolbox {
             }),
             _ => None,
         }
+    }
+
+    // m1 mac mini was observed not to tag SAR with h264 encoder
+    fn metadata_bsf(&self, codec: &VideoCodec) -> Option<MetadataBsf> {
+        (codec.codec_name == "h264_videotoolbox").then_some(MetadataBsf {
+            filter: "h264_metadata",
+            square_pixels: true,
+            bt709: false,
+        })
     }
 
     fn init_hw_device(&self, _surfaces: &SurfaceSet) -> ArgVec {

@@ -11,7 +11,7 @@ use crate::pipeline::{
     FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
-use crate::video_codec::VideoCodec;
+use crate::video_codec::{MetadataBsf, VideoCodec};
 use crate::video_filter::{
     HwDownloadFilter, ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp,
 };
@@ -133,12 +133,17 @@ impl HwAccel for Amf {
     }
 
     // polaris (vce 3.4) ignores the output color properties, so set the tags after encode
-    fn color_metadata_bsf(&self, codec: &VideoCodec) -> Option<&'static str> {
-        match codec.codec_name {
-            "h264_amf" => Some("h264_metadata"),
-            "hevc_amf" => Some("hevc_metadata"),
-            _ => None,
-        }
+    fn metadata_bsf(&self, codec: &VideoCodec) -> Option<MetadataBsf> {
+        let filter = match codec.codec_name {
+            "h264_amf" => "h264_metadata",
+            "hevc_amf" => "hevc_metadata",
+            _ => return None,
+        };
+        Some(MetadataBsf {
+            filter,
+            square_pixels: false,
+            bt709: true,
+        })
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
