@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ffpipeline::ffmpeg_info::FfmpegInfo;
+use ffpipeline::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
@@ -24,12 +24,16 @@ use ffpipeline::probe::{
 use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 
+pub mod shared;
+
 static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
+static HARDWARE_ACCEL: OnceCell<Option<HardwareAccel>> = OnceCell::const_new();
 
 pub struct TestEnv {
     pub ffmpeg: PathBuf,
     pub ffprobe: PathBuf,
     pub ffmpeg_info: FfmpegInfo,
+    pub disabled_filters: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -88,14 +92,34 @@ pub async fn test_env() -> Option<&'static TestEnv> {
                 ffmpeg,
                 ffprobe,
                 ffmpeg_info,
+                disabled_filters,
             })
         })
         .await
         .as_ref()
 }
 
+/// Each hardware suite is its own test binary, so one cached accel per process is enough.
+/// Panics rather than skipping so a suite can't pass without touching the hardware.
 #[allow(dead_code)]
-pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
+pub async fn hardware_accel(
+    known: KnownHardwareAccel,
+    probe: fn() -> Option<HardwareAccel>,
+) -> Option<HardwareAccel> {
+    let env = test_env().await?;
+    assert!(
+        env.ffmpeg_info.has_hw_accel(&known),
+        "{known} not available in ffmpeg"
+    );
+    let accel = HARDWARE_ACCEL.get_or_init(|| async { probe() }).await;
+    let accel = accel.clone().unwrap_or_else(|| {
+        panic!("no usable {known} device found, or it reported no capabilities")
+    });
+    Some(accel)
+}
+
+/// Returns the pipeline args so accel-specific tests can assert which filters were chosen.
+pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<String> {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
@@ -106,6 +130,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let video_format = test_case.params.video_format;
     let bit_depth = test_case.params.bit_depth.unwrap_or(8);
     let video_size = test_case.params.video_size;
+    let disabled_filters = std::mem::take(&mut test_case.params.disabled_filters);
     let source_video = probe
         .streams
         .iter()
@@ -128,8 +153,24 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     let input = build_input(&source, probe, Duration::from_secs(1), watermark);
     let output = build_output(dir.path(), test_case.params);
 
-    let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
+    let ffmpeg_info = if disabled_filters.is_empty() {
+        Cow::Borrowed(&test_env.ffmpeg_info)
+    } else {
+        let mut all_disabled = test_env.disabled_filters.clone();
+        all_disabled.extend(disabled_filters.iter().map(|f| f.to_string()));
+        Cow::Owned(load_ffmpeg_info(&test_env.ffmpeg, &all_disabled).await)
+    };
+
+    let mut pipeline = generate_pipeline(&ffmpeg_info, input, output).unwrap();
     pipeline.optimize();
+    let args: Vec<String> = pipeline.args().iter().map(|a| a.to_string()).collect();
+    let cmd = args.join(" ");
+    for filter in disabled_filters {
+        assert!(
+            !cmd.contains(filter),
+            "disabled filter {filter} is still in the pipeline"
+        );
+    }
 
     let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
     assert!(success, "ffmpeg failed:\n{stderr}");
@@ -142,7 +183,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
             video_format,
             bit_depth,
             video_size,
-            &pipeline.args(),
+            &args,
         );
     }
 
@@ -193,6 +234,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     if source_is_hdr {
         assert_sdr_output(&output_probe);
     }
+    args
 }
 
 /// Canvas sources may use any pixel format with alpha, not just the bgra that legacy sends, so
@@ -663,6 +705,8 @@ pub struct TestOutputParams {
     pub frame_rate: Option<FrameRate>,
     pub filter_options: VideoFilterOptions,
     pub watermark: Option<TestWatermark>,
+    /// Hidden from `FfmpegInfo` for this test only, to force a fallback path.
+    pub disabled_filters: Vec<&'static str>,
 }
 
 impl Default for TestOutputParams {
@@ -682,6 +726,7 @@ impl Default for TestOutputParams {
             frame_rate: None,
             filter_options: VideoFilterOptions::default(),
             watermark: None,
+            disabled_filters: Vec::new(),
         }
     }
 }
@@ -894,6 +939,13 @@ pub fn assert_accel_usage(
     let cmd = args.join(" ");
 
     let hw_decode = args.contains(&"-hwaccel");
+    let Some(format) = video_format else {
+        assert!(
+            !hw_decode,
+            "{accel} used hardware decode for video stream copy"
+        );
+        return;
+    };
     let pixel_format = PixelFormat::parse(&source.pix_fmt);
     if source.rotation_degrees() != 0 {
         assert!(
@@ -916,9 +968,6 @@ pub fn assert_accel_usage(
         );
     }
 
-    let Some(format) = video_format else {
-        return;
-    };
     let actual = args
         .iter()
         .position(|a| *a == "-vcodec")
