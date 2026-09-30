@@ -67,7 +67,7 @@ RUN . /target-env && \
         done && \
     test -x /out/tests/software
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-1@sha256:21a0ef02ba357b0488962b2aa020536e77aec706cc07656fb34808ce54d3c4a6 AS test-runtime
+FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-2@sha256:fd205179ec62c81eadb0f866a1d885f58971dbbf6b768c7c351a7d5b25abd1a0 AS test-runtime
 
 COPY --from=testbuild /out/tests /app/tests
 # The test binaries contain the compile-time CARGO_MANIFEST_DIR under /build.
@@ -110,7 +110,7 @@ RUN chmod +x /app/run-tests
 
 ENTRYPOINT ["/app/run-tests"]
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-1@sha256:21a0ef02ba357b0488962b2aa020536e77aec706cc07656fb34808ce54d3c4a6 AS runtime
+FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-2@sha256:fd205179ec62c81eadb0f866a1d885f58971dbbf6b768c7c351a7d5b25abd1a0 AS runtime
 
 RUN groupadd --gid 1000 ersatztv && \
     useradd --uid 1000 --gid 1000 --no-create-home --shell /sbin/nologin ersatztv && \
