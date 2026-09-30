@@ -69,9 +69,9 @@ pub(crate) fn probe(vpl: &VplLib) -> Option<QsvCapabilities> {
             continue;
         }
 
-        session.log_identity(*candidate);
+        let platform = session.log_identity(*candidate);
 
-        let capabilities = session.probe_capabilities();
+        let capabilities = session.probe_capabilities(&platform);
         if capabilities.count() > 0 {
             return Some(capabilities);
         }
@@ -114,7 +114,7 @@ impl<'a> Session<'a> {
         true
     }
 
-    fn log_identity(&self, requested: mfxIMPL) {
+    fn log_identity(&self, requested: mfxIMPL) -> mfxPlatform {
         let mut version = mfxVersion::default();
         let mut implementation: mfxIMPL = 0;
         let mut platform = mfxPlatform::default();
@@ -130,14 +130,17 @@ impl<'a> Session<'a> {
         }
 
         log::debug!(
-            "[qsv] legacy Media SDK session: requested impl 0x{requested:x}, got impl 0x{implementation:x}, API {}.{}, device 0x{:x}",
+            "[qsv] legacy Media SDK session: requested impl 0x{requested:x}, got impl 0x{implementation:x}, API {}.{}, platform {}, device 0x{:x}",
             version.Major,
             version.Minor,
+            platform.CodeName,
             platform.DeviceId,
         );
+
+        platform
     }
 
-    fn probe_capabilities(&self) -> QsvCapabilities {
+    fn probe_capabilities(&self, platform: &mfxPlatform) -> QsvCapabilities {
         let mut supported_decoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         let mut supported_encoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
 
@@ -152,6 +155,7 @@ impl<'a> Session<'a> {
 
             let encode: Vec<u8> = [8u8, 10]
                 .into_iter()
+                .filter(|_| !encoder_is_broken(*format, platform.CodeName))
                 .filter(|bit_depth| self.can_encode(*codec_id, *bit_depth))
                 .collect();
             if !encode.is_empty() {
@@ -426,6 +430,16 @@ enum Query {
     Decode,
     Encode,
     Vpp,
+}
+
+/// Encoders that pass `MFXVideoENCODE_Query` and `Init` but cannot encode a frame.
+///
+/// Haswell (Windows driver 20.19.15.5171, API 1.20) accepts MPEG-2 at every profile,
+/// preset, slice count and rate control, then fails the first frame from video memory
+/// with `MFX_ERR_DEVICE_FAILED` and hangs on system memory. The failure also breaks
+/// every other session on the device. Kaby Lake (API 1.35) encodes the same streams.
+fn encoder_is_broken(format: VideoFormat, code_name: u16) -> bool {
+    format == VideoFormat::Mpeg2Video && code_name == MFX_PLATFORM_HASWELL
 }
 
 /// `mfxInfoMFX` is smaller than `mfxInfoVPP`, the other arm of the union. write the

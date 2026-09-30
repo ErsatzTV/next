@@ -28,6 +28,9 @@ pub const MFX_CODEC_VP8: u32 = u32::from_ne_bytes(*b"VP8 ");
 pub const MFX_CODEC_VP9: u32 = u32::from_ne_bytes(*b"VP9 ");
 pub const MFX_CODEC_AV1: u32 = u32::from_ne_bytes(*b"AV1 ");
 
+// mfxPlatform.CodeName (subset used for driver workarounds)
+pub const MFX_PLATFORM_HASWELL: u16 = 3;
+
 // H.264 profiles (subset used for bit-depth detection)
 pub const MFX_PROFILE_AVC_HIGH10: u32 = 110;
 
