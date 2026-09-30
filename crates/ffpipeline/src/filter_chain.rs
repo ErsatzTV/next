@@ -381,10 +381,12 @@ impl FilterChain {
             let accepts_upload =
                 |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.accepts_upload_format(pf));
 
+            // with no format filter (videotoolbox) the encoder converts; do it here instead so
+            // we don't upload a 10-bit frame for an 8-bit encode
             let hw_can_convert = |pf: &PixelFormat| {
-                accel
-                    .as_ref()
-                    .is_none_or(|a| a.can_convert_pixel_format(ffmpeg_info, pf))
+                accel.as_ref().is_none_or(|a| {
+                    a.can_convert_pixel_format(ffmpeg_info, pf) && a.format_filter(pf).is_some()
+                })
             };
 
             let needs_format_change = encoder_pixel_format
@@ -800,16 +802,18 @@ mod tests {
     use crate::accel::opencl::{PadOpencl, TonemapOpencl};
     use crate::accel::qsv::Qsv;
     use crate::accel::vaapi::{PadVaapi, TonemapVaapi, Vaapi, VaapiDriver};
+    use crate::accel::video_toolbox::VideoToolbox;
     use crate::capabilities::opencl::OpenCLCapabilities;
     use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
     use crate::capabilities::vaapi::VaapiCapabilities;
+    use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
     use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
     use crate::output_settings::ScalingMode;
     use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
-    use crate::pipeline::{HdrFormat, HwPixelFormat};
+    use crate::pipeline::{HdrFormat, HwPixelFormat, VideoFormat};
     use crate::video_filter::{
         FadeFilter, FormatFilter, HwMapFilter, HwUploadFilter, LoopFilter, PadFilter, ScaleFilter,
         ToneMapFilter,
@@ -1285,6 +1289,40 @@ mod tests {
             ),
             "expected format=bgra -> hwupload, got {:?}",
             filters
+        );
+    }
+
+    #[test]
+    fn resolve_converts_10bit_to_8bit_before_upload_to_videotoolbox() {
+        let accel = HardwareAccel::VideoToolbox(VideoToolbox::new(VideoToolboxCapabilities {
+            supported_decoders: HashSet::new(),
+            supported_encoders: HashSet::from([(VideoFormat::Hevc, 8)]),
+        }));
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(accel),
+            &VideoFilterOptions::default(),
+            &sdr_1080p_state(FrameSurface::System, PixelFormat::Yuv420p10le),
+            &FrameSurface::VideoToolbox,
+            &Some(PixelFormat::Nv12),
+        );
+
+        assert!(
+            matches!(
+                chain.filters.as_slice(),
+                [
+                    PipelineFilter::Video(VideoFilter::Format(FormatFilter {
+                        format: PixelFormat::Nv12
+                    })),
+                    PipelineFilter::Video(VideoFilter::HwUpload(HwUploadFilter {
+                        source_format: PixelFormat::Nv12,
+                        ..
+                    })),
+                ]
+            ),
+            "expected format=nv12 -> hwupload, got {:?}",
+            chain.filters
         );
     }
 
