@@ -31,15 +31,18 @@ pub(crate) mod stub;
 pub struct QsvCapabilities {
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) supported_encoders: HashMap<VideoFormat, Vec<u8>>,
-    pub(crate) vpp_pixel_formats: HashSet<QsvFourCC>,
+    /// formats hwupload can copy into video memory, keeping the format
+    pub(crate) upload_formats: HashSet<QsvFourCC>,
+    /// (input, output) pairs vpp_qsv can convert between in video memory
+    pub(crate) convert_pairs: HashSet<(QsvFourCC, QsvFourCC)>,
     pub(crate) vpp_filters: HashSet<QsvFourCC>,
     pub(crate) rotation_formats: HashSet<QsvFourCC>,
     /// (input, output) composite pairs. the patched vpp_qsv pads with a composite
-    pub(crate) composite_formats: HashSet<(QsvFourCC, QsvFourCC)>,
+    pub(crate) composite_pairs: HashSet<(QsvFourCC, QsvFourCC)>,
     pub(crate) runtime_api: Option<(u16, u16)>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct QsvFourCC(pub(crate) u32);
 
 impl Debug for QsvFourCC {
@@ -61,8 +64,16 @@ impl QsvCapabilities {
             .is_some_and(|bit_depths| bit_depths.contains(&bit_depth))
     }
 
-    pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
-        Self::fourcc(pixel_format).is_some_and(|c| self.vpp_pixel_formats.contains(&c))
+    pub fn can_upload(&self, pixel_format: &PixelFormat) -> bool {
+        Self::fourcc(pixel_format).is_some_and(|c| self.upload_formats.contains(&c))
+    }
+
+    pub fn can_convert(&self, input: &PixelFormat, output: &PixelFormat) -> bool {
+        Self::pair(input, output).is_some_and(|pair| self.convert_pairs.contains(&pair))
+    }
+
+    fn pair(input: &PixelFormat, output: &PixelFormat) -> Option<(QsvFourCC, QsvFourCC)> {
+        Self::fourcc(input).zip(Self::fourcc(output))
     }
 
     fn fourcc(pixel_format: &PixelFormat) -> Option<QsvFourCC> {
@@ -82,13 +93,10 @@ impl QsvCapabilities {
     }
 
     pub fn can_pad(&self, input: &PixelFormat, output: &PixelFormat) -> bool {
-        Self::fourcc(input)
-            .zip(Self::fourcc(output))
-            .is_some_and(|pair| self.composite_formats.contains(&pair))
+        Self::pair(input, output).is_some_and(|pair| self.composite_pairs.contains(&pair))
     }
 
-    // this is just a heuristic; and p010 support could mean input or output to any filter
-    // something to tighten up if we encounter tonemapping failures
+    // this is just a heuristic; something to tighten up if we encounter tonemapping failures
     pub fn can_tonemap(&self) -> bool {
         self.runtime_api.is_some_and(|(major, _)| major >= 2)
             && self
@@ -97,7 +105,7 @@ impl QsvCapabilities {
             && self
                 .vpp_filters
                 .contains(&QsvFourCC(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT))
-            && self.vpp_supports_format(&PixelFormat::P010le)
+            && self.can_convert(&PixelFormat::P010le, &PixelFormat::Nv12)
     }
 
     pub fn runtime_api(&self) -> Option<(u16, u16)> {
@@ -127,10 +135,18 @@ mod tests {
         QsvCapabilities {
             supported_decoders: HashMap::new(),
             supported_encoders: HashMap::new(),
-            vpp_pixel_formats: formats.iter().map(|f| QsvFourCC(*f)).collect(),
+            upload_formats: formats.iter().map(|f| QsvFourCC(*f)).collect(),
+            convert_pairs: formats
+                .iter()
+                .flat_map(|input| {
+                    formats
+                        .iter()
+                        .map(|output| (QsvFourCC(*input), QsvFourCC(*output)))
+                })
+                .collect(),
             vpp_filters: filters.iter().map(|f| QsvFourCC(*f)).collect(),
             rotation_formats: HashSet::new(),
-            composite_formats: HashSet::new(),
+            composite_pairs: HashSet::new(),
             runtime_api,
         }
     }

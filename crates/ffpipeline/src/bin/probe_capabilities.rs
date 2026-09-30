@@ -278,9 +278,6 @@ fn print_qsv() -> Result<(), String> {
     print_encode_table(ALL_FORMATS, |f, bd| caps.can_encode(f, bd));
 
     println!();
-    print_vpp_table(|pf| caps.vpp_supports_format(pf));
-
-    println!();
     match caps.runtime_api() {
         Some((major, minor)) => println!("Runtime API: {major}.{minor}"),
         None => println!("Runtime API: unknown"),
@@ -292,7 +289,25 @@ fn print_qsv() -> Result<(), String> {
         println!("VPP Filters: {}", filters.join(" "));
     }
     println!("Can Tonemap: {}", caps.can_tonemap());
-    for pf in [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra] {
+    let qsv_formats = [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra];
+    for pf in qsv_formats {
+        println!(
+            "Upload {}: {}",
+            pixel_format_name(&pf),
+            yn(caps.can_upload(&pf))
+        );
+    }
+    for input in qsv_formats {
+        for output in qsv_formats {
+            println!(
+                "Convert {} -> {}: {}",
+                pixel_format_name(&input),
+                pixel_format_name(&output),
+                yn(caps.can_convert(&input, &output))
+            );
+        }
+    }
+    for pf in qsv_formats {
         println!(
             "Rotation {}: {}",
             pixel_format_name(&pf),

@@ -1217,13 +1217,23 @@ mod tests {
             capabilities: QsvCapabilities {
                 supported_decoders: HashMap::new(),
                 supported_encoders: HashMap::new(),
-                vpp_pixel_formats: HashSet::from([
+                upload_formats: HashSet::from([
                     QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
                     QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4),
                 ]),
+                convert_pairs: HashSet::from([
+                    (
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    ),
+                    (
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4),
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    ),
+                ]),
                 vpp_filters: HashSet::new(),
                 rotation_formats: HashSet::new(),
-                composite_formats: HashSet::new(),
+                composite_pairs: HashSet::new(),
                 runtime_api: None,
             },
         })
