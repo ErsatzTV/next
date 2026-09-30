@@ -84,6 +84,7 @@ impl QsvCapabilities {
         fourcc.map(QsvFourCC)
     }
 
+    // ffmpeg vpp_qsv ignores rotation on api versions before 1.17
     pub fn can_rotate(&self, pixel_format: &PixelFormat) -> bool {
         self.runtime_api.is_some_and(|version| version >= (1, 17))
             && Self::fourcc(pixel_format).is_some_and(|c| self.rotation_formats.contains(&c))

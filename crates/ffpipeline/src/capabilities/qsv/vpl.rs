@@ -59,25 +59,7 @@ impl QsvCapabilities {
                 let enc = &*(base.add(IMPL_DESC_ENC_OFFSET) as *const mfxEncoderDescription);
                 let vpp = &*(base.add(IMPL_DESC_VPP_OFFSET) as *const mfxVPPDescription);
 
-                for format in [
-                    VideoFormat::Av1,
-                    VideoFormat::H264,
-                    VideoFormat::Hevc,
-                    VideoFormat::Mpeg2Video,
-                    VideoFormat::Vc1,
-                    VideoFormat::Vp8,
-                    VideoFormat::Vp9,
-                ] {
-                    let codec_id = match format {
-                        VideoFormat::Av1 => MFX_CODEC_AV1,
-                        VideoFormat::H264 => MFX_CODEC_AVC,
-                        VideoFormat::Hevc => MFX_CODEC_HEVC,
-                        VideoFormat::Mpeg2Video => MFX_CODEC_MPEG2,
-                        VideoFormat::Vc1 => MFX_CODEC_VC1,
-                        VideoFormat::Vp8 => MFX_CODEC_VP8,
-                        VideoFormat::Vp9 => MFX_CODEC_VP9,
-                    };
-
+                for &(format, codec_id) in legacy::CODECS {
                     if decoder_has_codec(dec, codec_id) {
                         if decoder_has_10bit_profile(dec, codec_id) {
                             supported_decoders.insert(format, vec![8u8, 10u8]);

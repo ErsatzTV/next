@@ -15,7 +15,7 @@ use libvpl_sys::*;
 use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
 use crate::pipeline::VideoFormat;
 
-const CODECS: &[(VideoFormat, u32)] = &[
+pub(super) const CODECS: &[(VideoFormat, u32)] = &[
     (VideoFormat::Av1, MFX_CODEC_AV1),
     (VideoFormat::H264, MFX_CODEC_AVC),
     (VideoFormat::Hevc, MFX_CODEC_HEVC),
@@ -189,10 +189,9 @@ impl<'a> Session<'a> {
             rotation_formats: VPP_FORMATS
                 .iter()
                 .filter(|(fourcc, bit_depth)| {
-                    self.api_version().is_some_and(|version| version >= (1, 17))
-                        && [90, 180, 270]
-                            .into_iter()
-                            .all(|angle| self.can_rotate(*fourcc, *bit_depth, angle))
+                    [90, 180, 270]
+                        .into_iter()
+                        .all(|angle| self.can_rotate(*fourcc, *bit_depth, angle))
                 })
                 .map(|(fourcc, _)| QsvFourCC(*fourcc))
                 .collect(),

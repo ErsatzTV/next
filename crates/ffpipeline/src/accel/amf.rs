@@ -21,18 +21,6 @@ pub struct Amf {
     pub capabilities: AmfCapabilities,
 }
 
-fn video_format(codec: &str) -> Option<VideoFormat> {
-    match codec {
-        "av1" => Some(VideoFormat::Av1),
-        "h264" => Some(VideoFormat::H264),
-        "hevc" => Some(VideoFormat::Hevc),
-        "mpeg2video" => Some(VideoFormat::Mpeg2Video),
-        "vc1" => Some(VideoFormat::Vc1),
-        "vp9" => Some(VideoFormat::Vp9),
-        _ => None,
-    }
-}
-
 /// `-hwaccel amf` makes ffmpeg use this decoder, so the build must include it. Stock
 /// ffmpeg ships av1, h264, hevc and vp9; mpeg2_amf comes from the etv patch.
 /// If the decoder is missing, ffmpeg falls back to software decoding with no warning.
@@ -62,8 +50,10 @@ impl Amf {
     ) -> bool {
         video_stream.color_params.is_pq()
             && self.capabilities.can_tonemap()
-            && video_format(&video_stream.codec)
-                .is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+            && video_stream
+                .codec
+                .parse::<VideoFormat>()
+                .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 }
 
@@ -103,7 +93,7 @@ impl HwAccel for Amf {
     /// Decoded surfaces go through vpp_amf for scaling and format conversion, so only
     /// decode on the device when the converter can consume the decoded surface format.
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        video_format(codec).is_some_and(|f| {
+        codec.parse::<VideoFormat>().is_ok_and(|f| {
             self.capabilities.can_decode(&f, pixel_format.bit_depth())
                 && self.capabilities.vpp_accepts_input(pixel_format)
         })
