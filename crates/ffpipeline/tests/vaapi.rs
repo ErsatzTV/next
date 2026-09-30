@@ -2,22 +2,17 @@
 mod common;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 
+use common::shared::transcode;
 use common::*;
 use ffpipeline::accel::vaapi::{Vaapi, VaapiDriver};
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::vaapi::VaapiCapabilities;
-use ffpipeline::ffmpeg_info::KnownHardwareAccel;
+use ffpipeline::ffmpeg_info::{KnownHardwareAccel, KnownVideoFilter};
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
-use ffpipeline::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
-use ffpipeline::output_settings::{TonemapOpenclOptions, VideoFilterOptions};
-use ffpipeline::pipeline::{AudioFormat, VideoFormat};
+use ffpipeline::pipeline::AudioFormat;
 use rstest::rstest;
-use tokio::sync::OnceCell;
-
-static VAAPI_ACCEL: OnceCell<Option<HardwareAccel>> = OnceCell::const_new();
 
 fn find_vaapi_device() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("ETV_TEST_VAAPI_DEVICE") {
@@ -59,384 +54,68 @@ fn probe_vaapi() -> Option<(
     Some((device_str.to_owned(), driver, caps, opencl_caps))
 }
 
-async fn make_vaapi_accel() -> Option<&'static HardwareAccel> {
-    VAAPI_ACCEL
-        .get_or_init(|| async {
-            let (device, driver, capabilities, opencl_capabilities) = probe_vaapi()?;
-            Some(HardwareAccel::Vaapi(Vaapi {
-                device,
-                driver,
-                capabilities,
-                opencl_capabilities,
-            }))
-        })
-        .await
-        .as_ref()
+fn probe() -> Option<HardwareAccel> {
+    let (device, driver, capabilities, opencl_capabilities) = probe_vaapi()?;
+    Some(HardwareAccel::Vaapi(Vaapi {
+        device,
+        driver,
+        capabilities,
+        opencl_capabilities,
+    }))
 }
 
+async fn accel() -> Option<HardwareAccel> {
+    hardware_accel(KnownHardwareAccel::Vaapi, probe).await
+}
+
+shared_tests!(accel);
+
+async fn run_vaapi_test_case(
+    mut test_case: TestCase,
+) -> Option<(&'static TestEnv, Vaapi, Vec<String>)> {
+    let Some(HardwareAccel::Vaapi(vaapi)) = accel().await else {
+        return None;
+    };
+    let env = test_env().await?;
+    test_case.params.accel = Some(HardwareAccel::Vaapi(vaapi.clone()));
+    let args = run_test_case(env, test_case).await;
+    Some((env, vaapi, args))
+}
+
+/// 4:3 source to 16:9 output needs a pad; hiding pad_vaapi exercises the OpenCL
+/// fallback, or the software pad on devices without OpenCL.
 #[rstest]
 #[tokio::test]
 #[ignore]
-async fn pipeline(
-    #[values(
-        "1080p_h264.ts",
-        "720p_h264.ts",
+async fn pad_opencl(#[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8)) {
+    let mut test_case = transcode(
         "480p_h264.ts",
-        "1080p_h264_10.ts",
-        "720p_h264_10.ts",
-        "480p_h264_10.ts",
-        "1080p_hevc_10.ts",
-        "720p_hevc_10.ts",
-        "480p_hevc_10.ts",
-        "480p_h264_anamorphic.ts",
-        "480p_h264_sps_change.ts"
-    )]
-    src: &'static str,
-    #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("mpeg2video", 8), ("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
-    #[values("aac", "ac3")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn tonemap_hdr(
-    #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
-    #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
-    #[values("aac", "ac3")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                filter_options: VideoFilterOptions {
-                    tonemap_opencl: TonemapOpenclOptions {
-                        tonemap: Some("hable".to_string()),
-                    },
-                    ..VideoFilterOptions::default()
-                },
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn tonemap_hdr_watermark(
-    #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
-    #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
-    #[values("aac", "ac3")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                filter_options: VideoFilterOptions {
-                    tonemap_opencl: TonemapOpenclOptions {
-                        tonemap: Some("hable".to_string()),
-                    },
-                    ..VideoFilterOptions::default()
-                },
-                watermark: Some(TestWatermark::default()),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn tonemap_dv(
-    #[values(
-        "1080p_hevc_10_dv5.mp4",
-        "1080p_hevc_10_dv7.mp4",
-        "1080p_hevc_10_dv81.mp4",
-        "1080p_hevc_10_dv82.mp4",
-        "1080p_hevc_10_dv84.mp4"
-    )]
-    src: &'static str,
-    #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
-    #[values("aac", "ac3")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                filter_options: VideoFilterOptions {
-                    tonemap_opencl: TonemapOpenclOptions {
-                        tonemap: Some("hable".to_string()),
-                    },
-                    ..VideoFilterOptions::default()
-                },
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn deinterlace(
-    #[values("480i_h264.ts", "480i_h264_anamorphic.ts")] src: &'static str,
-    #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-    #[values("aac", "ac3")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                deinterlace: true,
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn rotated(#[values("1920x1080", "1280x720")] res: FrameSize) {
-    run_vaapi_test_case(TestCase {
-        fixture_name: "720p_h264_rotated.mp4",
-        params: TestOutputParams {
-            video_size: Some(res),
-            ..TestOutputParams::default()
-        },
-        expected_video_codec: String::from("h264"),
-        expected_video_size: res,
-        expected_audio_codec: String::from("aac"),
-    })
-    .await;
-}
-
-/// 16:9 interlaced source transcoded with deinterlacing off: no pad is needed, so
-/// hardware pipelines keep decoded frames on the device all the way to the encoder.
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn interlaced_no_deinterlace(
-    #[values("1080i_h264.ts")] src: &'static str,
-    #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                deinterlace: false,
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: String::from("aac"),
-        })
-        .await;
-    }
-}
-
-/// Tests pad with a 4:3 source -> 16:9 target, which forces pad_vaapi or pad_opencl.
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn pad(
-    #[values("480p_h264.ts")] src: &'static str,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-    #[values("aac")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(FrameSize::from_str("1920x1080").unwrap()),
-                bit_depth: Some(bpp),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: FrameSize::from_str("1920x1080").unwrap(),
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-/// Tests pad_opencl by disabling pad_vaapi via ETV_TEST_DISABLED_FILTERS=pad_vaapi.
-/// Run with: ETV_TEST_DISABLED_FILTERS=pad_vaapi cargo test --package ffpipeline --test vaapi pad_opencl -- --ignored
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn pad_opencl(
-    #[values("480p_h264.ts")] src: &'static str,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-    #[values("aac")] af: AudioFormat,
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                audio_format: Some(af),
-                video_format: Some(vf),
-                video_size: Some(FrameSize::from_str("1920x1080").unwrap()),
-                bit_depth: Some(bpp),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: FrameSize::from_str("1920x1080").unwrap(),
-            expected_audio_codec: af.to_string(),
-        })
-        .await;
-    }
-}
-
-/// The 1080p sources paired with a 1920x1080 output are the cases that matter: a
-/// coded height of 1088 pads the decoder's surfaces, and an unscaled output means no
-/// filter intervenes to launder the frame size. The rest are controls.
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn watermark(
-    #[values("1080p_h264.ts", "1080p_hevc_10.ts", "720p_h264.ts", "480p_h264.ts")]
-    src: &'static str,
-    #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                watermark: Some(TestWatermark::default()),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: AudioFormat::Aac.to_string(),
-        })
-        .await;
-    }
-}
-
-/// Exercises fades over a still image, which need the looped (repeated) frames to carry timestamps.
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn watermark_periodic(
-    #[values("1080p_h264.ts", "720p_h264.ts")] src: &'static str,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-) {
-    let res = FrameSize::from_str("1920x1080").unwrap();
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                watermark: Some(TestWatermark {
-                    timing: Some(WatermarkTiming::Periodic(PeriodicTiming {
-                        clock: PeriodicClock::Content,
-                        frequency_ms: 2000,
-                        phase_offset_ms: None,
-                        disable_after_ms: None,
-                        fade_ms: Some(200),
-                        hold_ms: 400,
-                    })),
-                    ..TestWatermark::default()
-                }),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: AudioFormat::Aac.to_string(),
-        })
-        .await;
+        "1920x1080".parse().unwrap(),
+        vf,
+        AudioFormat::Aac,
+    );
+    test_case.params.disabled_filters = vec!["pad_vaapi"];
+    if let Some((env, vaapi, args)) = run_vaapi_test_case(test_case).await
+        && vaapi.opencl_capabilities.can_pad()
+        && env
+            .ffmpeg_info
+            .has_video_filter(&KnownVideoFilter::PadOpencl)
+    {
+        assert!(
+            args.join(" ").contains("pad_opencl"),
+            "OpenCL can pad but the pipeline did not use pad_opencl"
+        );
     }
 }
 
 /// `Vaapi::best_overlay` upgrades a software overlay to `overlay_vaapi` whenever the
-/// filter exists and the driver can blend BGRA, so without the env var below this is
-/// just a duplicate of `watermark`. Users land on the software path on devices whose
-/// VPP cannot blend BGRA.
+/// filter exists and the driver can blend BGRA, so hiding the filter is the only way to
+/// reach the software path users get on devices whose VPP cannot blend BGRA.
 ///
 /// What keeps the resulting hwdownload/overlay/hwupload chain safe is the explicit
 /// `format=yuv420p` after hwdownload: it forces a real conversion, which reallocates
 /// the frame at the link size instead of the decoder's padded surface height. Drop
 /// that filter as redundant and 1080p h264 fails with "Failed to upload frame: -22".
-///
-/// Run with: ETV_TEST_DISABLED_FILTERS=overlay_vaapi cargo test --package ffpipeline --test vaapi watermark_software_overlay -- --ignored
 #[rstest]
 #[tokio::test]
 #[ignore]
@@ -445,117 +124,7 @@ async fn watermark_software_overlay(
     #[values("1920x1080", "1280x720")] res: FrameSize,
     #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
 ) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                watermark: Some(TestWatermark::default()),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: AudioFormat::Aac.to_string(),
-        })
-        .await;
-    }
-}
-
-/// Exercises the `-ignore_loop 0` input branch instead of the single-frame still-image branch.
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn watermark_animated(
-    #[values("1080p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
-    #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
-) {
-    let res = FrameSize::from_str("1920x1080").unwrap();
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                watermark: Some(TestWatermark {
-                    fixture_name: "watermark.gif",
-                    ..TestWatermark::default()
-                }),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: AudioFormat::Aac.to_string(),
-        })
-        .await;
-    }
-}
-
-/// 1440 and 854 are not 64-aligned, so the encoder has to signal the difference from
-/// the coded size with a conformance window. Every other output size in the suite is
-/// 64-aligned in width and only exercises the height half of that. Inert except on
-/// drivers reporting VASurfaceAttribAlignmentSize, so this needs an AMD runner.
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn encode_alignment(
-    #[values("1080p_h264.ts", "480p_h264.ts")] src: &'static str,
-    #[values("1440x1080", "854x480", "1920x1080")] res: FrameSize,
-    #[values(("hevc", 8), ("hevc", 10), ("h264", 8))] vf: (&'static str, u8),
-) {
-    let (vf_str, bpp) = vf;
-    if let Ok(vf) = VideoFormat::from_str(vf_str) {
-        run_vaapi_test_case(TestCase {
-            fixture_name: src,
-            params: TestOutputParams {
-                video_format: Some(vf),
-                video_size: Some(res),
-                bit_depth: Some(bpp),
-                ..TestOutputParams::default()
-            },
-            expected_video_codec: vf.to_string(),
-            expected_video_size: res,
-            expected_audio_codec: AudioFormat::Aac.to_string(),
-        })
-        .await;
-    }
-}
-
-#[rstest]
-#[tokio::test]
-#[ignore]
-async fn canvas(
-    #[values(("ffv1", "bgra"), ("ffv1", "yuva420p"), ("ffv1", "yuva444p"), ("png", "rgba"))]
-    source: (&'static str, &'static str),
-) {
-    if let Some(env) = test_env().await {
-        if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
-            panic!("vaapi not available in ffmpeg");
-        }
-
-        let Some(accel) = make_vaapi_accel().await else {
-            panic!("no usable VAAPI device/driver found");
-        };
-
-        run_canvas_test(env, Some(accel.clone()), source.0, source.1).await;
-    }
-}
-
-async fn run_vaapi_test_case(mut test_case: TestCase) {
-    if let Some(env) = test_env().await {
-        if !env.ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vaapi) {
-            panic!("vaapi not available in ffmpeg");
-        };
-
-        let Some(accel) = make_vaapi_accel().await else {
-            panic!("no usable VAAPI device/driver found");
-        };
-
-        test_case.params.accel = Some(accel.clone());
-        run_test_case(env, test_case).await;
-    }
+    let mut test_case = common::shared::watermark(src, res, vf, TestWatermark::default());
+    test_case.params.disabled_filters = vec!["overlay_vaapi"];
+    run_vaapi_test_case(test_case).await;
 }

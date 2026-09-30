@@ -98,11 +98,17 @@ It does **not** run the integration suites; those are the contributor's responsi
   the software path while a probe or pipeline regression that silently falls back to software fails.
 - The software suite requires `ffmpeg`/`ffprobe` on `PATH` (or `ETV_TEST_FFMPEG`/`ETV_TEST_FFPROBE`) and assumes the
   ErsatzTV ffmpeg build (github.com/ErsatzTV/ErsatzTV-ffmpeg); stock ffmpeg lacks some patched filters and will fail
-  the tests that need them. `ETV_TEST_DISABLED_FILTERS=<comma list>` hides filters from `FfmpegInfo` so the pipeline
-  builder takes its fallback path; it exists to test fallbacks (e.g. `pad_opencl` when `pad_vaapi` is hidden), not to
-  make a stock-ffmpeg run pass.
-- Test inputs live in `crates/ffpipeline/tests/fixtures/` and are referenced by name in `#[values(...)]` lists in each
-  suite. A new fixture is not tested until it is added to those lists.
+  the tests that need them. `ETV_TEST_DISABLED_FILTERS=<comma list>` hides filters from `FfmpegInfo` for a whole run
+  so the pipeline builder takes its fallback path; it exists for ad-hoc fallback testing, not to make a stock-ffmpeg run
+  pass. A fallback worth keeping belongs in a test that sets `TestOutputParams::disabled_filters` instead (e.g.
+  `pad_opencl` in `tests/vaapi.rs`), which also asserts the hidden filter is absent from the pipeline.
+- Every suite, software included, runs the same shared tests: the `shared_tests!` macro in
+  `tests/common/shared.rs` defines them once and each suite file only supplies its accel probe. Accel-specific
+  tests go in the suite file below the macro call, and only when they cover something the shared tests cannot (a
+  fallback that needs a hidden filter, an accel-only decision). An accel that can't do something natively still
+  runs the shared test and must pass through its fallback, so don't drop matrix values for one accel.
+- Test inputs live in `crates/ffpipeline/tests/fixtures/` and are referenced by name in the `#[values(...)]` lists in
+  `tests/common/shared.rs`. A new fixture is not tested until it is added to those lists.
 
 ## Architecture
 
@@ -218,9 +224,10 @@ update `examples/lineup.json`.
    report the capability as absent** so non-native platforms still compile and fall back.
 3. `crates/ffpipeline/src/accel/<accel>.rs` — use the capability when building the pipeline.
 4. `crates/ffpipeline/src/bin/probe_capabilities.rs` — print it, so users can report what their hardware detects.
-5. `crates/ffpipeline/tests/<accel>.rs` — a test case that exercises the new path; note in the PR whether you ran it
-   on real hardware. If the capability changes decoder/encoder selection, `assert_accel_usage` in
-   `tests/common/mod.rs` must still agree with the accel's `can_decode`/`can_encode`.
+5. `crates/ffpipeline/tests/common/shared.rs` (or `tests/<accel>.rs` if the path is accel-only) — a test case that
+   exercises the new path; note in the PR whether you ran it on real hardware. If the capability changes
+   decoder/encoder selection, `assert_accel_usage` in `tests/common/mod.rs` must still agree with the accel's
+   `can_decode`/`can_encode`.
 
 ### Adding a new hardware accelerator
 
@@ -234,7 +241,8 @@ Everything in the previous checklist, plus:
 5. `crates/ffpipeline/src/error.rs` — accel-specific error variants.
 6. `crates/ersatztv-channel/src/config.rs` — the config-side `HardwareAccel` enum (separate from ffpipeline's) and its
    `to_pipeline()` arm; regenerate `schema/channel_config.json`.
-7. New `crates/ffpipeline/tests/<accel>.rs` following the existing suites (gate on capability probing, `#[ignore]`).
+7. New `crates/ffpipeline/tests/<accel>.rs` with a capability probe passed to `hardware_accel` and a
+   `shared_tests!` call, like the existing suites.
 8. This file — add the accel to the crate list above and the test command list.
 
 ### Adding codec/format support to an accel (e.g. "AMF can now hw-decode mpeg2")
@@ -243,7 +251,7 @@ Everything in the previous checklist, plus:
 2. `crates/ffpipeline/src/accel/<accel>.rs` — decoder selection and any pix_fmt / hwupload changes.
 3. `crates/ffpipeline/src/capabilities/<accel>/` if it depends on hardware generation.
 4. `crates/ffpipeline/tests/fixtures/` — a fixture in that codec if none exists, added to the relevant `#[values]`
-   lists in `tests/<accel>.rs` and `tests/software.rs`.
+   lists in `tests/common/shared.rs`.
 
 ### Playout schema versioning
 
