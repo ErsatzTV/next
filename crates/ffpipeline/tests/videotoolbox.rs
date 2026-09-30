@@ -45,7 +45,7 @@ async fn pipeline(
     )]
     src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
+    #[values(("mpeg2video", 8), ("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;

@@ -72,6 +72,16 @@ impl VideoCodec {
         }
     }
 
+    pub fn mpeg2video() -> Self {
+        Self {
+            codec_name: "mpeg2video",
+            options: Vec::new(),
+            preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
+            preferred_pixel_format_10bit: None,
+            preferred_surface: FrameSurface::System,
+        }
+    }
+
     pub(crate) fn as_arg(&self) -> ArgVec {
         let mut args = args!["-vcodec", self.codec_name];
         args.extend(self.options.iter().cloned());

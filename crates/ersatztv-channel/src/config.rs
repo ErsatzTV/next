@@ -312,6 +312,7 @@ impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
 pub enum VideoFormat {
     H264,
     Hevc,
+    Mpeg2Video,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
@@ -500,6 +501,7 @@ impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
         match value {
             VideoFormat::H264 => ffpipeline::pipeline::VideoFormat::H264,
             VideoFormat::Hevc => ffpipeline::pipeline::VideoFormat::Hevc,
+            VideoFormat::Mpeg2Video => ffpipeline::pipeline::VideoFormat::Mpeg2Video,
         }
     }
 }
@@ -604,6 +606,30 @@ impl ChannelConfig {
             expand_tilde(output_folder).ok_or(ChannelError::ChannelConfigExpandOutputFolder)?;
 
         self.number = number.to_owned();
+
+        if self
+            .normalization
+            .video
+            .format
+            .as_ref()
+            .is_some_and(|f| matches!(f, VideoFormat::Mpeg2Video))
+        {
+            if self.normalization.video.bitrate_kbps.is_none() {
+                return Err(ChannelError::ChannelConfigFailure(String::from(
+                    "bitrate_kbps is required when using mpeg2video output format",
+                )));
+            }
+
+            if self
+                .normalization
+                .video
+                .bit_depth
+                .is_some_and(|bd| bd == 10)
+            {
+                log::warn!("mpeg2video does not support 10-bit output, using 8-bit");
+                self.normalization.video.bit_depth = Some(8);
+            }
+        }
 
         Ok(())
     }

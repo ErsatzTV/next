@@ -115,6 +115,7 @@ impl VaapiCapabilities {
             (VideoFormat::H264, 8) => Some(VA_PROFILE_H264_MAIN),
             (VideoFormat::Hevc, 8) => Some(VA_PROFILE_HEVC_MAIN),
             (VideoFormat::Hevc, 10) => Some(VA_PROFILE_HEVC_MAIN10),
+            (VideoFormat::Mpeg2Video, 8) => Some(VA_PROFILE_MPEG2_MAIN),
             _ => None,
         }
     }

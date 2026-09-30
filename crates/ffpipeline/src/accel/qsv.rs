@@ -143,6 +143,13 @@ impl HwAccel for Qsv {
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
             }),
+            VideoFormat::Mpeg2Video => Some(VideoCodec {
+                codec_name: "mpeg2_qsv",
+                options: args!["-low_power", "0"],
+                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                preferred_pixel_format_10bit: None,
+                preferred_surface: FrameSurface::Qsv,
+            }),
             _ => None,
         }
     }

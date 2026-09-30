@@ -327,6 +327,13 @@ impl Pipeline {
             final_output_settings.accel = None;
         }
 
+        if final_output_settings.video_format == Some(VideoFormat::Mpeg2Video)
+            && final_output_settings.bit_depth == Some(10)
+        {
+            log::debug!("mpeg2video does not support 10-bit output, using 8-bit");
+            final_output_settings.bit_depth = Some(8);
+        }
+
         let duration = std::cmp::min(
             input_settings.audio_input.out_point - input_settings.audio_input.in_point,
             input_settings.video_input.out_point - input_settings.video_input.in_point,
@@ -362,10 +369,12 @@ impl Pipeline {
                 .unwrap_or(match format {
                     VideoFormat::Hevc => VideoCodec::libx265(),
                     VideoFormat::H264 => VideoCodec::libx264(),
+                    VideoFormat::Mpeg2Video => VideoCodec::mpeg2video(),
                     _ => VideoCodec::copy(),
                 }),
             (_, Some(VideoFormat::H264)) => VideoCodec::libx264(),
             (_, Some(VideoFormat::Hevc)) => VideoCodec::libx265(),
+            (_, Some(VideoFormat::Mpeg2Video)) => VideoCodec::mpeg2video(),
             _ => VideoCodec::copy(),
         };
 

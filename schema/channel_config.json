@@ -474,7 +474,8 @@
       "type": "string",
       "enum": [
         "h264",
-        "hevc"
+        "hevc",
+        "mpeg2video"
       ]
     },
     "VideoNormalizationConfig": {
