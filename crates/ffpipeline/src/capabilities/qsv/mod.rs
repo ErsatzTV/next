@@ -1,10 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 
-use libvpl_sys::{
-    MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN, MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT, MFX_FOURCC_NV12,
-    MFX_FOURCC_P010, MFX_FOURCC_RGB4,
-};
+use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4};
 use serde::Serialize;
 
 use crate::pipeline::{PixelFormat, VideoFormat};
@@ -96,15 +93,11 @@ impl QsvCapabilities {
         Self::pair(input, output).is_some_and(|pair| self.composite_pairs.contains(&pair))
     }
 
-    // this is just a heuristic; something to tighten up if we encounter tonemapping failures
+    // ffmpeg vpp_qsv sends hdr metadata only on api 2.0 or later.
+    // the signal info filters in the vpl tree do not show tonemap support. Query and Init
+    // also do not show it. do not use them.
     pub fn can_tonemap(&self) -> bool {
         self.runtime_api.is_some_and(|(major, _)| major >= 2)
-            && self
-                .vpp_filters
-                .contains(&QsvFourCC(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN))
-            && self
-                .vpp_filters
-                .contains(&QsvFourCC(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT))
             && self.can_convert(&PixelFormat::P010le, &PixelFormat::Nv12)
     }
 
@@ -131,7 +124,7 @@ impl QsvCapabilities {
 mod tests {
     use super::*;
 
-    fn caps(runtime_api: Option<(u16, u16)>, filters: &[u32], formats: &[u32]) -> QsvCapabilities {
+    fn caps(runtime_api: Option<(u16, u16)>, formats: &[u32]) -> QsvCapabilities {
         QsvCapabilities {
             supported_decoders: HashMap::new(),
             supported_encoders: HashMap::new(),
@@ -144,45 +137,26 @@ mod tests {
                         .map(|output| (QsvFourCC(*input), QsvFourCC(*output)))
                 })
                 .collect(),
-            vpp_filters: filters.iter().map(|f| QsvFourCC(*f)).collect(),
+            vpp_filters: HashSet::new(),
             rotation_formats: HashSet::new(),
             composite_pairs: HashSet::new(),
             runtime_api,
         }
     }
 
-    const VSI: &[u32] = &[
-        MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN,
-        MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT,
-    ];
-
     #[test]
-    fn can_tonemap_on_vpl_runtime_with_signal_info_and_p010() {
-        assert!(caps(Some((2, 17)), VSI, &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
+    fn can_tonemap_on_vpl_runtime_with_p010() {
+        assert!(caps(Some((2, 17)), &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
     }
 
     #[test]
     fn cannot_tonemap_on_legacy_runtime() {
-        assert!(!caps(Some((1, 35)), VSI, &[MFX_FOURCC_P010]).can_tonemap());
-        assert!(!caps(Some((1, 35)), &[], &[MFX_FOURCC_P010]).can_tonemap());
-        assert!(!caps(None, VSI, &[MFX_FOURCC_P010]).can_tonemap());
-    }
-
-    #[test]
-    fn cannot_tonemap_without_both_signal_info_filters() {
-        assert!(
-            !caps(
-                Some((2, 17)),
-                &[MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN],
-                &[MFX_FOURCC_P010]
-            )
-            .can_tonemap()
-        );
-        assert!(!caps(Some((2, 17)), &[], &[MFX_FOURCC_P010]).can_tonemap());
+        assert!(!caps(Some((1, 35)), &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
+        assert!(!caps(None, &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
     }
 
     #[test]
     fn cannot_tonemap_without_p010_vpp_support() {
-        assert!(!caps(Some((2, 17)), VSI, &[MFX_FOURCC_NV12]).can_tonemap());
+        assert!(!caps(Some((2, 17)), &[MFX_FOURCC_NV12]).can_tonemap());
     }
 }
