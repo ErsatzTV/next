@@ -133,7 +133,7 @@ async fn custom_frame_rate() {
 async fn tonemap_hdr(
     #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
     #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
-    #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
+    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;
@@ -161,7 +161,7 @@ async fn tonemap_hdr(
 async fn tonemap_hdr_watermark(
     #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
     #[values("2560x1440", "1920x1080", "1280x720")] res: FrameSize,
-    #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
+    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;
@@ -197,7 +197,7 @@ async fn tonemap_dv(
     )]
     src: &'static str,
     #[values("1920x1080", "1280x720")] res: FrameSize,
-    #[values(("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
+    #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),
     #[values("aac", "ac3")] af: AudioFormat,
 ) {
     let (vf_str, bpp) = vf;

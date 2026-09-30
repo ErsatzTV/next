@@ -951,8 +951,25 @@ impl Pipeline {
             self.filter_chain.disable_video();
         }
 
-        self.filter_chain
+        let final_state = self
+            .filter_chain
             .evaluate(&self.initial_state, &self.ffmpeg_info);
+
+        // some encoders do not write the bt709 tags from tonemap
+        if self.initial_state.hdr_format != HdrFormat::None
+            && final_state.hdr_format == HdrFormat::None
+            && let Some(bsf) = self
+                .accel
+                .as_ref()
+                .and_then(|a| a.color_metadata_bsf(&self.output_context.video_codec))
+            && let Some(index) = self
+                .output_options
+                .iter()
+                .position(|o| matches!(o, OutputOption::VideoCodec(_)))
+        {
+            self.output_options
+                .insert(index + 1, OutputOption::VideoBt709Metadata(bsf));
+        }
         self.filter_chain.resolve(
             &self.ffmpeg_info,
             &self.accel,
@@ -1320,6 +1337,101 @@ mod tests {
         assert!(downmix < input, "-downmix must precede -i: {args:?}");
         assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1);
     }
+
+    fn amf_encoder_only() -> HardwareAccel {
+        use crate::capabilities::amf::{AmfCapabilities, AmfEncoderCapability};
+
+        let encoder = AmfEncoderCapability {
+            bit_depths: vec![8],
+            b_frames: false,
+            max_profile: None,
+            max_level: None,
+        };
+        HardwareAccel::Amf(crate::accel::amf::Amf {
+            capabilities: AmfCapabilities {
+                supported_decoders: Default::default(),
+                supported_encoders: [
+                    (VideoFormat::H264, encoder.clone()),
+                    (VideoFormat::Hevc, encoder),
+                ]
+                .into(),
+                vpp_input_formats: Default::default(),
+                vpp_output_formats: Default::default(),
+                runtime_version: None,
+                device: None,
+                adapter: None,
+            },
+        })
+    }
+
+    fn amf_args(hdr: bool, format: VideoFormat) -> ArgVec {
+        let mut input = multichannel_ac3_input("main.mkv");
+        if hdr {
+            for probe in [
+                &mut input.video_input.probe_result,
+                &mut input.audio_input.probe_result,
+            ] {
+                if let crate::probe::ProbeResultStream::Video(video) = &mut probe.streams[0] {
+                    video.codec = "hevc".to_owned();
+                    video.pix_fmt = "yuv420p10le".to_owned();
+                    video.color_params = crate::probe::ProbeResultColorParams {
+                        color_range: Some("tv".to_owned()),
+                        color_space: Some("bt2020nc".to_owned()),
+                        color_transfer: Some("smpte2084".to_owned()),
+                        color_primaries: Some("bt2020".to_owned()),
+                        has_hdr10_metadata: false,
+                    };
+                }
+            }
+        }
+        let output = OutputSettings {
+            video_format: Some(format),
+            accel: Some(amf_encoder_only()),
+            ..stereo_output()
+        };
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::Amf.to_string()].into(),
+            ..FfmpegInfo::default()
+        };
+        let mut pipeline = Pipeline::full(&ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+        assert!(
+            args.iter().any(|a| a.ends_with("_amf")),
+            "amf encoder not used: {args:?}"
+        );
+        args
+    }
+
+    #[test]
+    fn amf_tonemap_writes_bt709_tags_with_bsf() {
+        for (format, bsf) in [
+            (VideoFormat::H264, "h264_metadata"),
+            (VideoFormat::Hevc, "hevc_metadata"),
+        ] {
+            let args = amf_args(true, format);
+            let index = args
+                .iter()
+                .position(|a| a == "-bsf:v")
+                .unwrap_or_else(|| panic!("-bsf:v missing: {args:?}"));
+            assert_eq!(
+                args[index + 1],
+                format!(
+                    "{bsf}=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"
+                )
+            );
+            // ffmpeg ignores options after the output path
+            let output = args.iter().position(|a| a == "-f").expect("-f");
+            assert!(index < output, "-bsf:v must precede output: {args:?}");
+        }
+    }
+
+    #[test]
+    fn amf_without_tonemap_has_no_bsf() {
+        let args = amf_args(false, VideoFormat::Hevc);
+        assert!(!args.iter().any(|a| a == "-bsf:v"), "{args:?}");
+    }
+
     fn canvas_input(source: InputSource) -> GraphicsInput {
         let mut probe = multichannel_ac3_input("canvas.nut")
             .video_input

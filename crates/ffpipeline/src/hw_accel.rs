@@ -54,6 +54,9 @@ pub trait HwAccel {
         bit_depth: u8,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec>;
+    fn color_metadata_bsf(&self, _codec: &VideoCodec) -> Option<&'static str> {
+        None
+    }
     fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
