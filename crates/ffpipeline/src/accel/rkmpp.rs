@@ -128,10 +128,11 @@ impl HwAccel for Rkmpp {
     fn can_convert_pixel_format(
         &self,
         ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
         ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleRkrga)
-            && matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::Nv15)
+            && matches!(to, PixelFormat::Nv12 | PixelFormat::Nv15)
     }
 }
 

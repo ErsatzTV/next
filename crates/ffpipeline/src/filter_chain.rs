@@ -130,7 +130,7 @@ impl FilterChain {
             if eager_unlocks_hw_overlay {
                 let fmt: Option<VideoFilter> = if initial_state.surface == FrameSurface::System {
                     Some(FormatFilter { format: *pf }.into())
-                } else if a.can_convert_pixel_format(ffmpeg_info, pf) {
+                } else if a.can_convert_pixel_format(ffmpeg_info, &initial_state.pixel_format, pf) {
                     a.format_filter(pf)
                 } else {
                     None
@@ -385,7 +385,8 @@ impl FilterChain {
             // we don't upload a 10-bit frame for an 8-bit encode
             let hw_can_convert = |pf: &PixelFormat| {
                 accel.as_ref().is_none_or(|a| {
-                    a.can_convert_pixel_format(ffmpeg_info, pf) && a.format_filter(pf).is_some()
+                    a.can_convert_pixel_format(ffmpeg_info, &current_state.pixel_format, pf)
+                        && a.format_filter(pf).is_some()
                 })
             };
 
@@ -473,7 +474,13 @@ impl FilterChain {
                 format.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(format))
             }
-            (_, Some(a)) if a.can_convert_pixel_format(ffmpeg_info, pixel_format) => {
+            (_, Some(a))
+                if a.can_convert_pixel_format(
+                    ffmpeg_info,
+                    &current_state.pixel_format,
+                    pixel_format,
+                ) =>
+            {
                 if let Some(f) = a.format_filter(pixel_format) {
                     f.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(f));

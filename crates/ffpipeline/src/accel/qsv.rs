@@ -198,9 +198,10 @@ impl HwAccel for Qsv {
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
-        !pixel_format.has_alpha() && self.capabilities.vpp_supports_format(pixel_format)
+        !to.has_alpha() && self.capabilities.vpp_supports_format(to)
     }
 }
 
@@ -775,8 +776,12 @@ mod tests {
 
         assert!(qsv.accepts_upload_format(&PixelFormat::Bgra));
         assert!(qsv.format_filter(&PixelFormat::Bgra).is_none());
-        assert!(!qsv.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
-        assert!(qsv.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12));
+        assert!(!qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::Bgra
+        ));
+        assert!(qsv.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12, &PixelFormat::Nv12));
     }
 
     #[test]
