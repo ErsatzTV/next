@@ -43,10 +43,11 @@ impl HwAccel for VideoToolbox {
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
         // TODO: clean this up when we can model things more accurately
-        pixel_format.bit_depth() == 8
+        to.bit_depth() == 8
     }
 
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {

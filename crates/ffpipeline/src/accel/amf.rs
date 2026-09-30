@@ -221,9 +221,10 @@ impl HwAccel for Amf {
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
-        !pixel_format.has_alpha() && self.capabilities.vpp_supports_format(pixel_format)
+        !to.has_alpha() && self.capabilities.vpp_supports_format(to)
     }
 }
 
@@ -628,16 +629,40 @@ mod tests {
     fn format_conversion_follows_converter_formats() {
         let amf = make_amf();
         let ffmpeg_info = FfmpegInfo::default();
-        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12));
-        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Yuv420p));
+        assert!(amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12, &PixelFormat::Nv12));
+        assert!(amf.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::Yuv420p
+        ));
         // the converter lists BGRA, but vpp_amf format= cannot emit alpha formats
-        assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
-        assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::P010le));
-        assert!(!amf.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Yuv420p10le));
+        assert!(!amf.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::Bgra
+        ));
+        assert!(!amf.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::P010le
+        ));
+        assert!(!amf.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::Yuv420p10le
+        ));
 
         let with_p010 = make_amf_with_vpp(&[AMF_SURFACE_NV12, AMF_SURFACE_P010]);
-        assert!(with_p010.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::P010le));
-        assert!(!with_p010.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Bgra));
+        assert!(with_p010.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::P010le
+        ));
+        assert!(!with_p010.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::Bgra
+        ));
     }
 
     #[test]

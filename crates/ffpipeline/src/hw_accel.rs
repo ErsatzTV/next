@@ -82,11 +82,13 @@ pub trait HwAccel {
         true
     }
 
-    /// Can the accel's format filter (scale_vaapi, vpp_qsv, etc.) use this pixel format
+    /// Returns true if the format filter of the accel (scale_vaapi, vpp_qsv, etc.) can
+    /// change frames on the accel surface from pixel format `from` to pixel format `to`.
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        _pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        _to: &PixelFormat,
     ) -> bool {
         true
     }
