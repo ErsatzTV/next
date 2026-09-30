@@ -159,21 +159,31 @@ impl<'a> Session<'a> {
             }
         }
 
-        let mut vpp_pixel_formats = HashSet::new();
-        for (fourcc, bit_depth) in VPP_FORMATS {
-            // VPP accepts rgb4 only as an input, so test both directions
-            if self.can_upload(*fourcc, *bit_depth)
-                && (self.can_vpp((*fourcc, *bit_depth), (MFX_FOURCC_NV12, 8))
-                    || self.can_vpp((MFX_FOURCC_NV12, 8), (*fourcc, *bit_depth)))
-            {
-                vpp_pixel_formats.insert(QsvFourCC(*fourcc));
-            }
-        }
+        let convert_pairs: HashSet<(QsvFourCC, QsvFourCC)> = VPP_FORMATS
+            .iter()
+            .flat_map(|input| VPP_FORMATS.iter().map(move |output| (*input, *output)))
+            .filter(|(input, output)| self.can_vpp(*input, *output))
+            .map(|(input, output)| (QsvFourCC(input.0), QsvFourCC(output.0)))
+            .collect();
+
+        // VPP accepts rgb4 only as an input, so an uploaded format needs a conversion
+        // in either direction
+        let nv12 = QsvFourCC(MFX_FOURCC_NV12);
+        let upload_formats = VPP_FORMATS
+            .iter()
+            .filter(|(fourcc, bit_depth)| {
+                self.can_upload(*fourcc, *bit_depth)
+                    && (convert_pairs.contains(&(QsvFourCC(*fourcc), nv12))
+                        || convert_pairs.contains(&(nv12, QsvFourCC(*fourcc))))
+            })
+            .map(|(fourcc, _)| QsvFourCC(*fourcc))
+            .collect();
 
         QsvCapabilities {
             supported_decoders,
             supported_encoders,
-            vpp_pixel_formats,
+            upload_formats,
+            convert_pairs,
             // 1.x runtime does not provide a filter list
             vpp_filters: HashSet::new(),
             rotation_formats: VPP_FORMATS
@@ -186,7 +196,7 @@ impl<'a> Session<'a> {
                 })
                 .map(|(fourcc, _)| QsvFourCC(*fourcc))
                 .collect(),
-            composite_formats: COMPOSITE_FORMATS
+            composite_pairs: COMPOSITE_FORMATS
                 .iter()
                 .flat_map(|from| COMPOSITE_FORMATS.iter().map(move |to| (*from, *to)))
                 .filter(|(from, to)| self.can_composite(*from, *to))

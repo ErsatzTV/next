@@ -192,16 +192,16 @@ impl HwAccel for Qsv {
     }
 
     fn accepts_upload_format(&self, pixel_format: &PixelFormat) -> bool {
-        self.capabilities.vpp_supports_format(pixel_format)
+        self.capabilities.can_upload(pixel_format)
     }
 
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        _from: &PixelFormat,
+        from: &PixelFormat,
         to: &PixelFormat,
     ) -> bool {
-        !to.has_alpha() && self.capabilities.vpp_supports_format(to)
+        !to.has_alpha() && self.capabilities.can_convert(from, to)
     }
 }
 
@@ -442,11 +442,12 @@ mod tests {
             capabilities: QsvCapabilities {
                 supported_decoders: HashMap::new(),
                 supported_encoders: HashMap::new(),
-                vpp_pixel_formats: HashSet::new(),
+                upload_formats: HashSet::new(),
+                convert_pairs: HashSet::new(),
                 vpp_filters: HashSet::new(),
                 rotation_formats: HashSet::new(),
                 // from a legacy Media SDK runtime (Gen9, API 1.35)
-                composite_formats: HashSet::from([
+                composite_pairs: HashSet::from([
                     (
                         QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
                         QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
@@ -767,11 +768,12 @@ mod tests {
 
     #[test]
     fn alpha_formats_upload_but_do_not_convert_on_the_qsv_surface() {
+        let nv12 = QsvFourCC(libvpl_sys::MFX_FOURCC_NV12);
+        let rgb4 = QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4);
         let mut qsv = make_qsv();
-        qsv.capabilities.vpp_pixel_formats = HashSet::from([
-            QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
-            QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4),
-        ]);
+        qsv.capabilities.upload_formats = HashSet::from([nv12, rgb4]);
+        qsv.capabilities.convert_pairs =
+            HashSet::from([(nv12, nv12), (nv12, rgb4), (rgb4, nv12), (rgb4, rgb4)]);
         let ffmpeg_info = FfmpegInfo::default();
 
         assert!(qsv.accepts_upload_format(&PixelFormat::Bgra));
@@ -782,6 +784,37 @@ mod tests {
             &PixelFormat::Bgra
         ));
         assert!(qsv.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12, &PixelFormat::Nv12));
+    }
+
+    #[test]
+    fn conversion_follows_the_direction_of_the_pair() {
+        // haswell: p010 -> nv12 works, but every vpp operation with p010 output fails
+        let nv12 = QsvFourCC(libvpl_sys::MFX_FOURCC_NV12);
+        let p010 = QsvFourCC(libvpl_sys::MFX_FOURCC_P010);
+        let mut qsv = make_qsv();
+        qsv.capabilities.convert_pairs = HashSet::from([(nv12, nv12), (p010, nv12)]);
+        let ffmpeg_info = FfmpegInfo::default();
+
+        assert!(qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::P010le,
+            &PixelFormat::Nv12
+        ));
+        assert!(qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Yuv420p10le,
+            &PixelFormat::Nv12
+        ));
+        assert!(!qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::P010le
+        ));
+        assert!(!qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::P010le,
+            &PixelFormat::P010le
+        ));
     }
 
     #[test]

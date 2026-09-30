@@ -16,10 +16,7 @@ impl QsvCapabilities {
     pub fn probe() -> Result<QsvCapabilities, FFPipelineError> {
         let mut supported_decoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         let mut supported_encoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
-        let mut vpp_pixel_formats = HashSet::new();
-        let mut vpp_filters = HashSet::new();
-        let mut rotation_formats = HashSet::new();
-        let mut composite_formats = HashSet::new();
+        let mut tree = FilterTree::default();
         let mut runtime_api = None;
 
         let vpl = VplLib::load()
@@ -99,11 +96,7 @@ impl QsvCapabilities {
                     }
                 }
 
-                let tree = walk_filters(vpp);
-                vpp_pixel_formats = tree.pixel_formats;
-                vpp_filters = tree.filters;
-                rotation_formats = tree.rotation_formats;
-                composite_formats = tree.composite_formats;
+                tree = walk_filters(vpp);
 
                 (vpl.MFXDispReleaseImplDescription)(loader, hdl);
             }
@@ -126,10 +119,11 @@ impl QsvCapabilities {
         Ok(QsvCapabilities {
             supported_decoders,
             supported_encoders,
-            vpp_pixel_formats,
-            vpp_filters,
-            rotation_formats,
-            composite_formats,
+            upload_formats: tree.pixel_formats,
+            convert_pairs: tree.convert_pairs,
+            vpp_filters: tree.filters,
+            rotation_formats: tree.rotation_formats,
+            composite_pairs: tree.composite_pairs,
             runtime_api,
         })
     }
@@ -215,9 +209,12 @@ fn is_10bit_profile(codec_id: u32, profile: u32) -> bool {
 #[derive(Default)]
 struct FilterTree {
     pixel_formats: HashSet<QsvFourCC>,
+    /// every filter class lists all of its inputs x all of its outputs, so this is
+    /// the union over filters
+    convert_pairs: HashSet<(QsvFourCC, QsvFourCC)>,
     filters: HashSet<QsvFourCC>,
     rotation_formats: HashSet<QsvFourCC>,
-    composite_formats: HashSet<(QsvFourCC, QsvFourCC)>,
+    composite_pairs: HashSet<(QsvFourCC, QsvFourCC)>,
 }
 
 fn walk_filters(vpp: &mfxVPPDescription) -> FilterTree {
@@ -248,11 +245,13 @@ fn walk_filters(vpp: &mfxVPPDescription) -> FilterTree {
                 for l in 0..fmt.NumOutFormat as usize {
                     let out = unsafe { &*fmt.OutFormats.add(l) };
                     tree.pixel_formats.insert(QsvFourCC(*out));
+                    tree.convert_pairs
+                        .insert((QsvFourCC(fmt.InFormat), QsvFourCC(*out)));
                     if filter.FilterFourCC == MFX_EXTBUFF_VPP_ROTATION && *out == fmt.InFormat {
                         tree.rotation_formats.insert(QsvFourCC(*out));
                     }
                     if filter.FilterFourCC == MFX_EXTBUFF_VPP_COMPOSITE {
-                        tree.composite_formats
+                        tree.composite_pairs
                             .insert((QsvFourCC(fmt.InFormat), QsvFourCC(*out)));
                     }
                 }
@@ -306,6 +305,35 @@ mod tests {
     }
 
     #[test]
+    fn convert_pairs_keep_their_direction() {
+        let mut output = MFX_FOURCC_NV12;
+        let mut format = mfxVPPDescription_filter_memdesc_format {
+            InFormat: MFX_FOURCC_P010,
+            reserved: [0; 5],
+            NumOutFormat: 1,
+            OutFormats: &mut output,
+        };
+        // Zero initialization is valid because these structs contain only integers and raw pointers.
+        let mut mem: mfxVPPDescription_filter_memdesc = unsafe { std::mem::zeroed() };
+        mem.NumInFormats = 1;
+        mem.Formats = &mut format;
+        let mut filter: mfxVPPDescription_filter = unsafe { std::mem::zeroed() };
+        filter.FilterFourCC = MFX_EXTBUFF_VPP_ROTATION;
+        filter.NumMemTypes = 1;
+        filter.MemDesc = &mut mem;
+        let mut vpp: mfxVPPDescription = unsafe { std::mem::zeroed() };
+        vpp.NumFilters = 1;
+        vpp.Filters = &mut filter;
+
+        let tree = walk_filters(&vpp);
+        let nv12 = QsvFourCC(MFX_FOURCC_NV12);
+        let p010 = QsvFourCC(MFX_FOURCC_P010);
+        assert!(tree.convert_pairs.contains(&(p010, nv12)));
+        assert!(!tree.convert_pairs.contains(&(nv12, p010)));
+        assert!(!tree.convert_pairs.contains(&(p010, p010)));
+    }
+
+    #[test]
     fn composite_pairs_come_only_from_the_composite_filter() {
         let mut output = MFX_FOURCC_NV12;
         let mut format = mfxVPPDescription_filter_memdesc_format {
@@ -330,13 +358,13 @@ mod tests {
             vpp.Filters = &mut filter;
             let tree = walk_filters(&vpp);
             assert_eq!(
-                tree.composite_formats
+                tree.composite_pairs
                     .contains(&(QsvFourCC(MFX_FOURCC_P010), QsvFourCC(MFX_FOURCC_NV12))),
                 filter_id == MFX_EXTBUFF_VPP_COMPOSITE,
             );
             assert!(
                 !tree
-                    .composite_formats
+                    .composite_pairs
                     .contains(&(QsvFourCC(MFX_FOURCC_NV12), QsvFourCC(MFX_FOURCC_P010)))
             );
         }
