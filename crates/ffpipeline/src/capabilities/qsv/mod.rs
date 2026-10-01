@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4};
 use serde::Serialize;
@@ -45,6 +45,67 @@ pub struct QsvFourCC(pub(crate) u32);
 impl Debug for QsvFourCC {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", String::from_utf8_lossy(&self.0.to_ne_bytes()))
+    }
+}
+
+impl QsvFourCC {
+    fn name(&self) -> String {
+        String::from_utf8_lossy(&self.0.to_ne_bytes())
+            .trim_end()
+            .to_owned()
+    }
+}
+
+/// Summary for logs: format sets are limited to the fourccs ffpipeline maps to,
+/// since a full probe produces hundreds of pairs.
+impl Display for QsvCapabilities {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        const RELEVANT: [u32; 3] = [MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4];
+
+        fn codecs(map: &HashMap<VideoFormat, Vec<u8>>) -> String {
+            let mut entries: Vec<String> = map
+                .iter()
+                .map(|(format, depths)| {
+                    let mut depths = depths.clone();
+                    depths.sort();
+                    let depths: Vec<String> = depths.iter().map(u8::to_string).collect();
+                    format!("{format} {}", depths.join("/"))
+                })
+                .collect();
+            entries.sort();
+            entries.join(", ")
+        }
+
+        let formats = |set: &HashSet<QsvFourCC>| {
+            RELEVANT
+                .iter()
+                .filter(|c| set.contains(&QsvFourCC(**c)))
+                .map(|c| QsvFourCC(*c).name())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        let pairs = |set: &HashSet<(QsvFourCC, QsvFourCC)>| {
+            RELEVANT
+                .iter()
+                .flat_map(|i| RELEVANT.iter().map(move |o| (QsvFourCC(*i), QsvFourCC(*o))))
+                .filter(|pair| set.contains(pair))
+                .map(|(i, o)| format!("{}>{}", i.name(), o.name()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        match self.runtime_api {
+            Some((major, minor)) => write!(f, "api {major}.{minor}")?,
+            None => write!(f, "api unknown")?,
+        }
+        write!(f, "; decode {}", codecs(&self.supported_decoders))?;
+        write!(f, "; encode {}", codecs(&self.supported_encoders))?;
+        write!(f, "; upload {}", formats(&self.upload_formats))?;
+        write!(f, "; convert {}", pairs(&self.convert_pairs))?;
+        write!(f, "; pad {}", pairs(&self.composite_pairs))?;
+        write!(f, "; rotate {}", formats(&self.rotation_formats))?;
+        write!(f, "; vpp {}", self.vpp_filters().join(" "))
     }
 }
 
@@ -107,11 +168,7 @@ impl QsvCapabilities {
     }
 
     pub fn vpp_filters(&self) -> Vec<String> {
-        let mut filters: Vec<String> = self
-            .vpp_filters
-            .iter()
-            .map(|f| String::from_utf8_lossy(&f.0.to_ne_bytes()).into_owned())
-            .collect();
+        let mut filters: Vec<String> = self.vpp_filters.iter().map(QsvFourCC::name).collect();
         filters.sort();
         filters
     }
@@ -159,5 +216,16 @@ mod tests {
     #[test]
     fn cannot_tonemap_without_p010_vpp_support() {
         assert!(!caps(Some((2, 17)), &[MFX_FOURCC_NV12]).can_tonemap());
+    }
+
+    #[test]
+    fn display_limits_formats_to_mapped_fourccs() {
+        const MFX_FOURCC_Y410: u32 = u32::from_ne_bytes(*b"Y410");
+        let caps = caps(Some((2, 17)), &[MFX_FOURCC_NV12, MFX_FOURCC_Y410]);
+        let summary = caps.to_string();
+        assert!(summary.starts_with("api 2.17; "));
+        assert!(summary.contains("; upload NV12;"));
+        assert!(summary.contains("; convert NV12>NV12;"));
+        assert!(!summary.contains("Y410"));
     }
 }

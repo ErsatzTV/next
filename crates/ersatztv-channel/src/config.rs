@@ -399,7 +399,7 @@ impl HardwareAccel {
                 let capabilities = ffpipeline::capabilities::qsv::QsvCapabilities::probe();
                 match capabilities {
                     Ok(capabilities) => {
-                        log::debug!("detected QSV capabilities: {:?}", capabilities);
+                        log::debug!("detected QSV capabilities: {capabilities}");
                         Some(ffpipeline::hw_accel::HardwareAccel::Qsv(
                             ffpipeline::accel::qsv::Qsv { capabilities },
                         ))
