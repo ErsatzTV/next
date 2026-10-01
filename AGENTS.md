@@ -318,6 +318,10 @@ quicktype drops some hand edits. Review the diff and restore them:
 - `public static class Converter` in `Playout.cs` (quicktype emits `internal`);
 - the whitespace-only line quicktype emits before `DateOnlyConverter` (both files).
 
+quicktype names a C# enum after the property that uses it whenever that property has a description or default
+next to its `$ref` (e.g. `AudioMode` for the shared `StreamMode`). Give such enums `#[schemars(title = "...")]` in
+`config.rs` so the generated names stay stable.
+
 ## Pull request conventions
 
 - PR titles are conventional commits (`feat:`, `fix:`, `refactor:`, `build:`, `docs:`, `test:`, `ci:`, `chore:`,

@@ -11,8 +11,8 @@ use tokio::io::AsyncReadExt;
 use crate::error::ChannelError;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
-    breaking: 0,
-    compatible: 1,
+    breaking: 1,
+    compatible: 0,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
@@ -29,7 +29,7 @@ const DEFAULT_VAAPI_DEVICE: &str = "/dev/dri/renderD128";
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
-    /// Schema version URI, e.g. "https://ersatztv.org/channel/version/0.0.1"; missing is 0.0.0.
+    /// Schema version URI, e.g. "https://ersatztv.org/channel/version/0.1.0". Missing means 0.0.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub version: Option<String>,
@@ -90,9 +90,25 @@ pub struct NormalizationConfig {
     pub subtitle: SubtitleNormalizationConfig,
 }
 
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, JsonSchema, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[schemars(title = "StreamMode")]
+pub enum StreamMode {
+    #[default]
+    Transcode,
+    Copy,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct AudioNormalizationConfig {
-    pub format: Option<AudioFormat>,
+    /// `copy`: copy items with a source codec in `copy_formats`. Transcode all other items.
+    #[serde(default)]
+    pub mode: StreamMode,
+    /// Source codecs to copy when `mode` is `copy`. Default: aac, ac3, eac3, mp3.
+    pub copy_formats: Option<Vec<AudioCopyFormat>>,
+    /// Codec for transcoded items. When `mode` is `copy`, used only for items that are not copied.
+    #[serde(default)]
+    pub format: AudioFormat,
     pub bitrate_kbps: Option<u32>,
     pub buffer_kbps: Option<u32>,
     pub channels: Option<u32>,
@@ -102,11 +118,37 @@ pub struct AudioNormalizationConfig {
     pub loudness: Option<AudioLoudnessConfig>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
+#[schemars(title = "AudioFormat")]
 pub enum AudioFormat {
+    #[default]
     Aac,
     Ac3,
+}
+
+/// Limited to codecs that mux correctly into HLS MPEG-TS.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[schemars(title = "AudioCopyFormat")]
+pub enum AudioCopyFormat {
+    Aac,
+    Ac3,
+    Eac3,
+    Mp2,
+    Mp3,
+}
+
+impl AudioCopyFormat {
+    pub fn codec_name(self) -> &'static str {
+        match self {
+            AudioCopyFormat::Aac => "aac",
+            AudioCopyFormat::Ac3 => "ac3",
+            AudioCopyFormat::Eac3 => "eac3",
+            AudioCopyFormat::Mp2 => "mp2",
+            AudioCopyFormat::Mp3 => "mp3",
+        }
+    }
 }
 
 impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
@@ -141,9 +183,21 @@ impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSe
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct VideoNormalizationConfig {
-    pub format: Option<VideoFormat>,
-    #[serde(default, deserialize_with = "deserialize_bit_depth")]
-    pub bit_depth: Option<u8>,
+    /// `copy`: copy items with a source codec in `copy_formats`. Transcode all other items, and
+    /// items with graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI sources.
+    #[serde(default)]
+    pub mode: StreamMode,
+    /// Source codecs to copy when `mode` is `copy`. Default: h264, hevc.
+    pub copy_formats: Option<Vec<VideoFormat>>,
+    /// Codec for transcoded items. When `mode` is `copy`, this and all other video settings apply
+    /// only to items that are not copied.
+    #[serde(default)]
+    pub format: VideoFormat,
+    #[serde(
+        default = "default_bit_depth",
+        deserialize_with = "deserialize_bit_depth"
+    )]
+    pub bit_depth: u8,
     pub width: Option<u32>,
     pub height: Option<u32>,
     #[serde(default)]
@@ -319,9 +373,11 @@ impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, JsonSchema, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[schemars(title = "VideoFormat")]
 pub enum VideoFormat {
+    #[default]
     H264,
     Hevc,
     Mpeg2Video,
@@ -508,6 +564,12 @@ impl HardwareAccel {
     }
 }
 
+impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
+    fn from(value: VideoFormat) -> Self {
+        ffpipeline::pipeline::EncodeFormat::from(value).into()
+    }
+}
+
 impl From<VideoFormat> for ffpipeline::pipeline::EncodeFormat {
     fn from(value: VideoFormat) -> Self {
         match value {
@@ -530,6 +592,7 @@ pub struct SubtitleNormalizationConfig {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default, Copy)]
 #[serde(rename_all = "lowercase")]
+#[schemars(title = "SubtitleMode")]
 pub enum SubtitleMode {
     #[default]
     Burn,
@@ -618,10 +681,10 @@ impl ChannelConfig {
     }
 
     fn finalize(&mut self, output_folder: &PathBuf, number: &str) -> Result<(), ChannelError> {
-        if self.normalization.video.format.is_some() && self.normalization.video.bit_depth.is_none()
-        {
+        let audio = &self.normalization.audio;
+        if audio.mode == StreamMode::Copy && audio.normalize_loudness {
             return Err(ChannelError::ChannelConfigFailure(String::from(
-                "bit_depth is required when normalizing video",
+                "normalize_loudness is not supported with audio mode copy",
             )));
         }
 
@@ -633,27 +696,16 @@ impl ChannelConfig {
 
         self.number = number.to_owned();
 
-        if self
-            .normalization
-            .video
-            .format
-            .as_ref()
-            .is_some_and(|f| matches!(f, VideoFormat::Mpeg2Video))
-        {
+        if self.normalization.video.format == VideoFormat::Mpeg2Video {
             if self.normalization.video.bitrate_kbps.is_none() {
                 return Err(ChannelError::ChannelConfigFailure(String::from(
                     "bitrate_kbps is required when using mpeg2video output format",
                 )));
             }
 
-            if self
-                .normalization
-                .video
-                .bit_depth
-                .is_some_and(|bd| bd == 10)
-            {
+            if self.normalization.video.bit_depth == 10 {
                 log::warn!("mpeg2video does not support 10-bit output, using 8-bit");
-                self.normalization.video.bit_depth = Some(8);
+                self.normalization.video.bit_depth = 8;
             }
         }
 
@@ -673,13 +725,14 @@ impl ChannelConfig {
     }
 }
 
-fn deserialize_bit_depth<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u8>, D::Error> {
-    let bit_depth = Option::<u8>::deserialize(d)?;
-    match bit_depth {
-        Some(n) if ![8, 10].contains(&n) => {
-            Err(serde::de::Error::custom("bit_depth must be 8 or 10"))
-        }
-        other => Ok(other),
+fn default_bit_depth() -> u8 {
+    8
+}
+
+fn deserialize_bit_depth<'de, D: Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    match u8::deserialize(d)? {
+        n @ (8 | 10) => Ok(n),
+        _ => Err(serde::de::Error::custom("bit_depth must be 8 or 10")),
     }
 }
 
@@ -709,6 +762,7 @@ mod tests {
 
     fn base() -> Value {
         json!({
+            "version": SCHEMA.uri(),
             "playout": { "folder": "./playout" },
             "ffmpeg": {},
             "normalization": {
@@ -731,34 +785,131 @@ mod tests {
         ChannelConfig::from_sources(&paths, &dir.path().to_path_buf(), "1").await
     }
 
-    #[tokio::test]
-    async fn unversioned_and_versioned_sources_merge() {
-        let mut base = base();
-        base["version"] = json!(SCHEMA.uri());
-        let overlay = json!({ "normalization": { "video": { "bit_depth": 10 } } });
-
-        let config = load(&[base, overlay]).await.unwrap();
-
-        assert_eq!(config.normalization.video.bit_depth, Some(10));
-        assert_eq!(config.version, Some(SCHEMA.uri()));
+    fn config_error(result: Result<ChannelConfig, ChannelError>) -> String {
+        match result {
+            Err(ChannelError::ChannelConfigFailure(message)) => message,
+            other => panic!("expected ChannelConfigFailure, got {:?}", other.map(|_| ())),
+        }
     }
 
     #[tokio::test]
-    async fn example_loads_at_current_version() {
-        let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/channel.json");
-        let raw: Value =
-            serde_json::from_str(&tokio::fs::read_to_string(&example).await.unwrap()).unwrap();
-        assert_eq!(raw["version"], SCHEMA.uri());
+    async fn versioned_overlay_merges() {
+        let overlay = json!({
+            "version": SCHEMA.uri(),
+            "normalization": { "video": { "bit_depth": 10 } }
+        });
 
-        let output = tempfile::tempdir().unwrap();
-        ChannelConfig::from_sources(&[example], &output.path().to_path_buf(), "1")
-            .await
-            .unwrap();
+        let config = load(&[base(), overlay]).await.unwrap();
+
+        assert_eq!(config.normalization.video.bit_depth, 10);
+        assert_eq!(config.version, Some(SCHEMA.uri()));
+    }
+
+    /// Before 0.1.0, `"format": null` in an overlay meant copy. It must not load as transcode now.
+    #[tokio::test]
+    async fn unversioned_overlay_is_rejected() {
+        let overlay = json!({ "normalization": { "video": { "format": null } } });
+
+        match load(&[base(), overlay]).await {
+            Err(ChannelError::ChannelConfigSchemaVersion { config, error }) => {
+                assert!(config.ends_with("1.json"), "{config}");
+                assert!(matches!(
+                    error,
+                    SchemaVersionError::MissingUnsupported { .. }
+                ));
+            }
+            other => panic!("expected ChannelConfigSchemaVersion, got {:?}", other.err()),
+        }
+    }
+
+    #[tokio::test]
+    async fn modes_default_to_transcode() {
+        let mut base = base();
+        base["normalization"] = json!({ "audio": {}, "video": {} });
+
+        let config = load(&[base]).await.unwrap();
+
+        let audio = &config.normalization.audio;
+        let video = &config.normalization.video;
+        assert_eq!(audio.mode, StreamMode::Transcode);
+        assert!(matches!(audio.format, AudioFormat::Aac));
+        assert_eq!(video.mode, StreamMode::Transcode);
+        assert_eq!(video.format, VideoFormat::H264);
+        assert_eq!(video.bit_depth, 8);
+    }
+
+    #[tokio::test]
+    async fn copy_mode_with_copy_formats() {
+        let mut base = base();
+        base["normalization"] = json!({
+            "audio": { "mode": "copy", "copy_formats": ["ac3", "mp2"] },
+            "video": { "mode": "copy", "copy_formats": ["mpeg2video"], "format": "hevc" }
+        });
+
+        let config = load(&[base]).await.unwrap();
+
+        let audio = &config.normalization.audio;
+        let video = &config.normalization.video;
+        assert_eq!(audio.mode, StreamMode::Copy);
+        assert_eq!(
+            audio.copy_formats,
+            Some(vec![AudioCopyFormat::Ac3, AudioCopyFormat::Mp2])
+        );
+        assert_eq!(video.mode, StreamMode::Copy);
+        assert_eq!(video.copy_formats, Some(vec![VideoFormat::Mpeg2Video]));
+        assert_eq!(video.format, VideoFormat::Hevc);
+    }
+
+    #[tokio::test]
+    async fn uncopyable_format_is_rejected() {
+        let mut base = base();
+        base["normalization"]["audio"]["copy_formats"] = json!(["pcm_s16le"]);
+
+        let message = config_error(load(&[base]).await);
+
+        assert!(message.contains("pcm_s16le"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn null_format_is_rejected() {
+        let mut base = base();
+        base["normalization"]["video"]["format"] = Value::Null;
+
+        let message = config_error(load(&[base]).await);
+
+        assert!(message.contains("null"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn loudness_with_audio_copy_is_rejected() {
+        let mut base = base();
+        base["normalization"]["audio"] = json!({ "mode": "copy", "normalize_loudness": true });
+
+        let message = config_error(load(&[base]).await);
+
+        assert!(message.contains("normalize_loudness"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn examples_load_at_current_version() {
+        for name in ["channel.json", "channel_copy.json"] {
+            let example = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples")
+                .join(name);
+            let raw: Value =
+                serde_json::from_str(&tokio::fs::read_to_string(&example).await.unwrap()).unwrap();
+            assert_eq!(raw["version"], SCHEMA.uri(), "{name}");
+
+            let output = tempfile::tempdir().unwrap();
+            ChannelConfig::from_sources(&[example], &output.path().to_path_buf(), "1")
+                .await
+                .unwrap();
+        }
     }
 
     #[tokio::test]
     async fn unsupported_overlay_is_named() {
-        let overlay = json!({ "version": "https://ersatztv.org/channel/version/0.0.999" });
+        let overlay = json!({ "version": "https://ersatztv.org/channel/version/0.1.999" });
 
         match load(&[base(), overlay]).await {
             Err(ChannelError::ChannelConfigSchemaVersion { config, error }) => {
