@@ -285,7 +285,7 @@ impl PlaylistManager {
     ) -> Result<(String, usize), ChannelError> {
         let mut playlist = String::new();
         playlist.push_str("#EXTM3U\n");
-        playlist.push_str("#EXT-X-VERSION:7\n");
+        playlist.push_str("#EXT-X-VERSION:6\n");
         playlist.push_str(&format!("#EXT-X-TARGETDURATION:{}\n", self.target_duration));
 
         let (skip, limit) = match max_segments {
