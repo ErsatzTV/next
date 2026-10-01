@@ -8,7 +8,7 @@ use ffpipeline::output_settings::{
     AudioLoudnessSettings, LibplaceboOptions, TonemapOpenclOptions, TonemapOptions,
     VideoFilterOptions,
 };
-use ffpipeline::pipeline::{AudioFormat, VideoFormat};
+use ffpipeline::pipeline::{AudioFormat, EncodeFormat};
 
 use super::*;
 
@@ -353,7 +353,7 @@ pub async fn run(accel: Option<HardwareAccel>, mut test_case: TestCase) {
 
 pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFormat) -> TestCase {
     let (video_format, bit_depth) = vf;
-    let video_format = VideoFormat::from_str(video_format).unwrap();
+    let video_format = EncodeFormat::from_str(video_format).unwrap();
     TestCase {
         fixture_name: src,
         params: TestOutputParams {

@@ -8,7 +8,8 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{
-    FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+    EncodeFormat, FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet,
+    VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::{MetadataBsf, VideoCodec};
@@ -99,36 +100,37 @@ impl HwAccel for Amf {
         })
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
-        if !self.capabilities.can_encode(format, bit_depth) {
+        if !self.can_encode(format, bit_depth) {
             return None;
         }
 
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_amf",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Amf,
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
+            EncodeFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_amf",
                 options: args!["-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Amf,
             }),
-            _ => None,
+            EncodeFormat::Mpeg2Video => None,
         }
     }
 
@@ -609,15 +611,21 @@ mod tests {
     #[test]
     fn encoder_is_gated_by_capabilities() {
         let amf = make_amf();
-        assert!(amf.can_encode(&VideoFormat::Hevc, 8));
-        assert!(!amf.can_encode(&VideoFormat::Hevc, 10));
+        assert!(amf.can_encode(&EncodeFormat::Hevc, 8));
+        assert!(!amf.can_encode(&EncodeFormat::Hevc, 10));
         assert_eq!(
-            amf.codec_for_format(&VideoFormat::Hevc, 8, None)
+            amf.codec_for_format(&EncodeFormat::Hevc, 8, None)
                 .map(|c| c.codec_name),
             Some("hevc_amf")
         );
-        assert!(amf.codec_for_format(&VideoFormat::Hevc, 10, None).is_none());
-        assert!(amf.codec_for_format(&VideoFormat::Av1, 8, None).is_none());
+        assert!(
+            amf.codec_for_format(&EncodeFormat::Hevc, 10, None)
+                .is_none()
+        );
+        assert!(
+            amf.codec_for_format(&EncodeFormat::Mpeg2Video, 8, None)
+                .is_none()
+        );
     }
 
     #[test]

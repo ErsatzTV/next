@@ -508,12 +508,12 @@ impl HardwareAccel {
     }
 }
 
-impl From<VideoFormat> for ffpipeline::pipeline::VideoFormat {
+impl From<VideoFormat> for ffpipeline::pipeline::EncodeFormat {
     fn from(value: VideoFormat) -> Self {
         match value {
-            VideoFormat::H264 => ffpipeline::pipeline::VideoFormat::H264,
-            VideoFormat::Hevc => ffpipeline::pipeline::VideoFormat::Hevc,
-            VideoFormat::Mpeg2Video => ffpipeline::pipeline::VideoFormat::Mpeg2Video,
+            VideoFormat::H264 => ffpipeline::pipeline::EncodeFormat::H264,
+            VideoFormat::Hevc => ffpipeline::pipeline::EncodeFormat::Hevc,
+            VideoFormat::Mpeg2Video => ffpipeline::pipeline::EncodeFormat::Mpeg2Video,
         }
     }
 }

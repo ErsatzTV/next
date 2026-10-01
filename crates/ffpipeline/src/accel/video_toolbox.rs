@@ -6,7 +6,9 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    EncodeFormat, FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::{MetadataBsf, VideoCodec};
 use crate::video_filter::{ScaleFilter, VideoFilter, VideoFilterOp};
@@ -56,25 +58,26 @@ impl HwAccel for VideoToolbox {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
+            EncodeFormat::H264 if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_videotoolbox",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
             }),
-            VideoFormat::Hevc if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
+            EncodeFormat::Hevc if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_videotoolbox",
                 options: match bit_depth {
                     10 => args!["-profile:v", "main10"],

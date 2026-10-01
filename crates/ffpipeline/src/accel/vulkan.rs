@@ -6,7 +6,9 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
-use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    EncodeFormat, FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
@@ -52,39 +54,33 @@ impl HwAccel for Vulkan {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_vulkan",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Vulkan,
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
+            EncodeFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_vulkan",
                 options: args!["-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Vulkan,
             }),
-            VideoFormat::Av1 => Some(VideoCodec {
-                codec_name: "av1_vulkan",
-                options: Vec::new(),
-                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                preferred_surface: FrameSurface::Vulkan,
-            }),
-            _ => None,
+            EncodeFormat::Mpeg2Video => None,
         }
     }
 

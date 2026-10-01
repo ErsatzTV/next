@@ -62,6 +62,26 @@ pub enum VideoFormat {
     Vp9,
 }
 
+/// The formats next can encode. `VideoFormat` identifies a codec (decode, capability probes);
+/// this is the subset a channel can target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize)]
+#[strum(serialize_all = "lowercase")]
+pub enum EncodeFormat {
+    H264,
+    Hevc,
+    Mpeg2Video,
+}
+
+impl From<EncodeFormat> for VideoFormat {
+    fn from(value: EncodeFormat) -> Self {
+        match value {
+            EncodeFormat::H264 => VideoFormat::H264,
+            EncodeFormat::Hevc => VideoFormat::Hevc,
+            EncodeFormat::Mpeg2Video => VideoFormat::Mpeg2Video,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct PtsOffset {
     pub duration: Duration,
@@ -327,7 +347,7 @@ impl Pipeline {
             final_output_settings.accel = None;
         }
 
-        if final_output_settings.video_format == Some(VideoFormat::Mpeg2Video)
+        if final_output_settings.video_format == Some(EncodeFormat::Mpeg2Video)
             && final_output_settings.bit_depth == Some(10)
         {
             log::debug!("mpeg2video does not support 10-bit output, using 8-bit");
@@ -342,7 +362,7 @@ impl Pipeline {
         let audio_codec = match final_output_settings.audio.format {
             Some(AudioFormat::Aac) => AudioCodec::Aac,
             Some(AudioFormat::Ac3) => AudioCodec::Ac3,
-            _ => AudioCodec::Copy,
+            None => AudioCodec::Copy,
         };
 
         let video_stream = input_settings.select_video_stream()?;
@@ -355,27 +375,23 @@ impl Pipeline {
             .collect();
 
         // TODO: add target profile to config
-        let video_codec = match (
-            final_output_settings.accel.as_ref(),
-            final_output_settings.video_format,
-        ) {
-            (Some(a), Some(format)) => a
-                .codec_for_format(
-                    &format,
-                    final_output_settings.bit_depth.unwrap_or(8),
-                    final_output_settings.video_size,
-                )
-                .filter(|_| a.can_encode(&format, final_output_settings.bit_depth.unwrap_or(8)))
-                .unwrap_or(match format {
-                    VideoFormat::Hevc => VideoCodec::libx265(),
-                    VideoFormat::H264 => VideoCodec::libx264(),
-                    VideoFormat::Mpeg2Video => VideoCodec::mpeg2video(),
-                    _ => VideoCodec::copy(),
-                }),
-            (_, Some(VideoFormat::H264)) => VideoCodec::libx264(),
-            (_, Some(VideoFormat::Hevc)) => VideoCodec::libx265(),
-            (_, Some(VideoFormat::Mpeg2Video)) => VideoCodec::mpeg2video(),
-            _ => VideoCodec::copy(),
+        let video_codec = match final_output_settings.video_format {
+            None => VideoCodec::copy(),
+            Some(format) => {
+                let bit_depth = final_output_settings.bit_depth.unwrap_or(8);
+                final_output_settings
+                    .accel
+                    .as_ref()
+                    .filter(|a| a.can_encode(&format, bit_depth))
+                    .and_then(|a| {
+                        a.codec_for_format(&format, bit_depth, final_output_settings.video_size)
+                    })
+                    .unwrap_or_else(|| match format {
+                        EncodeFormat::H264 => VideoCodec::libx264(),
+                        EncodeFormat::Hevc => VideoCodec::libx265(),
+                        EncodeFormat::Mpeg2Video => VideoCodec::mpeg2video(),
+                    })
+            }
         };
 
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
@@ -1304,7 +1320,7 @@ mod tests {
                 sample_rate: Some(Hz(48000)),
                 loudness: None,
             },
-            video_format: Some(VideoFormat::H264),
+            video_format: Some(EncodeFormat::H264),
             bit_depth: Some(8),
             video_bitrate: Some(Kbps(2000)),
             video_buffer: Some(Kbps(4000)),
@@ -1378,7 +1394,7 @@ mod tests {
         })
     }
 
-    fn amf_args(hdr: bool, format: VideoFormat) -> ArgVec {
+    fn amf_args(hdr: bool, format: EncodeFormat) -> ArgVec {
         let mut input = multichannel_ac3_input("main.mkv");
         if hdr {
             for probe in [
@@ -1420,8 +1436,8 @@ mod tests {
     #[test]
     fn amf_tonemap_writes_bt709_tags_with_bsf() {
         for (format, bsf) in [
-            (VideoFormat::H264, "h264_metadata"),
-            (VideoFormat::Hevc, "hevc_metadata"),
+            (EncodeFormat::H264, "h264_metadata"),
+            (EncodeFormat::Hevc, "hevc_metadata"),
         ] {
             let args = amf_args(true, format);
             let index = args
@@ -1442,11 +1458,11 @@ mod tests {
 
     #[test]
     fn amf_without_tonemap_has_no_bsf() {
-        let args = amf_args(false, VideoFormat::Hevc);
+        let args = amf_args(false, EncodeFormat::Hevc);
         assert!(!args.iter().any(|a| a == "-bsf:v"), "{args:?}");
     }
 
-    fn video_toolbox_args(format: VideoFormat) -> ArgVec {
+    fn video_toolbox_args(format: EncodeFormat) -> ArgVec {
         use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
 
         let accel = HardwareAccel::VideoToolbox(crate::accel::video_toolbox::VideoToolbox {
@@ -1477,7 +1493,7 @@ mod tests {
 
     #[test]
     fn video_toolbox_h264_writes_sar_with_bsf() {
-        let args = video_toolbox_args(VideoFormat::H264);
+        let args = video_toolbox_args(EncodeFormat::H264);
         let bsfs: Vec<_> = args
             .iter()
             .enumerate()
@@ -1489,7 +1505,7 @@ mod tests {
 
     #[test]
     fn video_toolbox_hevc_has_no_bsf() {
-        let args = video_toolbox_args(VideoFormat::Hevc);
+        let args = video_toolbox_args(EncodeFormat::Hevc);
         assert!(!args.iter().any(|a| a == "-bsf:v"), "{args:?}");
     }
 
