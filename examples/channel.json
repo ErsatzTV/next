@@ -1,5 +1,5 @@
 {
-  "version": "https://ersatztv.org/channel/version/0.0.1",
+  "version": "https://ersatztv.org/channel/version/0.1.0",
   "playout": {
     "folder": "./playout"
   },
@@ -10,6 +10,7 @@
   },
   "normalization": {
     "audio": {
+      "mode": "transcode",
       "format": "aac",
       "bitrate_kbps": 192,
       "buffer_kbps": 384,
@@ -23,6 +24,7 @@
       }
     },
     "video": {
+      "mode": "transcode",
       "format": "h264",
       "bit_depth": 8,
       "width": 1920,

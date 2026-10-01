@@ -1,0 +1,34 @@
+{
+  "version": "https://ersatztv.org/channel/version/0.1.0",
+  "playout": {
+    "folder": "./playout"
+  },
+  "ffmpeg": {
+    "ffmpeg_path": "",
+    "ffprobe_path": "",
+    "disabled_filters": []
+  },
+  "normalization": {
+    "audio": {
+      "mode": "copy",
+      "copy_formats": ["aac", "ac3", "eac3", "mp3"],
+      "format": "aac",
+      "bitrate_kbps": 192,
+      "buffer_kbps": 384,
+      "channels": 2,
+      "sample_rate_hz": 48000
+    },
+    "video": {
+      "mode": "copy",
+      "copy_formats": ["h264", "hevc"],
+      "format": "h264",
+      "bit_depth": 8,
+      "bitrate_kbps": 4000,
+      "buffer_kbps": 8000,
+      "accel": null
+    },
+    "subtitle": {
+      "mode": "convert"
+    }
+  }
+}

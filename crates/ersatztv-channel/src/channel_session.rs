@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ersatztv_channel::config::{ChannelConfig, NormalizationConfig};
+use ersatztv_channel::config::{ChannelConfig, NormalizationConfig, StreamMode};
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
@@ -24,7 +24,7 @@ use ffpipeline::output_settings::{
     AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings, SubtitleMode,
     VideoOutputSettings, VideoTranscodeSettings,
 };
-use ffpipeline::pipeline::{AudioFormat, EncodeFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS};
+use ffpipeline::pipeline::{Hz, Kbps, PtsOffset, SEGMENT_SECONDS};
 use ffpipeline::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
     ProbeResultVideoStream, Probeable,
@@ -1538,7 +1538,6 @@ fn error_card_track(path: String, duration: Duration) -> TrackSelection {
     }
 }
 
-/// A missing `format` means copy, until the config has an explicit copy mode.
 fn stream_output_settings(
     normalization: &NormalizationConfig,
 ) -> (AudioOutputSettings, VideoOutputSettings) {
@@ -1551,12 +1550,19 @@ fn stream_output_settings(
     };
 
     let audio = AudioOutputSettings {
-        copy: audio_norm.format.is_none().then(CopyPolicy::default),
+        copy: (audio_norm.mode == StreamMode::Copy).then(|| {
+            audio_norm
+                .copy_formats
+                .as_ref()
+                .map_or_else(CopyPolicy::default, |formats| CopyPolicy {
+                    formats: formats
+                        .iter()
+                        .map(|f| String::from(f.codec_name()))
+                        .collect(),
+                })
+        }),
         transcode: AudioTranscodeSettings {
-            format: audio_norm
-                .format
-                .clone()
-                .map_or(AudioFormat::Aac, AudioFormat::from),
+            format: audio_norm.format.clone().into(),
             bitrate: audio_norm.bitrate_kbps.map(Kbps),
             buffer: audio_norm.buffer_kbps.map(Kbps),
             channels: audio_norm.channels,
@@ -1576,13 +1582,17 @@ fn stream_output_settings(
     };
 
     let video = VideoOutputSettings {
-        copy: video_norm.format.is_none().then(CopyPolicy::default),
+        copy: (video_norm.mode == StreamMode::Copy).then(|| {
+            video_norm
+                .copy_formats
+                .as_ref()
+                .map_or_else(CopyPolicy::default, |formats| CopyPolicy {
+                    formats: formats.iter().map(|&f| f.into()).collect(),
+                })
+        }),
         transcode: VideoTranscodeSettings {
-            format: video_norm
-                .format
-                .clone()
-                .map_or(EncodeFormat::H264, EncodeFormat::from),
-            bit_depth: video_norm.bit_depth.unwrap_or(8),
+            format: video_norm.format.into(),
+            bit_depth: video_norm.bit_depth,
             bitrate: video_norm.bitrate_kbps.map(Kbps),
             buffer: video_norm.buffer_kbps.map(Kbps),
             size: video_size,
@@ -1710,8 +1720,8 @@ mod tests {
     #[test]
     fn fallback_card_transcodes_on_copy_channel() {
         let normalization: NormalizationConfig = serde_json::from_value(json!({
-            "audio": { "format": null },
-            "video": { "format": null }
+            "audio": { "mode": "copy" },
+            "video": { "mode": "copy" }
         }))
         .unwrap();
         let (audio, video) = stream_output_settings(&normalization);
@@ -1785,6 +1795,49 @@ mod tests {
         assert!(
             args.iter().any(|a| a.contains("subtitles=")),
             "error card is not burned in: {args:?}"
+        );
+    }
+
+    #[test]
+    fn stream_output_settings_maps_modes() {
+        let transcode: NormalizationConfig = serde_json::from_value(json!({
+            "audio": {},
+            "video": {}
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&transcode);
+        assert_eq!((audio.copy, video.copy), (None, None));
+
+        let default_copy: NormalizationConfig = serde_json::from_value(json!({
+            "audio": { "mode": "copy" },
+            "video": { "mode": "copy" }
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&default_copy);
+        assert_eq!(audio.copy, Some(CopyPolicy::default()));
+        assert_eq!(video.copy, Some(CopyPolicy::default()));
+
+        let listed_copy: NormalizationConfig = serde_json::from_value(json!({
+            "audio": { "mode": "copy", "copy_formats": ["eac3", "mp2"] },
+            "video": { "mode": "copy", "copy_formats": ["mpeg2video"], "format": "hevc" }
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&listed_copy);
+        assert_eq!(
+            audio.copy,
+            Some(CopyPolicy {
+                formats: vec![String::from("eac3"), String::from("mp2")]
+            })
+        );
+        assert_eq!(
+            video.copy,
+            Some(CopyPolicy {
+                formats: vec![ffpipeline::pipeline::VideoFormat::Mpeg2Video]
+            })
+        );
+        assert_eq!(
+            video.transcode.format,
+            ffpipeline::pipeline::EncodeFormat::Hevc
         );
     }
 }
