@@ -20,6 +20,9 @@ tokio = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [[bin]]
 name = "gen-lineup-config-schema"
 path = "src/bin/gen_lineup_config_schema.rs"

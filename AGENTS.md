@@ -134,7 +134,8 @@ channels.
   unsupported platforms.
 - **`ersatztv-playout`** — Playout JSON data models (serde), including `ProbeHint`. Schema at `schema/playout.json`
   is hand-maintained — keep it in sync when editing the Rust types.
-- **`ersatztv-core`** — Shared utilities: heartbeat/ready file management, timing constants.
+- **`ersatztv-core`** — Shared utilities: heartbeat/ready file management, timing constants, JSON config merging,
+  schema versioning (`VersionedSchema`).
 - **`ersatztv-playout-generator`** — Dev tool for generating playout JSON from video folders or syncing from legacy DB.
   Not a supported feature; exists so `ProbeHint` generation has a reference implementation and for local testing.
 - **`libamf-sys`, `libcl-sys`, `libd3d11-sys`, `libmpp-sys`, `libnvidia-sys`, `libva-sys`, `libvpl-sys`,
@@ -164,8 +165,8 @@ channels.
 | `schema/channel_config.json` | `crates/ersatztv-channel/src/config.rs` (schemars) | `cargo run --bin gen-channel-config-schema > schema/channel_config.json` |
 | `schema/lineup_config.json` | `crates/ersatztv/src/config.rs` (schemars) | `cargo run --bin gen-lineup-config-schema > schema/lineup_config.json` |
 | `schema/playout.json` | hand-maintained | edit by hand alongside `crates/ersatztv-playout/src/playout.rs` |
-| `crates/ersatztv/src/templates/channel.json` | hand-maintained | update when a channel config field is added/renamed/removed |
-| `examples/channel.json`, `examples/lineup.json`, `examples/playout/playout.json` | hand-maintained | update when the corresponding model changes; nothing loads these in tests, so check them by hand |
+| `crates/ersatztv/src/templates/channel.json` | symlink to `examples/channel.json` | edit the example; `sed -i` on the link replaces it with a copy |
+| `examples/channel.json`, `examples/lineup.json`, `examples/playout/playout.json` | hand-maintained | update when the corresponding model changes; each must carry the current schema version and validate against its schema. `example_loads_at_current_version` tests load each one and check the version |
 
 Never hand-edit a generated schema. If the generated output differs from the committed file for reasons unrelated to
 your change, regenerate anyway and note it in the PR.
@@ -182,7 +183,7 @@ fails in production. Work through the whole list for your change type.
 2. `crates/ersatztv-playout/src/playout.rs` — add the matching field to `VideoHint` / `AudioHint` / `SubtitleHint`.
    Use `Option<T>` + `#[serde(skip_serializing_if = "Option::is_none")]` so older playout files still load.
 3. `schema/playout.json` — add the property (hand-maintained), and bump `SUPPORTED_SCHEMA.compatible` in
-   `playout.rs` (see "Playout schema versioning").
+   `playout.rs`, `$id`, and the `version` in `examples/playout/playout.json` (see "Schema versioning").
 4. `crates/ersatztv-channel/src/channel_session.rs` — map the hint field in `probe_hint_to_result()`. If you skip
    this, hinted items lose the field and the pipeline takes a different path than for probed items.
 5. `crates/ersatztv-playout-generator/src/generate.rs` — populate the hint from `ProbeResult` so generated playouts
@@ -195,9 +196,9 @@ fails in production. Work through the whole list for your change type.
 ### Adding a channel config option (`channel.json`)
 
 1. `crates/ersatztv-channel/src/config.rs` — add the field with a `///` doc comment (it becomes the schema
-   description) and a serde default so existing configs load.
+   description) and a serde default so existing configs load. Bump `SUPPORTED_SCHEMA` (see "Schema versioning").
 2. Regenerate `schema/channel_config.json` (see above). Commit the regenerated file.
-3. `crates/ersatztv/src/templates/channel.json` and `examples/channel.json` — add the field if it is something a
+3. `examples/channel.json` (also the scaffolding template) — bump `version`; add the field if it is something a
    user would reasonably set.
 4. Thread the value from config into `ffpipeline` (`OutputSettings` / `VideoFilterOptions` / `InputSettings`) and
    into `channel_session.rs`.
@@ -205,16 +206,16 @@ fails in production. Work through the whole list for your change type.
 
 ### Adding a lineup config option (`lineup.json`)
 
-Same shape as channel config: edit the lineup model in `crates/ersatztv`, regenerate `schema/lineup_config.json`,
-update `examples/lineup.json`.
+Same shape as channel config: edit the lineup model in `crates/ersatztv/src/config.rs` and bump its
+`SUPPORTED_SCHEMA`, regenerate `schema/lineup_config.json`, update `examples/lineup.json` including its `version`.
 
 ### Adding a playout item source kind, graphics layer kind, or other playout model change
 
 1. `crates/ersatztv-playout/src/playout.rs` — the enum/struct change.
-2. `schema/playout.json` — mirror it by hand; bump `SUPPORTED_SCHEMA`.
+2. `schema/playout.json` — mirror it by hand, including `$id`; bump `SUPPORTED_SCHEMA`.
 3. `crates/ersatztv-channel/src/channel_session.rs` — handle the new variant (`match` arms are exhaustive; the
    compiler will find most of these).
-4. `examples/playout/playout.json` if it is user-facing.
+4. `examples/playout/playout.json` — bump `version`; show the change if it is user-facing.
 5. Cross-repo: legacy `Core/Next/Playout.cs` and `PlayoutItemConverter.cs`.
 
 ### Adding a hardware capability to an existing accel (e.g. "this GPU can tonemap")
@@ -253,16 +254,34 @@ Everything in the previous checklist, plus:
 4. `crates/ffpipeline/tests/fixtures/` — a fixture in that codec if none exists, added to the relevant `#[values]`
    lists in `tests/common/shared.rs`.
 
-### Playout schema versioning
+### Schema versioning
 
-`crates/ersatztv-playout/src/playout.rs` declares `SUPPORTED_SCHEMA { breaking, compatible }` and playout files
-carry `"version": "https://ersatztv.org/playout/version/0.<breaking>.<compatible>"`. Loading fails if the file's
-`breaking` differs or its `compatible` is newer than what this build supports.
+All three JSON contracts are versioned the same way. Each declares `SUPPORTED_SCHEMA { breaking, compatible }` and a
+`SCHEMA: VersionedSchema` (`ersatztv-core`) with its URI prefix:
 
-Rule: **any change to `schema/playout.json` bumps `compatible`**, including optional additive fields. Renames,
-removals, or semantic changes to existing fields bump `breaking` and reset `compatible` to 0. Legacy emits the
-version it was built against, so a bump here requires a matching change in every integrator (legacy included) before
-they can be deployed against this build.
+| Contract | Declared in | Version URI |
+|---|---|---|
+| playout | `crates/ersatztv-playout/src/playout.rs` | `https://ersatztv.org/playout/version/0.<breaking>.<compatible>` |
+| channel config | `crates/ersatztv-channel/src/config.rs` | `https://ersatztv.org/channel/version/0.<breaking>.<compatible>` |
+| lineup config | `crates/ersatztv/src/config.rs` | `https://ersatztv.org/lineup/version/0.<breaking>.<compatible>` |
+
+Loading fails if the file's `breaking` differs or its `compatible` is newer than what this build supports.
+
+Rule: **any change to a schema bumps `compatible`**, including optional additive fields. Renames, removals, or
+semantic changes to existing fields bump `breaking` and reset `compatible` to 0.
+
+Differences between the contracts:
+
+- Playout files must carry `version`. Channel and lineup configs may omit it: a missing version reads as 0.0.0, so
+  configs written before versioning load until the first breaking bump, then fail with a clear error.
+- Channel config checks each source (base and every overlay) before `deep_merge`, and the error names the source.
+  An unversioned overlay must fail on a breaking bump, not merge with a changed meaning.
+- `$id` is generated from `SCHEMA.uri()` for channel and lineup (regenerate after a bump); `schema/playout.json` is
+  edited by hand.
+
+Integrators emit the version they were built against, so a bump requires a matching change in every integrator
+(legacy included) before they can be deployed against this build. A breaking channel bump also breaks user-written
+overlays; the release notes must tell users to update them.
 
 ## Cross-repo coupling
 
@@ -275,9 +294,29 @@ maintainer handles the legacy side. Your job is to call it out explicitly in the
 |---|---|
 | `ProbeHint` / `VideoHint` / `AudioHint` / `SubtitleHint` field | `ErsatzTV.Core/Next/Playout.cs`, `ErsatzTV.Infrastructure/Scheduling/PlayoutItemConverter.cs`, possibly `ErsatzTV.Core/Domain/MediaItem/MediaStream.cs` + a migration if the value isn't already stored |
 | Any other `playout.rs` model change | `ErsatzTV.Core/Next/Playout.cs`, `PlayoutItemConverter.cs` |
-| `SUPPORTED_SCHEMA` bump | the hardcoded version string in legacy's `PrepareTroubleshootingPlaybackHandler.cs` and `PlayoutItemConverterTests.cs` (and whatever other integrators write) |
-| `channel.json` field | `ErsatzTV.Core/Next/Config/ChannelConfig.cs` (generated from `schema/channel_config.json` via quicktype; never hand-edited) |
+| Playout `SUPPORTED_SCHEMA` bump | `PlayoutItemConverter.PlayoutVersion` in `ErsatzTV.Infrastructure/Scheduling/PlayoutItemConverter.cs` (and whatever other integrators write) |
+| Channel config `SUPPORTED_SCHEMA` bump | the channel config version written by `ErsatzTV.Application/Streaming/ChannelConfigConverter.cs`; on a breaking bump, the user-written overlays (`default.json`, `{number}.json` in the next channel config overlays folder, loaded by `NextSessionWorker.cs`) need a release note |
+| Lineup config `SUPPORTED_SCHEMA` bump | none in legacy (it never writes `lineup.json`); `ErsatzTV.org/docs-next/` for standalone users |
+| `channel.json` field | `ErsatzTV.Core/Next/Config/ChannelConfig.cs` (regenerated from `schema/channel_config.json`; see below) |
 | User-visible config or behavior | `ErsatzTV.org/docs-next/` |
+
+### Regenerating legacy's C# models
+
+`ChannelConfig.cs` and `Playout.cs` are generated with quicktype. Run from the legacy repo root, with next checked
+out beside it as `../next`:
+
+```bash
+npx quicktype -s schema ../next/schema/channel_config.json -o ErsatzTV.Core/Next/Config/ChannelConfig.cs \
+  --lang cs --namespace "ErsatzTV.Core.Next.Config" --array-type list
+npx quicktype -s schema ../next/schema/playout.json -o ErsatzTV.Core/Next/Playout.cs \
+  --lang cs --namespace "ErsatzTV.Core.Next" --array-type list
+```
+
+quicktype drops some hand edits. Review the diff and restore them:
+
+- `DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull` in `Converter.Settings` (both files);
+- `public static class Converter` in `Playout.cs` (quicktype emits `internal`);
+- the whitespace-only line quicktype emits before `DateOnlyConverter` (both files).
 
 ## Pull request conventions
 

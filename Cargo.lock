@@ -427,6 +427,7 @@ dependencies = [
  "serde",
  "serde_json",
  "simple-expand-tilde",
+ "tempfile",
  "thiserror",
  "tokio",
  "tower",
@@ -465,6 +466,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "simple-expand-tilde",
+ "thiserror",
  "tokio",
 ]
 
@@ -472,6 +474,7 @@ dependencies = [
 name = "ersatztv-playout"
 version = "0.1.0"
 dependencies = [
+ "ersatztv-core",
  "serde",
  "serde_json",
  "tempfile",

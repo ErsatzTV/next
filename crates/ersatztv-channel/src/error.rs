@@ -1,3 +1,4 @@
+use ersatztv_core::SchemaVersionError;
 use ersatztv_playout::error::PlayoutError;
 use ffpipeline::error::FFPipelineError;
 use thiserror::Error;
@@ -7,6 +8,12 @@ use time::OffsetDateTime;
 pub enum ChannelError {
     #[error("unable to load channel config: {0}")]
     ChannelConfigFailure(String),
+
+    #[error("unable to load channel config {config}: {error}")]
+    ChannelConfigSchemaVersion {
+        config: String,
+        error: SchemaVersionError,
+    },
 
     #[error("unable to load channel config (io): {0}")]
     ChannelConfigIoFailure(#[from] std::io::Error),
