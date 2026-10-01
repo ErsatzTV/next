@@ -2,13 +2,14 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use ffpipeline::copy_decision::{CopyDecision, CopyDecisions};
 use ffpipeline::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
 use ffpipeline::input::{
-    GraphicsKind, InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput,
-    WatermarkLocation, WatermarkTiming,
+    GraphicsKind, InputSettings, InputSource, LavfiInputSource, LocalInputSource, ProbedInput,
+    WatermarkInput, WatermarkLocation, WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
@@ -16,10 +17,11 @@ use ffpipeline::output_settings::{
     ScalingMode, SubtitleMode, VideoFilterOptions, VideoOutputSettings, VideoTranscodeSettings,
 };
 use ffpipeline::pipeline::{
-    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, PixelFormat, generate_pipeline,
+    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, PixelFormat, VideoFormat, generate_pipeline,
 };
 use ffpipeline::probe::{
-    ProbeDeps, ProbeResult, ProbeResultStream, ProbeResultVideoStream, Probeable,
+    ProbeDeps, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
+    Probeable,
 };
 use time::OffsetDateTime;
 use tokio::sync::OnceCell;
@@ -39,10 +41,22 @@ pub struct TestEnv {
 #[allow(dead_code)]
 pub struct TestCase {
     pub fixture_name: &'static str,
+    /// `None`: audio comes from `fixture_name`
+    pub audio_source: Option<TestAudioSource>,
+    pub subtitle_fixture: Option<&'static str>,
     pub params: TestOutputParams,
     pub expected_video_codec: String,
     pub expected_video_size: FrameSize,
     pub expected_audio_codec: String,
+    pub expected_copy: CopyDecisions,
+    /// Output pixel that a burned-in subtitle must make white
+    pub burned_point: Option<(u32, u32)>,
+}
+
+#[allow(dead_code)]
+pub enum TestAudioSource {
+    Fixture(&'static str),
+    Lavfi(&'static str),
 }
 
 #[allow(dead_code)]
@@ -128,7 +142,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     let accel = test_case.params.accel.clone();
     let deinterlace = test_case.params.deinterlace;
     let video_format = test_case.params.video_format;
-    let bit_depth = test_case.params.bit_depth.unwrap_or(8);
+    let bit_depth = test_case.params.bit_depth;
     let video_size = test_case.params.video_size;
     let disabled_filters = std::mem::take(&mut test_case.params.disabled_filters);
     let source_video = probe
@@ -139,7 +153,11 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             _ => None,
         })
         .expect("no video stream found in source");
-    let source_is_hdr = source_video.color_params.is_hdr() || source_video.dv_profile == Some(5);
+    let video_copied = test_case.expected_copy.video == Some(CopyDecision::Copy);
+    let audio_copied = test_case.expected_copy.audio == Some(CopyDecision::Copy);
+    // copied video keeps the source HDR, so skip the SDR check
+    let source_is_hdr =
+        !video_copied && (source_video.color_params.is_hdr() || source_video.dv_profile == Some(5));
     // without frame rate normalization, output must keep the source frame rate
     let expected_frame_rate = test_case
         .params
@@ -150,7 +168,16 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         Some(watermark) => Some(build_watermark_input(test_env, &watermark).await),
         None => None,
     };
-    let input = build_input(&source, probe, Duration::from_secs(1), watermark);
+    let duration = Duration::from_secs(1);
+    let mut input = build_input(&source, probe, duration, watermark);
+    if let Some(audio_source) = &test_case.audio_source {
+        input.audio_input = build_audio_input(test_env, audio_source, duration).await;
+    }
+    if let Some(subtitle_fixture) = test_case.subtitle_fixture {
+        let path = fixture_path(subtitle_fixture);
+        let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
+        input.subtitle_input = Some(local_input(&path, probe, duration));
+    }
     let output = build_output(dir.path(), test_case.params);
 
     let ffmpeg_info = if disabled_filters.is_empty() {
@@ -162,8 +189,15 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     };
 
     let mut pipeline = generate_pipeline(&ffmpeg_info, input, output).unwrap();
+    assert_eq!(
+        pipeline.copy_decisions(),
+        &test_case.expected_copy,
+        "unexpected copy decisions"
+    );
     pipeline.optimize();
     let args: Vec<String> = pipeline.args().iter().map(|a| a.to_string()).collect();
+    assert_stream_copy(&args, "-vcodec", video_copied);
+    assert_stream_copy(&args, "-acodec", audio_copied);
     let cmd = args.join(" ");
     for filter in disabled_filters {
         assert!(
@@ -180,7 +214,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             accel,
             &source_video,
             source_is_hdr,
-            video_format,
+            (!video_copied).then_some(video_format),
             bit_depth,
             video_size,
             &args,
@@ -189,6 +223,9 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
 
     let segment = find_first_segment(dir.path());
     assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
+    if let Some((x, y)) = test_case.burned_point {
+        assert_burned_in(&test_env.ffmpeg, &segment, x, y).await;
+    }
     let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
     assert_video(
         &output_probe,
@@ -196,7 +233,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         test_case.expected_video_size.width,
         test_case.expected_video_size.height,
         &expected_frame_rate,
-        video_format.map(|_| bit_depth),
+        (!video_copied).then_some(bit_depth),
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
@@ -478,6 +515,38 @@ pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
     );
 }
 
+/// Skip the first frames: sub2video shows a subtitle only after its packet is read.
+pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(path)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg(format!(
+                "select=gte(n\\,10),crop=2:2:{}:{},format=gray",
+                x & !1,
+                y & !1
+            ))
+            .args(["-frames:v", "1", "-f", "rawvideo", "-"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("pixel check timed out")
+    .expect("failed to decode output");
+    assert!(
+        output.status.success() && output.stdout.len() == 4,
+        "pixel check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.iter().all(|luma| *luma > 200),
+        "no burned-in subtitle at {x},{y}: luma {:?}",
+        output.stdout
+    );
+}
+
 /// A quarter-turn source is taller than it is wide, so scale-and-pad output must have black
 /// pillars on both sides with the picture in the middle. Stretched or sideways output has
 /// picture at the edges instead.
@@ -663,41 +732,73 @@ pub fn build_input(
     duration: Duration,
     watermark: Option<WatermarkInput>,
 ) -> InputSettings {
-    let path_str = path.to_string_lossy().into_owned();
     InputSettings {
         start: OffsetDateTime::now_utc(),
         playout_offset: Duration::ZERO,
-        audio_input: ProbedInput {
-            input_source: InputSource::Local(LocalInputSource {
-                path: path_str.clone(),
-            }),
-            probe_result: probe.clone(),
-            in_point: Duration::ZERO,
-            out_point: duration,
-            stream_index: None,
-        },
-        video_input: ProbedInput {
-            input_source: InputSource::Local(LocalInputSource { path: path_str }),
-            probe_result: probe,
-            in_point: Duration::ZERO,
-            out_point: duration,
-            stream_index: None,
-        },
+        audio_input: local_input(path, probe.clone(), duration),
+        video_input: local_input(path, probe, duration),
         subtitle_input: None,
         graphics_inputs: watermark.into_iter().collect(),
         channel_number: None,
     }
 }
 
+fn local_input(path: &Path, probe: ProbeResult, duration: Duration) -> ProbedInput {
+    ProbedInput {
+        input_source: InputSource::Local(LocalInputSource {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        probe_result: probe,
+        in_point: Duration::ZERO,
+        out_point: duration,
+        stream_index: None,
+    }
+}
+
+async fn build_audio_input(
+    test_env: &TestEnv,
+    source: &TestAudioSource,
+    duration: Duration,
+) -> ProbedInput {
+    match source {
+        TestAudioSource::Fixture(name) => {
+            let path = fixture_path(name);
+            let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
+            local_input(&path, probe, duration)
+        }
+        // match the channel's probe hint; probing lavfi through nut reports vorbis
+        TestAudioSource::Lavfi(params) => ProbedInput {
+            input_source: InputSource::Lavfi(LavfiInputSource {
+                params: params.to_string(),
+            }),
+            probe_result: ProbeResult {
+                path: params.to_string(),
+                streams: vec![ProbeResultStream::Audio(ProbeResultAudioStream {
+                    stream_index: 0,
+                    codec: String::from("pcm_s16le"),
+                    channels: 2,
+                })],
+                duration: Some(duration),
+                format_name: Some(String::from("mpegts")),
+            },
+            in_point: Duration::ZERO,
+            out_point: duration,
+            stream_index: None,
+        },
+    }
+}
+
 #[allow(dead_code)]
 pub struct TestOutputParams {
-    pub video_format: Option<EncodeFormat>,
-    pub bit_depth: Option<u8>,
+    pub video_copy: Option<CopyPolicy<VideoFormat>>,
+    pub video_format: EncodeFormat,
+    pub bit_depth: u8,
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
     pub deinterlace: bool,
-    pub audio_format: Option<AudioFormat>,
+    pub audio_copy: Option<CopyPolicy<String>>,
+    pub audio_format: AudioFormat,
     pub audio_bitrate: Option<Kbps>,
     pub audio_channels: Option<u32>,
     pub loudness: Option<AudioLoudnessSettings>,
@@ -712,13 +813,15 @@ pub struct TestOutputParams {
 impl Default for TestOutputParams {
     fn default() -> Self {
         Self {
-            video_format: Some(EncodeFormat::H264),
-            bit_depth: Some(8),
+            video_copy: None,
+            video_format: EncodeFormat::H264,
+            bit_depth: 8,
             video_bitrate: Some(Kbps(5000)),
             video_buffer: Some(Kbps(10000)),
             video_size: None,
             deinterlace: false,
-            audio_format: Some(AudioFormat::Aac),
+            audio_copy: None,
+            audio_format: AudioFormat::Aac,
             audio_bitrate: Some(Kbps(192)),
             audio_channels: Some(2),
             loudness: None,
@@ -734,9 +837,9 @@ impl Default for TestOutputParams {
 pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
     OutputSettings {
         audio: AudioOutputSettings {
-            copy: params.audio_format.is_none().then(CopyPolicy::default),
+            copy: params.audio_copy,
             transcode: AudioTranscodeSettings {
-                format: params.audio_format.unwrap_or(AudioFormat::Aac),
+                format: params.audio_format,
                 bitrate: params.audio_bitrate,
                 buffer: params.audio_bitrate.map(|b| Kbps(b.0 * 2)),
                 channels: params.audio_channels,
@@ -745,10 +848,10 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
             },
         },
         video: VideoOutputSettings {
-            copy: params.video_format.is_none().then(CopyPolicy::default),
+            copy: params.video_copy,
             transcode: VideoTranscodeSettings {
-                format: params.video_format.unwrap_or(EncodeFormat::H264),
-                bit_depth: params.bit_depth.unwrap_or(8),
+                format: params.video_format,
+                bit_depth: params.bit_depth,
                 bitrate: params.video_bitrate,
                 buffer: params.video_buffer,
                 size: params.video_size,
@@ -917,6 +1020,21 @@ fn frame_rates_equal(a: &FrameRate, b: &FrameRate) -> bool {
         (Some((an, ad)), Some((bn, bd))) => an * bd == bn * ad,
         _ => a.parsed_frame_rate == b.parsed_frame_rate,
     }
+}
+
+/// The output probe can't tell copy from a same-codec transcode.
+fn assert_stream_copy(args: &[String], option: &str, copied: bool) {
+    let codec = args
+        .iter()
+        .rposition(|a| a == option)
+        .map(|i| args[i + 1].as_str())
+        .unwrap_or_else(|| panic!("no {option} in pipeline args"));
+    assert_eq!(
+        codec == "copy",
+        copied,
+        "expected {option} {}, got {codec}",
+        if copied { "copy" } else { "an encoder" }
+    );
 }
 
 pub fn assert_audio(probe: &ProbeResult, codec: &str) {

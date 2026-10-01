@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::config::{ChannelConfig, NormalizationConfig};
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
@@ -99,6 +99,8 @@ pub struct ChannelSession {
     timeout_notify: Arc<tokio::sync::Notify>,
 
     cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
+    // work-ahead runs one item as several chunks; warn once per item
+    copy_warned_item_id: Option<String>,
     dynamic_http_client: reqwest::Client,
 }
 
@@ -193,6 +195,7 @@ impl ChannelSession {
             state: ChannelSessionState::SeekAndWorkAhead,
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
             cached_subtitles: None,
+            copy_warned_item_id: None,
             dynamic_http_client,
         })
     }
@@ -387,20 +390,13 @@ impl ChannelSession {
 
         let pts_duration = pts_time.map(|p| p.duration);
 
-        let subtitle_mode = if is_fallback {
-            // the fallback message is only useful on screen
-            SubtitleMode::Burn
-        } else {
-            self.channel_config.normalization.subtitle.mode.into()
-        };
-
         let result = self
             .transcode_item(
                 &current_item,
                 realtime,
                 troubleshoot,
                 pts_duration,
-                subtitle_mode,
+                is_fallback,
             )
             .await;
 
@@ -413,14 +409,8 @@ impl ChannelSession {
                 let reason = FallbackReason::from_transcode_error(&current_item, e);
                 reason.log(&self.transcoded_until);
                 let fallback_item = self.fallback_playout_item(&reason).await;
-                self.transcode_item(
-                    &fallback_item,
-                    realtime,
-                    troubleshoot,
-                    pts_duration,
-                    SubtitleMode::Burn,
-                )
-                .await?
+                self.transcode_item(&fallback_item, realtime, troubleshoot, pts_duration, true)
+                    .await?
             }
         };
 
@@ -438,8 +428,15 @@ impl ChannelSession {
         realtime: bool,
         troubleshoot: bool,
         pts_duration: Option<Duration>,
-        subtitle_mode: SubtitleMode,
+        is_fallback: bool,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
+        let subtitle_mode = if is_fallback {
+            // the fallback message is only useful on screen
+            SubtitleMode::Burn
+        } else {
+            self.channel_config.normalization.subtitle.mode.into()
+        };
+
         // prioritize source from audio tracks, then default source
         let audio_source = Self::resolve_source(current_item, |t| t.audio.as_ref())
             .ok_or(ChannelError::PlayoutJsonAudioSourceRequired)?;
@@ -539,60 +536,14 @@ impl ChannelSession {
             subtitle_probe_opt
         };
 
-        let audio_norm = &self.channel_config.normalization.audio;
-        let video_norm = &self.channel_config.normalization.video;
-
-        let video_size = match (video_norm.width, video_norm.height) {
-            (Some(width), Some(height)) => Some(FrameSize { width, height }),
-            _ => None,
-        };
-
         // consider an item to be live if any of its sources are live;
         // live sources can never seek or work ahead
         let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
 
-        // generate pipeline; until config has an explicit copy mode, a missing format means copy
+        let (audio, video) = stream_output_settings(&self.channel_config.normalization);
         let output_settings = OutputSettings {
-            audio: AudioOutputSettings {
-                copy: audio_norm.format.is_none().then(CopyPolicy::default),
-                transcode: AudioTranscodeSettings {
-                    format: audio_norm
-                        .format
-                        .clone()
-                        .map_or(AudioFormat::Aac, AudioFormat::from),
-                    bitrate: audio_norm.bitrate_kbps.map(Kbps),
-                    buffer: audio_norm.buffer_kbps.map(Kbps),
-                    channels: audio_norm.channels,
-                    sample_rate: audio_norm.sample_rate_hz.map(Hz),
-                    loudness: if audio_norm.normalize_loudness {
-                        Some(
-                            audio_norm
-                                .loudness
-                                .as_ref()
-                                .map(|l| l.into())
-                                .unwrap_or_default(),
-                        )
-                    } else {
-                        None
-                    },
-                },
-            },
-            video: VideoOutputSettings {
-                copy: video_norm.format.is_none().then(CopyPolicy::default),
-                transcode: VideoTranscodeSettings {
-                    format: video_norm
-                        .format
-                        .clone()
-                        .map_or(EncodeFormat::H264, EncodeFormat::from),
-                    bit_depth: video_norm.bit_depth.unwrap_or(8),
-                    bitrate: video_norm.bitrate_kbps.map(Kbps),
-                    buffer: video_norm.buffer_kbps.map(Kbps),
-                    size: video_size,
-                    scaling_mode: video_norm.scaling_mode.into(),
-                    deinterlace: video_norm.deinterlace,
-                    filter_options: video_norm.filters.clone().into(),
-                },
-            },
+            audio,
+            video,
             accel: self.hw_accel.clone(),
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),
@@ -759,6 +710,33 @@ impl ChannelSession {
         let envs = pipeline_result.envs();
         log::debug!("optimized pipeline: {}", args.join(" "));
 
+        let copy_note = pipeline_result
+            .copy_decisions()
+            .transcode_summary()
+            .map(|summary| {
+                if is_fallback {
+                    String::from("copy channel transcodes the fallback item")
+                } else {
+                    format!(
+                        "copy channel transcodes item {}: {summary}",
+                        current_item.id
+                    )
+                }
+            });
+        if let Some(note) = &copy_note {
+            // the fallback reason is already logged
+            if is_fallback {
+                log::debug!("{note}");
+            } else if self.copy_warned_item_id.as_ref() != Some(&current_item.id) {
+                log::warn!("{note}");
+                self.copy_warned_item_id = Some(current_item.id.clone());
+            }
+        }
+        let outcome = |text: &str| match &copy_note {
+            Some(note) => format!("{text}\n{note}"),
+            None => text.to_owned(),
+        };
+
         self.playlist_manager
             .lock()
             .await
@@ -810,7 +788,7 @@ impl ChannelSession {
                         &video_probe_result,                        &audio_probe_result,
                         subtitle_probe_result.as_ref(),
                         &ring,
-                        format!("ffmpeg exited with code {status}")).await;
+                        outcome(&format!("ffmpeg exited with code {status}"))).await;
                     return Err(ChannelError::FfmpegFailed {
                         status: status
                             .code()
@@ -820,7 +798,7 @@ impl ChannelSession {
                 } else if troubleshoot {
                     self.write_dossier(current_item, &video_probe_result,
                         &audio_probe_result, subtitle_probe_result.as_ref(),
-                        &ring, "ffmpeg exited successfully".to_string()).await;
+                        &ring, outcome("ffmpeg exited successfully")).await;
                 } else {
                     self.cleanup_old_report().await;
                 }
@@ -844,7 +822,7 @@ impl ChannelSession {
                 ffmpeg_child.kill().await.ok();
                 let _ = reader_handle.await;
                 self.write_dossier(current_item, &video_probe_result, &audio_probe_result,
-                    subtitle_probe_result.as_ref(), &ring, "ffmpeg stalled".to_string()).await;
+                    subtitle_probe_result.as_ref(), &ring, outcome("ffmpeg stalled")).await;
                 return Err(ChannelError::Stalled(self.channel_config.number().to_owned()));
             }
         }
@@ -1111,54 +1089,16 @@ impl ChannelSession {
             None
         };
 
-        PlayoutItem {
-            id: uuid::Uuid::new_v4().to_string(),
-            start: self.transcoded_until,
-            finish: reason
-                .fallback_until()
-                .unwrap_or(self.transcoded_until + duration),
-            source: None,
-            tracks: Some(PlayoutItemTracks {
-                audio: Some(TrackSelection {
-                    source: Some(PlayoutItemSource::Lavfi {
-                        params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
-                        probe_hint: Some(ProbeHint {
-                            video: Vec::new(),
-                            audio: vec![AudioHint {
-                                stream_index: 0,
-                                codec: String::from("pcm_s16le"),
-                                channels: 2,
-                            }],
-                            subtitle: Vec::new(),
-                            format_name: Some(String::from("mpegts")),
-                            duration_ms: Some(duration.as_millis() as u64),
-                        }),
-                    }),
-                    stream_index: None,
-                }),
-                video: Some(TrackSelection {
-                    source: Some(PlayoutItemSource::Lavfi {
-                        params: format!("color=c=black:s={}x{}", width, height),
-                        probe_hint: Some(ProbeHint {
-                            video: vec![VideoHint::new(
-                                String::from("rawvideo"),
-                                width,
-                                height,
-                                String::from("yuv420p"),
-                            )],
-                            audio: Vec::new(),
-                            subtitle: Vec::new(),
-                            format_name: Some(String::from("mpegts")),
-                            duration_ms: Some(duration.as_millis() as u64),
-                        }),
-                    }),
-                    stream_index: None,
-                }),
-                subtitle,
-            }),
-            watermark: None,
-            graphics: Vec::new(),
-        }
+        let finish = reason
+            .fallback_until()
+            .unwrap_or(self.transcoded_until + duration);
+        fallback_item(
+            self.transcoded_until,
+            finish,
+            FrameSize { width, height },
+            duration,
+            subtitle,
+        )
     }
 
     async fn write_error_card(
@@ -1179,24 +1119,10 @@ impl ChannelSession {
             return None;
         }
 
-        Some(TrackSelection {
-            source: Some(PlayoutItemSource::Local {
-                path: path.to_string_lossy().into_owned(),
-                in_point_ms: None,
-                out_point_ms: None,
-                probe_hint: Some(ProbeHint {
-                    video: Vec::new(),
-                    audio: Vec::new(),
-                    subtitle: vec![SubtitleHint {
-                        codec: String::from("ass"),
-                        stream_index: 0,
-                    }],
-                    format_name: Some(String::from("ass")),
-                    duration_ms: Some(duration.as_millis() as u64),
-                }),
-            }),
-            stream_index: None,
-        })
+        Some(error_card_track(
+            path.to_string_lossy().into_owned(),
+            duration,
+        ))
     }
 
     async fn resolve_dynamic_item(
@@ -1536,6 +1462,139 @@ fn playout_timing_to_pipeline(
     })
 }
 
+fn fallback_item(
+    start: OffsetDateTime,
+    finish: OffsetDateTime,
+    size: FrameSize,
+    duration: Duration,
+    subtitle: Option<TrackSelection>,
+) -> PlayoutItem {
+    PlayoutItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        start,
+        finish,
+        source: None,
+        tracks: Some(PlayoutItemTracks {
+            audio: Some(TrackSelection {
+                source: Some(PlayoutItemSource::Lavfi {
+                    params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
+                    probe_hint: Some(ProbeHint {
+                        video: Vec::new(),
+                        audio: vec![AudioHint {
+                            stream_index: 0,
+                            codec: String::from("pcm_s16le"),
+                            channels: 2,
+                        }],
+                        subtitle: Vec::new(),
+                        format_name: Some(String::from("mpegts")),
+                        duration_ms: Some(duration.as_millis() as u64),
+                    }),
+                }),
+                stream_index: None,
+            }),
+            video: Some(TrackSelection {
+                source: Some(PlayoutItemSource::Lavfi {
+                    params: format!("color=c=black:s={}x{}", size.width, size.height),
+                    probe_hint: Some(ProbeHint {
+                        video: vec![VideoHint::new(
+                            String::from("rawvideo"),
+                            size.width,
+                            size.height,
+                            String::from("yuv420p"),
+                        )],
+                        audio: Vec::new(),
+                        subtitle: Vec::new(),
+                        format_name: Some(String::from("mpegts")),
+                        duration_ms: Some(duration.as_millis() as u64),
+                    }),
+                }),
+                stream_index: None,
+            }),
+            subtitle,
+        }),
+        watermark: None,
+        graphics: Vec::new(),
+    }
+}
+
+fn error_card_track(path: String, duration: Duration) -> TrackSelection {
+    TrackSelection {
+        source: Some(PlayoutItemSource::Local {
+            path,
+            in_point_ms: None,
+            out_point_ms: None,
+            probe_hint: Some(ProbeHint {
+                video: Vec::new(),
+                audio: Vec::new(),
+                subtitle: vec![SubtitleHint {
+                    codec: String::from("ass"),
+                    stream_index: 0,
+                }],
+                format_name: Some(String::from("ass")),
+                duration_ms: Some(duration.as_millis() as u64),
+            }),
+        }),
+        stream_index: None,
+    }
+}
+
+/// A missing `format` means copy, until the config has an explicit copy mode.
+fn stream_output_settings(
+    normalization: &NormalizationConfig,
+) -> (AudioOutputSettings, VideoOutputSettings) {
+    let audio_norm = &normalization.audio;
+    let video_norm = &normalization.video;
+
+    let video_size = match (video_norm.width, video_norm.height) {
+        (Some(width), Some(height)) => Some(FrameSize { width, height }),
+        _ => None,
+    };
+
+    let audio = AudioOutputSettings {
+        copy: audio_norm.format.is_none().then(CopyPolicy::default),
+        transcode: AudioTranscodeSettings {
+            format: audio_norm
+                .format
+                .clone()
+                .map_or(AudioFormat::Aac, AudioFormat::from),
+            bitrate: audio_norm.bitrate_kbps.map(Kbps),
+            buffer: audio_norm.buffer_kbps.map(Kbps),
+            channels: audio_norm.channels,
+            sample_rate: audio_norm.sample_rate_hz.map(Hz),
+            loudness: if audio_norm.normalize_loudness {
+                Some(
+                    audio_norm
+                        .loudness
+                        .as_ref()
+                        .map(|l| l.into())
+                        .unwrap_or_default(),
+                )
+            } else {
+                None
+            },
+        },
+    };
+
+    let video = VideoOutputSettings {
+        copy: video_norm.format.is_none().then(CopyPolicy::default),
+        transcode: VideoTranscodeSettings {
+            format: video_norm
+                .format
+                .clone()
+                .map_or(EncodeFormat::H264, EncodeFormat::from),
+            bit_depth: video_norm.bit_depth.unwrap_or(8),
+            bitrate: video_norm.bitrate_kbps.map(Kbps),
+            buffer: video_norm.buffer_kbps.map(Kbps),
+            size: video_size,
+            scaling_mode: video_norm.scaling_mode.into(),
+            deinterlace: video_norm.deinterlace,
+            filter_options: video_norm.filters.clone().into(),
+        },
+    };
+
+    (audio, video)
+}
+
 fn source_is_live(source: &PlayoutItemSource) -> bool {
     matches!(
         source,
@@ -1611,5 +1670,121 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ffpipeline::copy_decision::{CopyBlocker, CopyDecision, CopyDecisions};
+    use ffpipeline::output_format::OutputFormat;
+    use serde_json::json;
+    use time::macros::datetime;
+
+    use super::*;
+
+    fn hinted_input(track: Option<&TrackSelection>, duration: Duration) -> ProbedInput {
+        let source = track.and_then(|t| t.source.as_ref()).expect("no source");
+        let input_source = match source {
+            PlayoutItemSource::Local { path, .. } => {
+                InputSource::Local(LocalInputSource { path: path.clone() })
+            }
+            PlayoutItemSource::Lavfi { params, .. } => InputSource::Lavfi(LavfiInputSource {
+                params: params.clone(),
+            }),
+            other => panic!("unexpected fallback source {other:?}"),
+        };
+        let hint = source
+            .probe_hint()
+            .expect("fallback sources carry probe hints");
+        ProbedInput {
+            probe_result: probe_hint_to_result(hint, input_source.input_path().unwrap()),
+            input_source,
+            in_point: Duration::ZERO,
+            out_point: duration,
+            stream_index: None,
+        }
+    }
+
+    /// Copied lavfi streams mux as `bin_data` and ffmpeg exits 0, so a copied fallback is a
+    /// dead stream with no second fallback.
+    #[test]
+    fn fallback_card_transcodes_on_copy_channel() {
+        let normalization: NormalizationConfig = serde_json::from_value(json!({
+            "audio": { "format": null },
+            "video": { "format": null }
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&normalization);
+        assert!(audio.copy.is_some() && video.copy.is_some());
+
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let duration = Duration::from_mins(1);
+        let item = fallback_item(
+            start,
+            start + duration,
+            FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            duration,
+            Some(error_card_track(String::from("fallback.ass"), duration)),
+        );
+        let tracks = item.tracks.as_ref().unwrap();
+        let input = InputSettings {
+            start,
+            playout_offset: Duration::ZERO,
+            audio_input: hinted_input(tracks.audio.as_ref(), duration),
+            video_input: hinted_input(tracks.video.as_ref(), duration),
+            subtitle_input: Some(hinted_input(tracks.subtitle.as_ref(), duration)),
+            graphics_inputs: Vec::new(),
+            channel_number: None,
+        };
+        let output = OutputSettings {
+            audio,
+            video,
+            accel: None,
+            format: OutputFormat::Hls {
+                playlist: String::from("ffmpeg.m3u8"),
+                segment_template: String::from("live%06d.ts"),
+                troubleshoot: false,
+            },
+            pts_offset: None,
+            realtime: false,
+            is_live: false,
+            frame_rate: None,
+            subtitle_mode: SubtitleMode::Burn,
+            fonts_folder: None,
+            subtitle_force_style: None,
+            reports_folder: None,
+            report_id: None,
+        };
+
+        let mut pipeline =
+            pipeline::generate_pipeline(&FfmpegInfo::default(), input, output).unwrap();
+        assert_eq!(
+            pipeline.copy_decisions(),
+            &CopyDecisions {
+                video: Some(CopyDecision::Transcode(vec![
+                    CopyBlocker::GeneratedSource,
+                    CopyBlocker::CodecNotAllowed(String::from("rawvideo")),
+                    CopyBlocker::BurnedSubtitle,
+                ])),
+                audio: Some(CopyDecision::Transcode(vec![
+                    CopyBlocker::GeneratedSource,
+                    CopyBlocker::CodecNotAllowed(String::from("pcm_s16le")),
+                ])),
+            }
+        );
+
+        pipeline.optimize();
+        let args = pipeline.args();
+        for (option, value) in [("-vcodec", "libx264"), ("-acodec", "aac")] {
+            let index = args.iter().rposition(|a| a == option).expect(option);
+            assert_eq!(args[index + 1], value, "{args:?}");
+        }
+        assert!(
+            args.iter().any(|a| a.contains("subtitles=")),
+            "error card is not burned in: {args:?}"
+        );
     }
 }

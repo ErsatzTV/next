@@ -46,6 +46,13 @@ impl FilterChain {
 
     /// Disables/drops all video filters from the filter chain.
     pub(crate) fn disable_video(&mut self) {
+        debug_assert!(
+            !self
+                .filters
+                .iter()
+                .any(|f| matches!(f, PipelineFilter::Overlay(_))),
+            "video copy can't carry an overlay"
+        );
         self.filters
             .retain(|f| !matches!(f, PipelineFilter::Video(_)));
     }
