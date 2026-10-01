@@ -1168,6 +1168,7 @@ impl Pipeline {
                     input_source,
                     index,
                     path,
+                    seek,
                     decoder,
                     ..
                 } => {
@@ -1177,7 +1178,10 @@ impl Pipeline {
 
                         result.extend(decoder.as_arg());
 
-                        // TODO: seek?
+                        // lavfi can't seek
+                        if !seek.is_zero() && !matches!(input_source, InputSource::Lavfi(_)) {
+                            result.extend(args!["-ss", format!("{}ms", seek.as_millis())]);
+                        }
 
                         result.extend(input_source.args_for_input());
 
@@ -1596,6 +1600,72 @@ mod tests {
         assert_eq!(
             pipeline.copy_decisions().transcode_summary().as_deref(),
             Some("video (image subtitles)")
+        );
+    }
+
+    fn separate_audio_input(input_source: InputSource, seek: Duration) -> InputSettings {
+        let mut input = multichannel_ac3_input("main.mkv");
+        input.video_input.in_point = seek;
+        input.audio_input = multichannel_ac3_input("song.flac").audio_input;
+        input.audio_input.input_source = input_source;
+        input.audio_input.in_point = seek;
+        input
+    }
+
+    fn input_seeks(args: &ArgVec) -> Vec<(String, Option<String>)> {
+        args.iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-i")
+            .map(|(i, _)| {
+                let input_args = &args[..i];
+                let start = input_args
+                    .iter()
+                    .rposition(|a| a == "-i")
+                    .map_or(0, |p| p + 2);
+                let seek = input_args[start..]
+                    .windows(2)
+                    .find(|w| w[0] == "-ss")
+                    .map(|w| w[1].to_string());
+                (args[i + 1].to_string(), seek)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn separate_audio_input_seeks_with_video() {
+        let input = separate_audio_input(
+            InputSource::Local(crate::input::LocalInputSource {
+                path: "song.flac".to_owned(),
+            }),
+            Duration::from_millis(12_345),
+        );
+        let pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+
+        assert_eq!(
+            input_seeks(&pipeline.args()),
+            vec![
+                ("main.mkv".to_owned(), Some("12345ms".to_owned())),
+                ("song.flac".to_owned(), Some("12345ms".to_owned())),
+            ]
+        );
+    }
+
+    #[test]
+    fn separate_lavfi_audio_input_never_seeks() {
+        let input = separate_audio_input(
+            InputSource::Lavfi(crate::input::LavfiInputSource {
+                params: "anullsrc".to_owned(),
+            }),
+            Duration::from_millis(12_345),
+        );
+        let pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+
+        assert_eq!(
+            input_seeks(&pipeline.args()),
+            vec![
+                ("main.mkv".to_owned(), Some("12345ms".to_owned())),
+                ("song.flac".to_owned(), None),
+            ]
         );
     }
 
