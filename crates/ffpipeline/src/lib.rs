@@ -18,6 +18,7 @@ pub mod frame_size;
 pub mod global_option;
 pub mod hw_accel;
 pub mod input;
+pub mod keyframe_seek;
 pub mod output_format;
 pub mod output_option;
 pub mod output_settings;

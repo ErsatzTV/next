@@ -28,7 +28,7 @@ use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
 };
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOverlay};
-use crate::probe::ProbeResultVideoStream;
+use crate::probe::{ProbeResultAudioStream, ProbeResultVideoStream};
 use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -370,14 +370,13 @@ impl Pipeline {
             video_transcode.bit_depth = 8;
         }
 
-        let duration = std::cmp::min(
+        let mut duration = std::cmp::min(
             input_settings.audio_input.out_point - input_settings.audio_input.in_point,
             input_settings.video_input.out_point - input_settings.video_input.in_point,
         );
 
         let video_stream = input_settings.select_video_stream()?;
         let audio_stream = input_settings.select_audio_stream()?;
-        let subtitle_stream = input_settings.select_subtitle_stream();
         let graphics_streams: Vec<_> = input_settings
             .graphics_inputs
             .iter()
@@ -387,52 +386,14 @@ impl Pipeline {
         let video_transcode = &final_output_settings.video.transcode;
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
 
-        let subtitle_burn = match (subtitle_stream, input_settings.subtitle_input.as_ref()) {
-            (Some(stream), Some(input)) if stream.is_subtitle_image() => video_transcode
-                .size
-                .or_else(|| {
-                    // with no target size, only transpose changes the frame size
-                    let (width, height) = (video_stream.width?, video_stream.height?);
-                    Some(if video_stream.is_quarter_turn() {
-                        FrameSize {
-                            width: height,
-                            height: width,
-                        }
-                    } else {
-                        FrameSize { width, height }
-                    })
-                })
-                .map(|size| SubtitleBurn::Image {
-                    stream,
-                    input,
-                    size,
-                }),
-            (Some(stream), Some(input))
-                if final_output_settings.subtitle_mode == SubtitleMode::Burn =>
-            {
-                Some(SubtitleBurn::Text { stream, input })
-            }
-            _ => None,
-        };
-
-        let copy_decisions = CopyDecisions {
-            video: final_output_settings.video.copy.as_ref().map(|policy| {
-                video_copy_decision(
-                    policy,
-                    &input_settings.video_input,
-                    video_stream,
-                    &VideoCopyContext {
-                        is_still_image,
-                        has_graphics: !input_settings.graphics_inputs.is_empty(),
-                        image_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Image { .. })),
-                        burned_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Text { .. })),
-                    },
-                )
-            }),
-            audio: final_output_settings.audio.copy.as_ref().map(|policy| {
-                audio_copy_decision(policy, &input_settings.audio_input, audio_stream)
-            }),
-        };
+        let subtitle_burn = subtitle_burn(&input_settings, &final_output_settings, video_stream);
+        let copy_decisions = copy_decisions(
+            &input_settings,
+            &final_output_settings,
+            video_stream,
+            audio_stream,
+            subtitle_burn.as_ref(),
+        );
 
         let audio_codec = match (
             &copy_decisions.audio,
@@ -463,6 +424,33 @@ impl Pipeline {
                 )
             }
         };
+
+        let mut pts_offset = final_output_settings.pts_offset;
+        let mut video_seek = input_settings.video_input.in_point;
+        let mut copy_output_options = Vec::new();
+        if video_encoder == VideoEncoder::Copy {
+            if let Some(copy_seek) = &input_settings.video_copy_seek {
+                let frame_duration =
+                    Duration::from_secs_f64(1.0 / video_stream.frame_rate.parsed_frame_rate);
+                let args = copy_seek.args(duration, frame_duration);
+                video_seek = args.input_seek;
+                duration = args.duration;
+                if let Some(output_seek) = args.output_seek {
+                    copy_output_options.push(OutputOption::Seek(output_seek));
+                }
+                if let Some(offset) = pts_offset.as_mut()
+                    && offset.duration > args.ts_offset_correction
+                {
+                    offset.duration -= args.ts_offset_correction;
+                }
+            }
+
+            // ffmpeg adds SPS/PPS only before IDR slices, so an open-GOP seek or segment that
+            // starts on another I-frame can't decode. HEVC adds them on every IRAP.
+            if video_stream.codec == "h264" {
+                copy_output_options.push(OutputOption::H264CopyParameterSets);
+            }
+        }
 
         let video_decoder = VideoDecoder::new(
             ffmpeg_info,
@@ -510,7 +498,7 @@ impl Pipeline {
             audio_codec,
             audio_channels: final_output_settings.audio.transcode.channels,
             video_encoder: video_encoder.clone(),
-            pts_offset: final_output_settings.pts_offset,
+            pts_offset,
             media_frame_rate: video_stream.frame_rate.to_owned(),
             preferred_surface: video_encoder.preferred_surface(),
             preferred_pixel_format: video_encoder.preferred_pixel_format(video_transcode.bit_depth),
@@ -610,7 +598,7 @@ impl Pipeline {
                 seek: if is_still_image {
                     Duration::ZERO
                 } else {
-                    input_settings.video_input.in_point
+                    video_seek
                 },
                 realtime: final_output_settings.realtime && !final_output_settings.is_live,
                 decoder: video_decoder,
@@ -972,7 +960,7 @@ impl Pipeline {
             ],
             inputs,
             filter_chain: FilterChain::new(filters),
-            output_options: vec![
+            output_options: [
                 OutputOption::NoDemuxDecodeDelay,
                 OutputOption::MovFlagsFastStart,
                 OutputOption::CudaNoAutoScale,
@@ -982,15 +970,20 @@ impl Pipeline {
                 OutputOption::AudioChannels(final_output_settings.audio.transcode.channels),
                 OutputOption::AudioSampleRate(final_output_settings.audio.transcode.sample_rate),
                 OutputOption::VideoCodec(video_encoder),
+            ]
+            .into_iter()
+            .chain(copy_output_options)
+            .chain([
                 OutputOption::VideoBitrate(final_output_settings.video.transcode.bitrate),
                 OutputOption::VideoBuffer(final_output_settings.video.transcode.buffer),
                 OutputOption::DoNotMapMetadata,
                 OutputOption::Duration(duration),
-                OutputOption::TsOffset(final_output_settings.pts_offset),
+                OutputOption::TsOffset(pts_offset),
                 OutputOption::VideoTrackTimeScale(90_000),
                 OutputOption::FrameRate(final_output_settings.frame_rate.clone()),
                 OutputOption::Format(final_output_settings.format),
-            ],
+            ])
+            .collect(),
             input_request_context,
             output_context,
             env_vars,
@@ -1283,6 +1276,90 @@ impl std::fmt::Display for Pipeline {
     }
 }
 
+fn subtitle_burn<'a>(
+    input_settings: &'a InputSettings,
+    output_settings: &OutputSettings,
+    video_stream: &ProbeResultVideoStream,
+) -> Option<SubtitleBurn<'a>> {
+    match (
+        input_settings.select_subtitle_stream(),
+        input_settings.subtitle_input.as_ref(),
+    ) {
+        (Some(stream), Some(input)) if stream.is_subtitle_image() => output_settings
+            .video
+            .transcode
+            .size
+            .or_else(|| {
+                // with no target size, only transpose changes the frame size
+                let (width, height) = (video_stream.width?, video_stream.height?);
+                Some(if video_stream.is_quarter_turn() {
+                    FrameSize {
+                        width: height,
+                        height: width,
+                    }
+                } else {
+                    FrameSize { width, height }
+                })
+            })
+            .map(|size| SubtitleBurn::Image {
+                stream,
+                input,
+                size,
+            }),
+        (Some(stream), Some(input)) if output_settings.subtitle_mode == SubtitleMode::Burn => {
+            Some(SubtitleBurn::Text { stream, input })
+        }
+        _ => None,
+    }
+}
+
+fn copy_decisions(
+    input_settings: &InputSettings,
+    output_settings: &OutputSettings,
+    video_stream: &ProbeResultVideoStream,
+    audio_stream: &ProbeResultAudioStream,
+    subtitle_burn: Option<&SubtitleBurn>,
+) -> CopyDecisions {
+    CopyDecisions {
+        video: output_settings.video.copy.as_ref().map(|policy| {
+            video_copy_decision(
+                policy,
+                &input_settings.video_input,
+                video_stream,
+                &VideoCopyContext {
+                    caller_blockers: &input_settings.video_copy_blockers,
+                    is_still_image: input_settings.video_input.probe_result.is_still_image(),
+                    has_graphics: !input_settings.graphics_inputs.is_empty(),
+                    image_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Image { .. })),
+                    burned_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Text { .. })),
+                },
+            )
+        }),
+        audio: output_settings
+            .audio
+            .copy
+            .as_ref()
+            .map(|policy| audio_copy_decision(policy, &input_settings.audio_input, audio_stream)),
+    }
+}
+
+/// Lets the caller prepare a copy (keyframe seek) before building the pipeline.
+pub fn predict_copy_decisions(
+    input_settings: &InputSettings,
+    output_settings: &OutputSettings,
+) -> Result<CopyDecisions, FFPipelineError> {
+    let video_stream = input_settings.select_video_stream()?;
+    let audio_stream = input_settings.select_audio_stream()?;
+    let subtitle_burn = subtitle_burn(input_settings, output_settings, video_stream);
+    Ok(copy_decisions(
+        input_settings,
+        output_settings,
+        video_stream,
+        audio_stream,
+        subtitle_burn.as_ref(),
+    ))
+}
+
 pub fn generate_pipeline(
     ffmpeg_info: &FfmpegInfo,
     input_settings: InputSettings,
@@ -1375,6 +1452,8 @@ mod tests {
             subtitle_input: None,
             graphics_inputs: Vec::new(),
             channel_number: None,
+            video_copy_seek: None,
+            video_copy_blockers: Vec::new(),
         }
     }
 
