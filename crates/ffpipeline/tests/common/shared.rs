@@ -1,14 +1,15 @@
 use std::str::FromStr;
 
+use ffpipeline::copy_decision::{CopyBlocker, CopyDecision, CopyDecisions};
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
 use ffpipeline::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use ffpipeline::output_settings::{
-    AudioLoudnessSettings, LibplaceboOptions, TonemapOpenclOptions, TonemapOptions,
+    AudioLoudnessSettings, CopyPolicy, LibplaceboOptions, TonemapOpenclOptions, TonemapOptions,
     VideoFilterOptions,
 };
-use ffpipeline::pipeline::{AudioFormat, EncodeFormat};
+use ffpipeline::pipeline::{AudioFormat, EncodeFormat, VideoFormat};
 
 use super::*;
 
@@ -94,10 +95,85 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Width and height differ from the source, so a copy that honoured them would fail.
         #[::tokio::test]
         #[ignore]
         async fn codec_copy() {
             $crate::common::shared::run($accel().await, $crate::common::shared::codec_copy()).await;
+        }
+
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_graphics(
+            #[values(None, Some(::ffpipeline::frame_size::FrameSize { width: 1280, height: 720 }))]
+            res: Option<::ffpipeline::frame_size::FrameSize>,
+        ) {
+            $crate::common::shared::run($accel().await, $crate::common::shared::copy_graphics(res))
+                .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_image_subtitle() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_image_subtitle(),
+            )
+            .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_text_subtitle() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_text_subtitle(),
+            )
+            .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_still_image() {
+            $crate::common::shared::run($accel().await, $crate::common::shared::copy_still_image())
+                .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_generated_audio() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_generated_audio(),
+            )
+            .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_codec_not_allowed() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_codec_not_allowed(),
+            )
+            .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_codec_allowed() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_codec_allowed(),
+            )
+            .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_dv5() {
+            $crate::common::shared::run($accel().await, $crate::common::shared::copy_dv5()).await;
         }
 
         #[::tokio::test]
@@ -356,26 +432,32 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
     let video_format = EncodeFormat::from_str(video_format).unwrap();
     TestCase {
         fixture_name: src,
+        audio_source: None,
+        subtitle_fixture: None,
         params: TestOutputParams {
-            audio_format: Some(af),
-            video_format: Some(video_format),
+            audio_format: af,
+            video_format,
             video_size: Some(res),
-            bit_depth: Some(bit_depth),
+            bit_depth,
             ..TestOutputParams::default()
         },
         expected_video_codec: video_format.to_string(),
         expected_video_size: res,
         expected_audio_codec: af.to_string(),
+        expected_copy: CopyDecisions::default(),
     }
 }
 
 fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
     TestCase {
         fixture_name: src,
+        audio_source: None,
+        subtitle_fixture: None,
         params: TestOutputParams::default(),
         expected_video_codec: String::from("h264"),
         expected_video_size: size,
         expected_audio_codec: String::from("aac"),
+        expected_copy: CopyDecisions::default(),
     }
 }
 
@@ -384,18 +466,132 @@ const SIZE_1080P: FrameSize = FrameSize {
     height: 1080,
 };
 
+const SIZE_720P: FrameSize = FrameSize {
+    width: 1280,
+    height: 720,
+};
+
+/// Copies both streams of a source the default policy allows. Tests override the parts that
+/// should block a copy, and the transcode settings that the blocked stream must end up with.
+fn copy(src: &'static str, size: FrameSize) -> TestCase {
+    let mut test_case = source_sized(src, size);
+    test_case.params.video_copy = Some(CopyPolicy::default());
+    test_case.params.audio_copy = Some(CopyPolicy::default());
+    test_case.expected_copy = CopyDecisions {
+        video: Some(CopyDecision::Copy),
+        audio: Some(CopyDecision::Copy),
+    };
+    test_case
+}
+
+fn blocked(blockers: Vec<CopyBlocker>) -> Option<CopyDecision> {
+    Some(CopyDecision::Transcode(blockers))
+}
+
 pub fn codec_copy() -> TestCase {
-    let mut test_case = source_sized(
-        "720p_h264.ts",
+    let mut test_case = copy("720p_h264.ts", SIZE_720P);
+    test_case.params.video_size = Some(SIZE_1080P);
+    test_case
+}
+
+/// Without a configured size the transcoded item keeps the source size.
+pub fn copy_graphics(res: Option<FrameSize>) -> TestCase {
+    let mut test_case = copy("1080p_h264.ts", res.unwrap_or(SIZE_1080P));
+    test_case.params.video_size = res;
+    test_case.params.watermark = Some(TestWatermark::default());
+    test_case.expected_copy.video = blocked(vec![CopyBlocker::GraphicsLayers]);
+    test_case
+}
+
+/// Image subtitles are only burned in when a size is configured.
+pub fn copy_image_subtitle() -> TestCase {
+    let mut test_case = copy("1080p_h264.ts", SIZE_720P);
+    test_case.params.video_size = Some(SIZE_720P);
+    test_case.subtitle_fixture = Some("subtitle_pgs.sup");
+    test_case.expected_copy.video = blocked(vec![CopyBlocker::ImageSubtitle]);
+    test_case
+}
+
+/// A copy drops the subtitles filter without an error, so the size has to change to tell them apart.
+pub fn copy_text_subtitle() -> TestCase {
+    let mut test_case = copy("1080p_h264.ts", SIZE_720P);
+    test_case.params.video_size = Some(SIZE_720P);
+    test_case.subtitle_fixture = Some("subtitle.srt");
+    test_case.expected_copy.video = blocked(vec![CopyBlocker::BurnedSubtitle]);
+    test_case
+}
+
+pub fn copy_still_image() -> TestCase {
+    let mut test_case = copy(
+        "watermark.png",
         FrameSize {
-            width: 1280,
-            height: 720,
+            width: 200,
+            height: 200,
         },
     );
-    test_case.params.video_format = None;
-    test_case.params.audio_format = None;
-    test_case.params.video_bitrate = None;
-    test_case.params.video_buffer = None;
+    test_case.audio_source = Some(TestAudioSource::Fixture("720p_h264.ts"));
+    test_case.expected_copy.video = blocked(vec![
+        CopyBlocker::CodecNotAllowed(String::from("png")),
+        CopyBlocker::StillImage,
+    ]);
+    test_case
+}
+
+/// The silent audio the scheduler supplies for images and video without audio.
+pub fn copy_generated_audio() -> TestCase {
+    let mut test_case = copy("720p_h264.ts", SIZE_720P);
+    test_case.audio_source = Some(TestAudioSource::Lavfi(
+        "anullsrc=channel_layout=stereo:sample_rate=48000",
+    ));
+    test_case.expected_copy.audio = blocked(vec![
+        CopyBlocker::GeneratedSource,
+        CopyBlocker::CodecNotAllowed(String::from("pcm_s16le")),
+    ]);
+    test_case
+}
+
+/// mpeg2video is opt-in, and a narrowed audio list transcodes aac to the configured ac3.
+pub fn copy_codec_not_allowed() -> TestCase {
+    let mut test_case = copy(
+        "480i_mpeg2.ts",
+        FrameSize {
+            width: 640,
+            height: 480,
+        },
+    );
+    test_case.params.audio_copy = Some(CopyPolicy {
+        formats: vec![String::from("ac3")],
+    });
+    test_case.params.audio_format = AudioFormat::Ac3;
+    test_case.expected_audio_codec = String::from("ac3");
+    test_case.expected_copy = CopyDecisions {
+        video: blocked(vec![CopyBlocker::CodecNotAllowed(String::from(
+            "mpeg2video",
+        ))]),
+        audio: blocked(vec![CopyBlocker::CodecNotAllowed(String::from("aac"))]),
+    };
+    test_case
+}
+
+pub fn copy_codec_allowed() -> TestCase {
+    let mut test_case = copy(
+        "480i_mpeg2.ts",
+        FrameSize {
+            width: 640,
+            height: 480,
+        },
+    );
+    test_case.params.video_copy = Some(CopyPolicy {
+        formats: vec![VideoFormat::Mpeg2Video],
+    });
+    test_case.expected_video_codec = String::from("mpeg2video");
+    test_case
+}
+
+/// The transcode tonemaps, which `run_test_case` checks for any HDR source it transcodes.
+pub fn copy_dv5() -> TestCase {
+    let mut test_case = copy("1080p_hevc_10_dv5.mp4", SIZE_1080P);
+    test_case.expected_copy.video = blocked(vec![CopyBlocker::DolbyVision5]);
     test_case
 }
 
