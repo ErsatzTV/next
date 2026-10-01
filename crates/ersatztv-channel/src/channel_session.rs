@@ -21,7 +21,7 @@ use ffpipeline::input::{
     LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
 };
 use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings, SubtitleMode};
-use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
+use ffpipeline::pipeline::{AudioFormat, EncodeFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS};
 use ffpipeline::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
     ProbeResultVideoStream, Probeable,
@@ -568,7 +568,7 @@ impl ChannelSession {
                     None
                 },
             },
-            video_format: video_norm.format.clone().map(VideoFormat::from),
+            video_format: video_norm.format.clone().map(EncodeFormat::from),
             bit_depth: video_norm.bit_depth,
             video_bitrate: video_norm.bitrate_kbps.map(Kbps),
             video_buffer: video_norm.buffer_kbps.map(Kbps),

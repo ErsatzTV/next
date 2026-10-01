@@ -10,8 +10,8 @@ use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
-    EnvironmentVariable, FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat,
-    SurfaceSet, VideoFormat,
+    EncodeFormat, EnvironmentVariable, FrameState, FrameSurface, HdrFormat, HwPixelFormat,
+    PixelFormat, SurfaceSet, VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -182,9 +182,12 @@ impl HwAccel for Vaapi {
         result
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        let result = self.capabilities.can_encode(format, bit_depth)
-            || self.capabilities.can_encode_low_power(format, bit_depth);
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        let video_format = VideoFormat::from(*format);
+        let result = self.capabilities.can_encode(&video_format, bit_depth)
+            || self
+                .capabilities
+                .can_encode_low_power(&video_format, bit_depth);
 
         if !result {
             log::debug!(
@@ -199,15 +202,17 @@ impl HwAccel for Vaapi {
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
-        let force_cqp = self.capabilities.rate_control_mode_for(format, bit_depth)
+        let force_cqp = self
+            .capabilities
+            .rate_control_mode_for(&VideoFormat::from(*format), bit_depth)
             == Some(RateControlMode::Cqp);
 
         match format {
-            VideoFormat::H264 => {
+            EncodeFormat::H264 => {
                 let options = if force_cqp {
                     args!["-rc_mode", "1"]
                 } else {
@@ -222,7 +227,7 @@ impl HwAccel for Vaapi {
                     preferred_surface: FrameSurface::Vaapi,
                 })
             }
-            VideoFormat::Hevc => {
+            EncodeFormat::Hevc => {
                 let mut options = Vec::new();
                 if force_cqp {
                     options.extend(args!["-rc_mode", "1"]);
@@ -236,7 +241,7 @@ impl HwAccel for Vaapi {
                     preferred_surface: FrameSurface::Vaapi,
                 })
             }
-            VideoFormat::Mpeg2Video => {
+            EncodeFormat::Mpeg2Video => {
                 let mut options = Vec::new();
                 if force_cqp {
                     options.extend(args!["-rc_mode", "1"]);
@@ -250,7 +255,6 @@ impl HwAccel for Vaapi {
                     preferred_surface: FrameSurface::Vaapi,
                 })
             }
-            _ => None,
         }
     }
 

@@ -16,7 +16,7 @@ use ffpipeline::output_settings::{
     VideoFilterOptions,
 };
 use ffpipeline::pipeline::{
-    AudioFormat, Hz, Kbps, Pipeline, PixelFormat, VideoFormat, generate_pipeline,
+    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, PixelFormat, generate_pipeline,
 };
 use ffpipeline::probe::{
     ProbeDeps, ProbeResult, ProbeResultStream, ProbeResultVideoStream, Probeable,
@@ -401,7 +401,7 @@ pub async fn run_canvas_test(
             accel,
             &source_video,
             false,
-            Some(VideoFormat::H264),
+            Some(EncodeFormat::H264),
             8,
             Some(size),
             &args,
@@ -691,7 +691,7 @@ pub fn build_input(
 
 #[allow(dead_code)]
 pub struct TestOutputParams {
-    pub video_format: Option<VideoFormat>,
+    pub video_format: Option<EncodeFormat>,
     pub bit_depth: Option<u8>,
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
@@ -712,7 +712,7 @@ pub struct TestOutputParams {
 impl Default for TestOutputParams {
     fn default() -> Self {
         Self {
-            video_format: Some(VideoFormat::H264),
+            video_format: Some(EncodeFormat::H264),
             bit_depth: Some(8),
             video_bitrate: Some(Kbps(5000)),
             video_buffer: Some(Kbps(10000)),
@@ -930,7 +930,7 @@ pub fn assert_accel_usage(
     accel: &HardwareAccel,
     source: &ProbeResultVideoStream,
     source_is_hdr: bool,
-    video_format: Option<VideoFormat>,
+    video_format: Option<EncodeFormat>,
     bit_depth: u8,
     video_size: Option<FrameSize>,
     args: &[impl AsRef<str>],
@@ -987,11 +987,10 @@ pub fn assert_accel_usage(
             "{accel} reports it can encode {bit_depth}-bit {format} but the pipeline used {actual}"
         );
     } else {
-        let expected = match video_format {
-            Some(VideoFormat::Mpeg2Video) => "mpeg2video",
-            Some(VideoFormat::H264) => "libx264",
-            Some(VideoFormat::Hevc) => "libx265",
-            _ => panic!("unsupported output format"),
+        let expected = match format {
+            EncodeFormat::Mpeg2Video => "mpeg2video",
+            EncodeFormat::H264 => "libx264",
+            EncodeFormat::Hevc => "libx265",
         };
 
         assert_eq!(

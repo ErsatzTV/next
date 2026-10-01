@@ -7,7 +7,7 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{
-    FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+    EncodeFormat, FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -43,25 +43,26 @@ impl HwAccel for Rkmpp {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match (format, bit_depth) {
-            (VideoFormat::H264, 8) if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
+            (EncodeFormat::H264, 8) if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_rkmpp",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
             }),
-            (VideoFormat::Hevc, 8) if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
+            (EncodeFormat::Hevc, 8) if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_rkmpp",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),

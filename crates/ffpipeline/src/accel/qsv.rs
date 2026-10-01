@@ -8,7 +8,8 @@ use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
-    FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+    EncodeFormat, FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet,
+    VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -109,25 +110,26 @@ impl HwAccel for Qsv {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_qsv",
                 options: args!["-low_power", "0", "-look_ahead", "0", "-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
+            EncodeFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_qsv",
                 options: args![
                     "-low_power",
@@ -143,14 +145,13 @@ impl HwAccel for Qsv {
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
             }),
-            VideoFormat::Mpeg2Video => Some(VideoCodec {
+            EncodeFormat::Mpeg2Video => Some(VideoCodec {
                 codec_name: "mpeg2_qsv",
                 options: args!["-low_power", "0"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Qsv,
             }),
-            _ => None,
         }
     }
 

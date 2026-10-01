@@ -9,7 +9,9 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::{BwdifCudaOptions, VideoFilterOptions, YadifCudaOptions};
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    EncodeFormat, FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
@@ -135,26 +137,30 @@ impl HwAccel for Cuda {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_nvenc",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Cuda,
             }),
-            VideoFormat::Hevc => {
-                let options = if self.capabilities.b_frame_ref_mode(format) {
+            EncodeFormat::Hevc => {
+                let options = if self
+                    .capabilities
+                    .b_frame_ref_mode(&VideoFormat::from(*format))
+                {
                     args!["-tag:v", "hvc1", "-b_ref_mode", "1"]
                 } else {
                     args!["-tag:v", "hvc1", "-b_ref_mode", "0"]
@@ -168,7 +174,7 @@ impl HwAccel for Cuda {
                     preferred_surface: FrameSurface::Cuda,
                 })
             }
-            _ => None,
+            EncodeFormat::Mpeg2Video => None,
         }
     }
 
