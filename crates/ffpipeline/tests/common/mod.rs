@@ -50,6 +50,8 @@ pub struct TestCase {
     pub expected_audio_codec: String,
     /// Both `None` unless the test sets a copy policy
     pub expected_copy: CopyDecisions,
+    /// An output pixel that a burned-in white subtitle box must cover
+    pub burned_point: Option<(u32, u32)>,
 }
 
 #[allow(dead_code)]
@@ -222,6 +224,9 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
 
     let segment = find_first_segment(dir.path());
     assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
+    if let Some((x, y)) = test_case.burned_point {
+        assert_burned_in(&test_env.ffmpeg, &segment, x, y).await;
+    }
     let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
     assert_video(
         &output_probe,
@@ -508,6 +513,39 @@ pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
     assert!(
         output.status.success() && stderr.trim().is_empty(),
         "output segment does not decode cleanly:\n{stderr}"
+    );
+}
+
+/// Skips the first frames because the subtitle overlay can miss them: sub2video only
+/// shows a subtitle once its packet has been read.
+pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(path)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg(format!(
+                "select=gte(n\\,10),crop=2:2:{}:{},format=gray",
+                x & !1,
+                y & !1
+            ))
+            .args(["-frames:v", "1", "-f", "rawvideo", "-"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("pixel check timed out")
+    .expect("failed to decode output");
+    assert!(
+        output.status.success() && output.stdout.len() == 4,
+        "pixel check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.iter().all(|luma| *luma > 200),
+        "no burned-in subtitle at {x},{y}: luma {:?}",
+        output.stdout
     );
 }
 

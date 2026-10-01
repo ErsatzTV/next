@@ -113,12 +113,16 @@ macro_rules! shared_tests {
                 .await;
         }
 
+        #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
-        async fn copy_image_subtitle() {
+        async fn copy_image_subtitle(
+            #[values(None, Some(::ffpipeline::frame_size::FrameSize { width: 1280, height: 720 }))]
+            res: Option<::ffpipeline::frame_size::FrameSize>,
+        ) {
             $crate::common::shared::run(
                 $accel().await,
-                $crate::common::shared::copy_image_subtitle(),
+                $crate::common::shared::copy_image_subtitle(res),
             )
             .await;
         }
@@ -445,6 +449,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         expected_video_size: res,
         expected_audio_codec: af.to_string(),
         expected_copy: CopyDecisions::default(),
+        burned_point: None,
     }
 }
 
@@ -458,6 +463,7 @@ fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
         expected_video_size: size,
         expected_audio_codec: String::from("aac"),
         expected_copy: CopyDecisions::default(),
+        burned_point: None,
     }
 }
 
@@ -503,11 +509,14 @@ pub fn copy_graphics(res: Option<FrameSize>) -> TestCase {
     test_case
 }
 
-/// Image subtitles are only burned in when a size is configured.
-pub fn copy_image_subtitle() -> TestCase {
-    let mut test_case = copy("1080p_h264.ts", SIZE_720P);
-    test_case.params.video_size = Some(SIZE_720P);
+/// Without a configured size the subtitle is burned in at the source size.
+pub fn copy_image_subtitle(res: Option<FrameSize>) -> TestCase {
+    let size = res.unwrap_or(SIZE_1080P);
+    let mut test_case = copy("1080p_h264.ts", size);
+    test_case.params.video_size = res;
     test_case.subtitle_fixture = Some("subtitle_pgs.sup");
+    // inside the fixture's white box (760..1160, 940..1020 at 1080p), over the blue bar
+    test_case.burned_point = Some((1060 * size.width / 1920, 980 * size.height / 1080));
     test_case.expected_copy.video = blocked(vec![CopyBlocker::ImageSubtitle]);
     test_case
 }

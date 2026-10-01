@@ -389,13 +389,25 @@ impl Pipeline {
         let is_still_image = input_settings.video_input.probe_result.is_still_image();
 
         let subtitle_burn = match (subtitle_stream, input_settings.subtitle_input.as_ref()) {
-            (Some(stream), Some(input)) if stream.is_subtitle_image() => {
-                video_transcode.size.map(|size| SubtitleBurn::Image {
+            (Some(stream), Some(input)) if stream.is_subtitle_image() => video_transcode
+                .size
+                .or_else(|| {
+                    // without a target size only the transpose filter changes the frame size
+                    let (width, height) = (video_stream.width?, video_stream.height?);
+                    Some(if video_stream.is_quarter_turn() {
+                        FrameSize {
+                            width: height,
+                            height: width,
+                        }
+                    } else {
+                        FrameSize { width, height }
+                    })
+                })
+                .map(|size| SubtitleBurn::Image {
                     stream,
                     input,
                     size,
-                })
-            }
+                }),
             (Some(stream), Some(input))
                 if final_output_settings.subtitle_mode == SubtitleMode::Burn =>
             {
@@ -1467,6 +1479,45 @@ mod tests {
         assert_eq!(
             pipeline.copy_decisions().transcode_summary().as_deref(),
             Some("video (vc1 is not in copy_formats)")
+        );
+    }
+
+    #[test]
+    fn image_subtitle_burns_at_rotated_source_size_without_target_size() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut input.video_input.probe_result.streams[0]
+        {
+            video.rotation = Some(90);
+        }
+        let mut subtitle = multichannel_ac3_input("main.sup").video_input;
+        subtitle.probe_result.streams.truncate(1);
+        if let crate::probe::ProbeResultStream::Video(video) = &mut subtitle.probe_result.streams[0]
+        {
+            video.codec_type = crate::probe::CodecType::Subtitle;
+            video.codec = "hdmv_pgs_subtitle".to_owned();
+        }
+        input.subtitle_input = Some(subtitle);
+        let mut output = stereo_output();
+        output.video.transcode.size = None;
+        output.video.copy = Some(crate::output_settings::CopyPolicy::default());
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, output).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+
+        let filter = args
+            .windows(2)
+            .filter(|a| a[0] == "-filter_complex")
+            .map(|a| a[1].as_ref())
+            .collect::<Vec<_>>()
+            .join(";");
+        assert!(
+            filter.contains("scale=480:720:flags=fast_bilinear:force_original_aspect_ratio"),
+            "{filter}"
+        );
+        assert_eq!(
+            pipeline.copy_decisions().transcode_summary().as_deref(),
+            Some("video (image subtitles)")
         );
     }
 
