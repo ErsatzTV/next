@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
 use ffpipeline::pipeline::PtsOffset;
 use ffpipeline::web_vtt::{Cue, format_vtt_ts};
@@ -132,9 +132,19 @@ impl PlaylistManager {
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
             let (generated_playlist, _) = self.generate_playlist(|s| s.to_owned(), None)?;
-            let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-            tokio::fs::write(temp.path(), generated_playlist).await?;
-            tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file).await?;
+            let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
+                "create a temp file for the ffmpeg playlist",
+                &self.ffmpeg_playlist_file,
+            )?;
+            tokio::fs::write(temp.path(), generated_playlist)
+                .await
+                .io_context(
+                    "write the ffmpeg playlist body for",
+                    &self.ffmpeg_playlist_file,
+                )?;
+            tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file)
+                .await
+                .io_context("publish the ffmpeg playlist", &self.ffmpeg_playlist_file)?;
         }
 
         Ok(())
@@ -143,7 +153,9 @@ impl PlaylistManager {
     pub async fn update(&mut self) -> Result<(), ChannelError> {
         // scan for segments on disk
         let mut new_segment_files: VecDeque<String> = VecDeque::new();
-        let mut entries = tokio::fs::read_dir(&self.output_folder).await?;
+        let mut entries = tokio::fs::read_dir(&self.output_folder)
+            .await
+            .io_context("scan the segment folder", &self.output_folder)?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             if let Some(file_name) = entry.file_name().to_str()
                 && file_name.ends_with(".ts")
@@ -210,18 +222,30 @@ impl PlaylistManager {
                     duration,
                     mpegts_90khz,
                 );
-                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-                tokio::fs::write(temp.path(), body).await?;
-                tokio::fs::rename(temp.path(), &vtt_full).await?;
+                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)
+                    .io_context("create a temp file for the subtitle segment", &vtt_full)?;
+                tokio::fs::write(temp.path(), body)
+                    .await
+                    .io_context("write the subtitle segment body for", &vtt_full)?;
+                tokio::fs::rename(temp.path(), &vtt_full)
+                    .await
+                    .io_context("publish the subtitle segment", &vtt_full)?;
                 src.next_segment_source_offset += Duration::from_secs_f64(duration);
             } else {
                 let body = format!(
                     "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
                     mpegts_90khz
                 );
-                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-                tokio::fs::write(temp.path(), body).await?;
-                tokio::fs::rename(temp.path(), &vtt_full).await?;
+                let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
+                    "create a temp file for the empty subtitle segment",
+                    &vtt_full,
+                )?;
+                tokio::fs::write(temp.path(), body)
+                    .await
+                    .io_context("write the empty subtitle segment body for", &vtt_full)?;
+                tokio::fs::rename(temp.path(), &vtt_full)
+                    .await
+                    .io_context("publish the empty subtitle segment", &vtt_full)?;
             }
         }
 
@@ -236,14 +260,18 @@ impl PlaylistManager {
                 }
 
                 let path = self.output_folder.join(&removed.path);
-                tokio::fs::remove_file(&path).await?;
+                tokio::fs::remove_file(&path)
+                    .await
+                    .io_context("delete the trimmed segment", &path)?;
 
                 let vtt_path = self.output_folder.join(format!(
                     "{}.vtt",
                     removed.path.strip_suffix(".ts").unwrap_or(&removed.path)
                 ));
                 if vtt_path.exists() {
-                    tokio::fs::remove_file(&vtt_path).await?;
+                    tokio::fs::remove_file(&vtt_path)
+                        .await
+                        .io_context("delete the trimmed subtitle segment", &vtt_path)?;
                 }
             }
         }
@@ -251,27 +279,57 @@ impl PlaylistManager {
         // generate and atomically save playlist
         let (generated_playlist, playlist_segment_count) =
             self.generate_playlist(|s| s.to_owned(), Some(10))?;
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-        tokio::fs::write(temp.path(), generated_playlist).await?;
-        tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
+        let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
+            "create a temp file for the served playlist",
+            &self.generated_playlist_file,
+        )?;
+        tokio::fs::write(temp.path(), generated_playlist)
+            .await
+            .io_context(
+                "write the served playlist body for",
+                &self.generated_playlist_file,
+            )?;
+        tokio::fs::rename(temp.path(), &self.generated_playlist_file)
+            .await
+            .io_context("publish the served playlist", &self.generated_playlist_file)?;
 
         // generate and atomically save subtitle playlist
         let (generated_subtitle_playlist, _) = self.generate_playlist(
             |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
             Some(10),
         )?;
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-        tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
-        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
+        let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
+            "create a temp file for the subtitle playlist",
+            &self.generated_subtitle_playlist_file,
+        )?;
+        tokio::fs::write(temp.path(), generated_subtitle_playlist)
+            .await
+            .io_context(
+                "write the subtitle playlist body for",
+                &self.generated_subtitle_playlist_file,
+            )?;
+        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file)
+            .await
+            .io_context(
+                "publish the subtitle playlist",
+                &self.generated_subtitle_playlist_file,
+            )?;
 
         if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
-            tokio::fs::write(&self.ready_file, b"").await?;
+            tokio::fs::write(&self.ready_file, b"")
+                .await
+                .io_context("publish the ready signal", &self.ready_file)?;
             self.ready = true;
         }
 
         if self.heartbeat_file.exists() {
-            let metadata = tokio::fs::metadata(&self.heartbeat_file).await?;
-            let modified = metadata.modified()?;
+            let metadata = tokio::fs::metadata(&self.heartbeat_file)
+                .await
+                .io_context("stat the heartbeat file", &self.heartbeat_file)?;
+            let modified = metadata.modified().io_context(
+                "read the modified time of the heartbeat file",
+                &self.heartbeat_file,
+            )?;
             self.timeout = modified.elapsed().unwrap_or(Duration::MAX) > HEARTBEAT_FILE_TIMEOUT;
         }
 
@@ -354,7 +412,9 @@ impl PlaylistManager {
 
         let path = Path::new(&self.ffmpeg_playlist_file);
         if path.exists() {
-            let contents = tokio::fs::read_to_string(&path).await?;
+            let contents = tokio::fs::read_to_string(&path)
+                .await
+                .io_context("read the ffmpeg playlist", path)?;
             let lines: Vec<&str> = contents.split('\n').collect();
             let mut i: usize = 0;
             while i < lines.len() {
@@ -419,4 +479,91 @@ fn render_subtitle_segment(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A manager writing into a real folder, so `update` reaches the disk.
+    fn manager_in(folder: &Path) -> PlaylistManager {
+        PlaylistManager::new(
+            OffsetDateTime::UNIX_EPOCH,
+            4,
+            folder.to_path_buf(),
+            folder.join(".ready"),
+            PlaylistManagerOutputFiles {
+                generated_playlist_file: folder.join("live.m3u8").display().to_string(),
+                ffmpeg_playlist_file: folder.join("ffmpeg.m3u8").display().to_string(),
+                generated_subtitle_playlist_file: folder
+                    .join("live_sub.m3u8")
+                    .display()
+                    .to_string(),
+            },
+        )
+    }
+
+    fn segment(path: &str, start_offset_secs: i64) -> Segment {
+        Segment {
+            path: path.to_owned(),
+            duration: 4.0,
+            program_date_time: OffsetDateTime::UNIX_EPOCH
+                + Duration::from_secs(start_offset_secs as u64),
+        }
+    }
+
+    /// An io failure inside `update` is one of the two ways an item airs
+    /// black, and every one of them used to render as the same sentence about
+    /// loading a channel config. These pin the two facts a log line has to
+    /// carry on its own: what was being done, and to what.
+
+    #[tokio::test]
+    async fn scanning_a_missing_segment_folder_names_the_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        let missing = folder.path().join("gone");
+        let mut manager = manager_in(&missing);
+
+        let message = manager.update().await.unwrap_err().to_string();
+
+        assert!(
+            message.contains("scan the segment folder"),
+            "message does not name the operation: {message}"
+        );
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "message does not name the folder: {message}"
+        );
+        assert!(
+            !message.contains("channel config"),
+            "message blames the channel config: {message}"
+        );
+    }
+
+    /// The incident's signature: a trimmed segment whose file is already gone
+    /// aborts `update`, fails the item, and airs black. The line has to name
+    /// the segment, or the only way to reach it is to read this module.
+    #[tokio::test]
+    async fn trimming_a_segment_whose_file_is_gone_names_the_segment() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut manager = manager_in(folder.path());
+
+        // one held segment, aged past the retention window, with no file on
+        // disk behind it
+        manager.segments.push_back(segment("live000042.ts", 0));
+
+        let message = manager.update().await.unwrap_err().to_string();
+
+        assert!(
+            message.contains("delete the trimmed segment"),
+            "message does not name the operation: {message}"
+        );
+        assert!(
+            message.contains("live000042.ts"),
+            "message does not name the segment: {message}"
+        );
+        assert!(
+            !message.contains("channel config"),
+            "message blames the channel config: {message}"
+        );
+    }
 }

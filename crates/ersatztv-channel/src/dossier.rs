@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use ersatztv_channel::config::ChannelConfig;
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_playout::playout::{DATE_FORMAT, PlayoutItem};
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::hw_accel::HardwareAccel;
@@ -55,7 +55,9 @@ impl Dossier {
                 ))
             };
 
-            tokio::fs::create_dir_all(&dossier_folder).await?;
+            tokio::fs::create_dir_all(&dossier_folder)
+                .await
+                .io_context("create the dossier folder", &dossier_folder)?;
 
             let mut report_saved = false;
             if let Some(ref report_source_file) = self.report_source_file
@@ -74,34 +76,46 @@ impl Dossier {
                 && let Some(stderr_tail) = self.stderr_tail.as_ref().filter(|t| !t.is_empty())
             {
                 let ffmpeg_stderr_file = dossier_folder.join("ffmpeg_stderr.log");
-                tokio::fs::write(&ffmpeg_stderr_file, stderr_tail.join("\n")).await?;
+                tokio::fs::write(&ffmpeg_stderr_file, stderr_tail.join("\n"))
+                    .await
+                    .io_context("write the dossier ffmpeg stderr log", &ffmpeg_stderr_file)?;
             }
 
             let pipeline_json =
                 serde_json::to_string_pretty(&self.pipeline).unwrap_or_else(|_| String::from("{}"));
             let pipeline_file = dossier_folder.join("pipeline.json");
-            tokio::fs::write(&pipeline_file, pipeline_json).await?;
+            tokio::fs::write(&pipeline_file, pipeline_json)
+                .await
+                .io_context("write the dossier pipeline record", &pipeline_file)?;
 
             if let Some(item_json) = &self.item_json {
                 let playout_item_file = dossier_folder.join("playout_item.json");
-                tokio::fs::write(&playout_item_file, item_json).await?;
+                tokio::fs::write(&playout_item_file, item_json)
+                    .await
+                    .io_context("write the dossier playout item", &playout_item_file)?;
             }
 
             if let Some(media_info) = &self.media_info {
                 let media_info_json =
                     serde_json::to_string_pretty(media_info).unwrap_or_else(|_| String::from("{}"));
                 let media_info_file = dossier_folder.join("media_info.json");
-                tokio::fs::write(&media_info_file, media_info_json).await?;
+                tokio::fs::write(&media_info_file, media_info_json)
+                    .await
+                    .io_context("write the dossier media info", &media_info_file)?;
             }
 
             let channel_config_json = serde_json::to_string_pretty(&self.channel_config)
                 .unwrap_or_else(|_| String::from("{}"));
             let channel_config_file = dossier_folder.join("channel_config.json");
-            tokio::fs::write(&channel_config_file, &channel_config_json).await?;
+            tokio::fs::write(&channel_config_file, &channel_config_json)
+                .await
+                .io_context("write the dossier channel config", &channel_config_file)?;
 
             if let Some(outcome) = &self.outcome {
                 let outcome_file = dossier_folder.join("outcome.txt");
-                tokio::fs::write(&outcome_file, outcome).await?;
+                tokio::fs::write(&outcome_file, outcome)
+                    .await
+                    .io_context("write the dossier outcome", &outcome_file)?;
             }
         }
 
