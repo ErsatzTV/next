@@ -9,6 +9,9 @@ use crate::ArgVec;
 use crate::audio_codec::AudioCodec;
 use crate::audio_decoder::AudioDecoder;
 use crate::audio_filter::AudioFilter;
+use crate::copy_decision::{
+    CopyDecision, CopyDecisions, VideoCopyContext, audio_copy_decision, video_copy_decision,
+};
 use crate::error::FFPipelineError;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::filter_chain::{FilterChain, PipelineFilter};
@@ -18,13 +21,14 @@ use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{
     FfmpegInputArgs, FfmpegInputRequestContext, GraphicsInput, GraphicsKind, GraphicsLocation,
-    InputSettings, InputSource,
+    InputSettings, InputSource, ProbedInput,
 };
 use crate::output_option::OutputOption;
 use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
 };
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOverlay};
+use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -93,6 +97,19 @@ impl Default for PtsOffset {
             duration: Duration::ZERO,
         }
     }
+}
+
+/// A subtitle the pipeline draws onto the video, which rules out video copy.
+enum SubtitleBurn<'a> {
+    Image {
+        stream: &'a ProbeResultVideoStream,
+        input: &'a ProbedInput,
+        size: FrameSize,
+    },
+    Text {
+        stream: &'a ProbeResultVideoStream,
+        input: &'a ProbedInput,
+    },
 }
 
 pub(crate) struct OutputContext {
@@ -315,6 +332,7 @@ pub struct EnvironmentVariable {
 
 pub struct Pipeline {
     ffmpeg_info: FfmpegInfo,
+    copy_decisions: CopyDecisions,
     accel: Option<HardwareAccel>,
     filter_options: VideoFilterOptions,
     initial_state: FrameState,
@@ -358,15 +376,6 @@ impl Pipeline {
             input_settings.video_input.out_point - input_settings.video_input.in_point,
         );
 
-        let audio_codec = match (
-            &final_output_settings.audio.copy,
-            final_output_settings.audio.transcode.format,
-        ) {
-            (Some(_), _) => AudioCodec::Copy,
-            (None, AudioFormat::Aac) => AudioCodec::Aac,
-            (None, AudioFormat::Ac3) => AudioCodec::Ac3,
-        };
-
         let video_stream = input_settings.select_video_stream()?;
         let audio_stream = input_settings.select_audio_stream()?;
         let subtitle_stream = input_settings.select_subtitle_stream();
@@ -377,11 +386,56 @@ impl Pipeline {
             .collect();
 
         let video_transcode = &final_output_settings.video.transcode;
+        let is_still_image = input_settings.video_input.probe_result.is_still_image();
+
+        let subtitle_burn = match (subtitle_stream, input_settings.subtitle_input.as_ref()) {
+            (Some(stream), Some(input)) if stream.is_subtitle_image() => {
+                video_transcode.size.map(|size| SubtitleBurn::Image {
+                    stream,
+                    input,
+                    size,
+                })
+            }
+            (Some(stream), Some(input))
+                if final_output_settings.subtitle_mode == SubtitleMode::Burn =>
+            {
+                Some(SubtitleBurn::Text { stream, input })
+            }
+            _ => None,
+        };
+
+        let copy_decisions = CopyDecisions {
+            video: final_output_settings.video.copy.as_ref().map(|policy| {
+                video_copy_decision(
+                    policy,
+                    &input_settings.video_input,
+                    video_stream,
+                    &VideoCopyContext {
+                        is_still_image,
+                        has_graphics: !input_settings.graphics_inputs.is_empty(),
+                        image_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Image { .. })),
+                        burned_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Text { .. })),
+                    },
+                )
+            }),
+            audio: final_output_settings.audio.copy.as_ref().map(|policy| {
+                audio_copy_decision(policy, &input_settings.audio_input, audio_stream)
+            }),
+        };
+
+        let audio_codec = match (
+            &copy_decisions.audio,
+            final_output_settings.audio.transcode.format,
+        ) {
+            (Some(CopyDecision::Copy), _) => AudioCodec::Copy,
+            (_, AudioFormat::Aac) => AudioCodec::Aac,
+            (_, AudioFormat::Ac3) => AudioCodec::Ac3,
+        };
 
         // TODO: add target profile to config
-        let video_encoder = match &final_output_settings.video.copy {
-            Some(_) => VideoEncoder::Copy,
-            None => {
+        let video_encoder = match &copy_decisions.video {
+            Some(CopyDecision::Copy) => VideoEncoder::Copy,
+            _ => {
                 let format = video_transcode.format;
                 let bit_depth = video_transcode.bit_depth;
                 VideoEncoder::Encode(
@@ -399,7 +453,6 @@ impl Pipeline {
             }
         };
 
-        let is_still_image = input_settings.video_input.probe_result.is_still_image();
         let video_decoder = VideoDecoder::new(
             ffmpeg_info,
             video_stream,
@@ -553,12 +606,12 @@ impl Pipeline {
             },
         ];
 
-        if let Some(subtitle_stream) = subtitle_stream
-            && let Some(subtitle_input) = input_settings.subtitle_input.as_ref()
-        {
-            if subtitle_stream.is_subtitle_image()
-                && let Some(size) = video_transcode.size
-            {
+        match subtitle_burn {
+            Some(SubtitleBurn::Image {
+                stream: subtitle_stream,
+                input: subtitle_input,
+                size,
+            }) => {
                 inputs.push(PipelineInput::Subtitle {
                     input_source: subtitle_input.input_source.to_owned(),
                     index: subtitle_stream.stream_index,
@@ -589,9 +642,11 @@ impl Pipeline {
                     secondary_source: OverlaySource::Subtitle,
                     location: None,
                 }));
-            } else if !subtitle_stream.is_subtitle_image()
-                && final_output_settings.subtitle_mode == SubtitleMode::Burn
-            {
+            }
+            Some(SubtitleBurn::Text {
+                stream: subtitle_stream,
+                input: subtitle_input,
+            }) => {
                 // only use force_style with SRT, which doesn't have any styling of its own
                 let mut final_force_style = None;
                 if subtitle_stream.codec == "srt" || subtitle_stream.codec == "subrip" {
@@ -608,6 +663,7 @@ impl Pipeline {
                     .into(),
                 ))
             }
+            None => {}
         }
 
         for (graphics_input, graphics_stream) in
@@ -888,6 +944,7 @@ impl Pipeline {
 
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
+            copy_decisions,
             accel: final_output_settings.accel.clone(),
             filter_options: final_output_settings.video.transcode.filter_options,
             initial_state: initial_state.clone(),
@@ -927,6 +984,10 @@ impl Pipeline {
             output_context,
             env_vars,
         })
+    }
+
+    pub fn copy_decisions(&self) -> &CopyDecisions {
+        &self.copy_decisions
     }
 
     pub fn optimize(&mut self) {
@@ -1382,6 +1443,31 @@ mod tests {
         ] {
             assert!(!args.iter().any(|a| a == option), "{option}: {args:?}");
         }
+    }
+
+    #[test]
+    fn copy_transcodes_blocked_stream_only() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut input.video_input.probe_result.streams[0]
+        {
+            video.codec = "vc1".to_owned();
+        }
+        let mut output = stereo_output();
+        output.video.copy = Some(crate::output_settings::CopyPolicy::default());
+        output.audio.copy = Some(crate::output_settings::CopyPolicy::default());
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, output).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+
+        for (option, value) in [("-vcodec", "libx264"), ("-acodec", "copy")] {
+            let index = args.iter().rposition(|a| a == option).expect(option);
+            assert_eq!(args[index + 1], value, "{args:?}");
+        }
+        assert_eq!(
+            pipeline.copy_decisions().transcode_summary().as_deref(),
+            Some("video (vc1 is not in copy_formats)")
+        );
     }
 
     #[test]

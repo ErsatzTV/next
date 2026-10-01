@@ -99,6 +99,8 @@ pub struct ChannelSession {
     timeout_notify: Arc<tokio::sync::Notify>,
 
     cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
+    // work-ahead runs an item in chunks; warn about its copy blockers once
+    copy_warned_item_id: Option<String>,
     dynamic_http_client: reqwest::Client,
 }
 
@@ -193,6 +195,7 @@ impl ChannelSession {
             state: ChannelSessionState::SeekAndWorkAhead,
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
             cached_subtitles: None,
+            copy_warned_item_id: None,
             dynamic_http_client,
         })
     }
@@ -387,20 +390,13 @@ impl ChannelSession {
 
         let pts_duration = pts_time.map(|p| p.duration);
 
-        let subtitle_mode = if is_fallback {
-            // the fallback message is only useful on screen
-            SubtitleMode::Burn
-        } else {
-            self.channel_config.normalization.subtitle.mode.into()
-        };
-
         let result = self
             .transcode_item(
                 &current_item,
                 realtime,
                 troubleshoot,
                 pts_duration,
-                subtitle_mode,
+                is_fallback,
             )
             .await;
 
@@ -413,14 +409,8 @@ impl ChannelSession {
                 let reason = FallbackReason::from_transcode_error(&current_item, e);
                 reason.log(&self.transcoded_until);
                 let fallback_item = self.fallback_playout_item(&reason).await;
-                self.transcode_item(
-                    &fallback_item,
-                    realtime,
-                    troubleshoot,
-                    pts_duration,
-                    SubtitleMode::Burn,
-                )
-                .await?
+                self.transcode_item(&fallback_item, realtime, troubleshoot, pts_duration, true)
+                    .await?
             }
         };
 
@@ -438,8 +428,15 @@ impl ChannelSession {
         realtime: bool,
         troubleshoot: bool,
         pts_duration: Option<Duration>,
-        subtitle_mode: SubtitleMode,
+        is_fallback: bool,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
+        let subtitle_mode = if is_fallback {
+            // the fallback message is only useful on screen
+            SubtitleMode::Burn
+        } else {
+            self.channel_config.normalization.subtitle.mode.into()
+        };
+
         // prioritize source from audio tracks, then default source
         let audio_source = Self::resolve_source(current_item, |t| t.audio.as_ref())
             .ok_or(ChannelError::PlayoutJsonAudioSourceRequired)?;
@@ -759,6 +756,33 @@ impl ChannelSession {
         let envs = pipeline_result.envs();
         log::debug!("optimized pipeline: {}", args.join(" "));
 
+        let copy_note = pipeline_result
+            .copy_decisions()
+            .transcode_summary()
+            .map(|summary| {
+                if is_fallback {
+                    String::from("copy channel transcodes the fallback item")
+                } else {
+                    format!(
+                        "copy channel transcodes item {}: {summary}",
+                        current_item.id
+                    )
+                }
+            });
+        if let Some(note) = &copy_note {
+            // the fallback reason is already logged
+            if is_fallback {
+                log::debug!("{note}");
+            } else if self.copy_warned_item_id.as_ref() != Some(&current_item.id) {
+                log::warn!("{note}");
+                self.copy_warned_item_id = Some(current_item.id.clone());
+            }
+        }
+        let outcome = |text: &str| match &copy_note {
+            Some(note) => format!("{text}\n{note}"),
+            None => text.to_owned(),
+        };
+
         self.playlist_manager
             .lock()
             .await
@@ -810,7 +834,7 @@ impl ChannelSession {
                         &video_probe_result,                        &audio_probe_result,
                         subtitle_probe_result.as_ref(),
                         &ring,
-                        format!("ffmpeg exited with code {status}")).await;
+                        outcome(&format!("ffmpeg exited with code {status}"))).await;
                     return Err(ChannelError::FfmpegFailed {
                         status: status
                             .code()
@@ -820,7 +844,7 @@ impl ChannelSession {
                 } else if troubleshoot {
                     self.write_dossier(current_item, &video_probe_result,
                         &audio_probe_result, subtitle_probe_result.as_ref(),
-                        &ring, "ffmpeg exited successfully".to_string()).await;
+                        &ring, outcome("ffmpeg exited successfully")).await;
                 } else {
                     self.cleanup_old_report().await;
                 }
@@ -844,7 +868,7 @@ impl ChannelSession {
                 ffmpeg_child.kill().await.ok();
                 let _ = reader_handle.await;
                 self.write_dossier(current_item, &video_probe_result, &audio_probe_result,
-                    subtitle_probe_result.as_ref(), &ring, "ffmpeg stalled".to_string()).await;
+                    subtitle_probe_result.as_ref(), &ring, outcome("ffmpeg stalled")).await;
                 return Err(ChannelError::Stalled(self.channel_config.number().to_owned()));
             }
         }
