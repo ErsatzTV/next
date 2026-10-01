@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Formatter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,12 +13,17 @@ use ersatztv_playout::playout::{
     ProbeHint, SubtitleHint, TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
+use ffpipeline::copy_decision::{CopyBlocker, CopyDecision};
+use ffpipeline::error::FFPipelineError;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::input::{
     FfmpegInputArgs, GraphicsInput, HttpInputOptions, HttpInputSource, InputSettings, InputSource,
     LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
+};
+use ffpipeline::keyframe_seek::{
+    CopySeekRequest, InputStart, Keyframe, KeyframeLocator, plan_copy_seek,
 };
 use ffpipeline::output_settings::{
     AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings, SubtitleMode,
@@ -48,6 +53,8 @@ const STDERR_RING_LINES: usize = 2_000;
 const STALL_THRESHOLD: Duration = Duration::from_secs(60);
 const PLAYLIST_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
 const PLAYLIST_UPDATE_INTERVAL_STARTUP: Duration = Duration::from_millis(200);
+const INPUT_START_CACHE_LIMIT: usize = 4_096;
+const WORK_AHEAD_LIMIT: Duration = Duration::from_secs(SEGMENT_SECONDS as u64 * 11);
 
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
@@ -73,6 +80,14 @@ struct TimingResult {
     out_point: Duration,
     finish: OffsetDateTime,
     is_complete: bool,
+}
+
+/// The next chunk starts here. A new search from the schedule position could skip a GOP,
+/// because the item was shifted back.
+struct CopyResume {
+    item_id: String,
+    at: OffsetDateTime,
+    keyframe: Keyframe,
 }
 
 pub struct ChannelSession {
@@ -101,6 +116,8 @@ pub struct ChannelSession {
     cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
     // work-ahead runs one item as several chunks; warn once per item
     copy_warned_item_id: Option<String>,
+    copy_resume: Option<CopyResume>,
+    input_starts: HashMap<(String, u32), Option<InputStart>>,
     dynamic_http_client: reqwest::Client,
 }
 
@@ -196,6 +213,8 @@ impl ChannelSession {
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
             cached_subtitles: None,
             copy_warned_item_id: None,
+            copy_resume: None,
+            input_starts: HashMap::new(),
             dynamic_http_client,
         })
     }
@@ -663,6 +682,26 @@ impl ChannelSession {
             subtitle_input,
             graphics_inputs,
             channel_number: Some(self.channel_config.number().to_owned()),
+            video_copy_seek: None,
+            video_copy_blockers: Vec::new(),
+        };
+
+        let copy_timing = if output_settings.video.copy.is_some()
+            && !is_live
+            && audio_source_is_video_source
+            && pipeline::predict_copy_decisions(&input_settings, &output_settings)
+                .is_ok_and(|d| d.video == Some(CopyDecision::Copy))
+        {
+            self.snap_copy_seek(
+                current_item,
+                &mut input_settings,
+                start_at_zero,
+                realtime,
+                &video_source,
+            )
+            .await
+        } else {
+            None
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
@@ -827,10 +866,147 @@ impl ChannelSession {
             }
         }
 
-        let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
-        let is_complete = is_live || (audio_timing.is_complete && video_timing.is_complete);
+        let (finish, is_complete) = copy_timing.unwrap_or((
+            std::cmp::min(audio_timing.finish, video_timing.finish),
+            is_live || (audio_timing.is_complete && video_timing.is_complete),
+        ));
 
         Ok((finish, is_complete))
+    }
+
+    /// Keeps the HLS timeline on schedule for copied video. `None` keeps the scheduled timing.
+    async fn snap_copy_seek(
+        &mut self,
+        current_item: &PlayoutItem,
+        input_settings: &mut InputSettings,
+        start_at_zero: bool,
+        realtime: bool,
+        video_source: &PlayoutItemSource,
+    ) -> Option<(OffsetDateTime, bool)> {
+        let resume = self.copy_resume.take().filter(|r| {
+            !start_at_zero && r.item_id == current_item.id && r.at == self.transcoded_until
+        });
+        let effective_now = if start_at_zero {
+            current_item.start
+        } else {
+            self.transcoded_until
+        };
+        let (in_point_ms, out_point_ms) = source_points_ms(current_item, video_source);
+        let floor = Duration::from_millis(in_point_ms);
+        let target = input_settings.video_input.in_point;
+        // same as `input_timing`: a source shorter than its slot ends early
+        let remaining = Duration::from_millis(
+            (current_item.finish - effective_now)
+                .whole_milliseconds()
+                .max(0) as u64,
+        )
+        .min(Duration::from_millis(out_point_ms).saturating_sub(target));
+
+        let video_index = input_settings.select_video_stream().ok()?.stream_index;
+        let audio_index = input_settings
+            .select_audio_stream()
+            .ok()
+            .map(|a| a.stream_index);
+        let locator = KeyframeLocator::new(
+            &self.ffmpeg_path,
+            &input_settings.video_input,
+            video_index,
+            audio_index,
+        );
+        let key = (
+            input_settings.video_input.probe_result.path.clone(),
+            video_index,
+        );
+        if target.is_zero()
+            && resume.is_none()
+            && let Some(blocker) =
+                input_start_blocker(&mut self.input_starts, &locator, key.clone(), current_item)
+                    .await
+        {
+            input_settings.video_copy_blockers.push(blocker);
+            return None;
+        }
+
+        let mut request = CopySeekRequest {
+            target,
+            floor,
+            remaining,
+            limit: (!realtime).then_some(WORK_AHEAD_LIMIT),
+            resume: resume.as_ref().map(|r| r.keyframe),
+        };
+        let mut result = plan_copy_seek(&locator, request).await;
+        // no keyframe before the target: the input starts between keyframes, or the target is
+        // before the first keyframe (ts audio often starts first)
+        if matches!(result, Err(FFPipelineError::NoKeyframe(_)))
+            && resume.is_none()
+            && !target.is_zero()
+        {
+            if let Some(blocker) =
+                input_start_blocker(&mut self.input_starts, &locator, key, current_item).await
+            {
+                input_settings.video_copy_blockers.push(blocker);
+                return None;
+            }
+            request.target = Duration::ZERO;
+            result = plan_copy_seek(&locator, request).await;
+        }
+        let plan = match result {
+            Ok(plan) => plan,
+            Err(FFPipelineError::NoKeyframe(_)) => {
+                input_settings
+                    .video_copy_blockers
+                    .push(CopyBlocker::NoKeyframes);
+                return None;
+            }
+            Err(e) => {
+                log::warn!(
+                    "copy of item {} will seek without keyframe alignment: {e}",
+                    current_item.id
+                );
+                return None;
+            }
+        };
+        log::debug!(
+            "copy seek for item {}: {request:?} => {plan:?}",
+            current_item.id
+        );
+        if plan.seek.start.is_none() && plan.seek.end.is_none() {
+            return None;
+        }
+
+        for input in [
+            &mut input_settings.video_input,
+            &mut input_settings.audio_input,
+        ] {
+            input.in_point = plan.in_point;
+            input.out_point = plan.in_point + plan.duration;
+        }
+        // sidecar subtitles must follow the shifted video
+        if let Some(subtitle_input) = input_settings.subtitle_input.as_mut() {
+            let shift = |t: Duration| {
+                if plan.in_point >= target {
+                    t + (plan.in_point - target)
+                } else {
+                    t.saturating_sub(target - plan.in_point)
+                }
+            };
+            subtitle_input.in_point = shift(subtitle_input.in_point);
+            subtitle_input.out_point = shift(subtitle_input.out_point);
+        }
+        input_settings.video_copy_seek = Some(plan.seek);
+
+        let finish = if plan.is_complete {
+            current_item.finish
+        } else {
+            effective_now + plan.duration
+        };
+        self.copy_resume = plan.seek.end.map(|keyframe| CopyResume {
+            item_id: current_item.id.clone(),
+            at: finish,
+            keyframe,
+        });
+
+        Some((finish, plan.is_complete))
     }
 
     fn next_state(state: ChannelSessionState, is_complete: bool) -> ChannelSessionState {
@@ -1001,18 +1177,7 @@ impl ChannelSession {
 
         let item_start = current_item.start;
         let item_finish = current_item.finish;
-        let item_duration = current_item.finish - current_item.start;
-        let item_in_point_base_ms = match source {
-            PlayoutItemSource::Local { in_point_ms, .. }
-            | PlayoutItemSource::Http { in_point_ms, .. } => in_point_ms.unwrap_or(0),
-            _ => 0,
-        };
-        let item_out_point_ms = match source {
-            PlayoutItemSource::Local { out_point_ms, .. }
-            | PlayoutItemSource::Http { out_point_ms, .. } => out_point_ms
-                .unwrap_or(item_in_point_base_ms + item_duration.whole_milliseconds() as u64),
-            _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
-        };
+        let (item_in_point_base_ms, item_out_point_ms) = source_points_ms(current_item, source);
 
         let effective_now = if start_at_zero {
             item_start
@@ -1046,7 +1211,7 @@ impl ChannelSession {
         let limit = if realtime {
             Duration::ZERO
         } else {
-            Duration::from_secs(SEGMENT_SECONDS as u64 * 11u64)
+            WORK_AHEAD_LIMIT
         };
 
         let mut finish = item_finish;
@@ -1605,6 +1770,57 @@ fn stream_output_settings(
     (audio, video)
 }
 
+/// Cached because cut files (commercials) play many times. A failed check returns `None` and
+/// keeps the copy.
+async fn input_start_blocker(
+    cache: &mut HashMap<(String, u32), Option<InputStart>>,
+    locator: &KeyframeLocator<'_>,
+    key: (String, u32),
+    item: &PlayoutItem,
+) -> Option<CopyBlocker> {
+    let input_start = match cache.get(&key) {
+        Some(cached) => *cached,
+        None => match locator.input_start().await {
+            Ok(input_start) => {
+                if cache.len() >= INPUT_START_CACHE_LIMIT {
+                    cache.clear();
+                }
+                cache.insert(key, input_start);
+                input_start
+            }
+            Err(e) => {
+                log::warn!("failed to check how item {} starts: {e}", item.id);
+                return None;
+            }
+        },
+    };
+    input_start.map_or(Some(CopyBlocker::NoKeyframes), |s| s.copy_blocker())
+}
+
+/// Without an out point, the source runs for the scheduled duration.
+fn source_points_ms(item: &PlayoutItem, source: &PlayoutItemSource) -> (u64, u64) {
+    let item_duration_ms = (item.finish - item.start).whole_milliseconds() as u64;
+    match source {
+        PlayoutItemSource::Local {
+            in_point_ms,
+            out_point_ms,
+            ..
+        }
+        | PlayoutItemSource::Http {
+            in_point_ms,
+            out_point_ms,
+            ..
+        } => {
+            let in_point = in_point_ms.unwrap_or(0);
+            (
+                in_point,
+                out_point_ms.unwrap_or(in_point + item_duration_ms),
+            )
+        }
+        _ => (0, item_duration_ms),
+    }
+}
+
 fn source_is_live(source: &PlayoutItemSource) -> bool {
     matches!(
         source,
@@ -1748,6 +1964,8 @@ mod tests {
             subtitle_input: Some(hinted_input(tracks.subtitle.as_ref(), duration)),
             graphics_inputs: Vec::new(),
             channel_number: None,
+            video_copy_seek: None,
+            video_copy_blockers: Vec::new(),
         };
         let output = OutputSettings {
             audio,

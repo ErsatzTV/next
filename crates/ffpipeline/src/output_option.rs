@@ -20,6 +20,9 @@ pub enum OutputOption {
     AudioChannels(Option<u32>),
     AudioSampleRate(Option<Hz>),
     Duration(Duration),
+    /// Output `-ss`: drops packets by dts
+    Seek(Duration),
+    H264CopyParameterSets,
     TsOffset(Option<PtsOffset>),
     CudaNoAutoScale,
     NoDemuxDecodeDelay,
@@ -74,6 +77,12 @@ impl OutputOption {
             OutputOption::AudioSampleRate(None) => Vec::new(),
             OutputOption::Duration(duration) => {
                 args!["-t", format!("{}ms", duration.as_millis())]
+            }
+            OutputOption::Seek(position) => {
+                args!["-ss", format!("{:.6}", position.as_secs_f64())]
+            }
+            OutputOption::H264CopyParameterSets => {
+                args!["-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe"]
             }
             OutputOption::TsOffset(Some(pts_offset)) if pts_offset.duration > Duration::ZERO => {
                 args![

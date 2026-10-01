@@ -36,6 +36,11 @@ pub enum CopyBlocker {
     GeneratedSource,
     /// AVI packets have no pts, so copied timing is wrong; AAC copy from AVI to mpegts fails
     ContainerWithoutPts,
+    /// Copy drops video until a keyframe.
+    NoKeyframes,
+    /// Copy would drop video until the first keyframe and shorten the timeline. A transcode
+    /// holds the first picture.
+    StartsBetweenKeyframes,
 }
 
 impl fmt::Display for CopyBlocker {
@@ -49,6 +54,8 @@ impl fmt::Display for CopyBlocker {
             CopyBlocker::DolbyVision5 => f.write_str("dolby vision profile 5"),
             CopyBlocker::GeneratedSource => f.write_str("generated (lavfi) source"),
             CopyBlocker::ContainerWithoutPts => f.write_str("avi container"),
+            CopyBlocker::NoKeyframes => f.write_str("no keyframes where playback starts"),
+            CopyBlocker::StartsBetweenKeyframes => f.write_str("starts between keyframes"),
         }
     }
 }
@@ -82,7 +89,8 @@ impl CopyDecisions {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct VideoCopyContext {
+pub(crate) struct VideoCopyContext<'a> {
+    pub(crate) caller_blockers: &'a [CopyBlocker],
     pub(crate) is_still_image: bool,
     pub(crate) has_graphics: bool,
     pub(crate) image_subtitle: bool,
@@ -96,6 +104,7 @@ pub(crate) fn video_copy_decision(
     context: &VideoCopyContext,
 ) -> CopyDecision {
     let mut blockers = source_blockers(input);
+    blockers.extend_from_slice(context.caller_blockers);
 
     let allowed = stream
         .codec
@@ -300,6 +309,7 @@ mod tests {
             ..video("hevc")
         };
         let context = VideoCopyContext {
+            caller_blockers: &[CopyBlocker::NoKeyframes],
             is_still_image: true,
             has_graphics: true,
             image_subtitle: true,
@@ -313,6 +323,7 @@ mod tests {
                 &context
             ),
             CopyDecision::Transcode(vec![
+                CopyBlocker::NoKeyframes,
                 CopyBlocker::StillImage,
                 CopyBlocker::DolbyVision5,
                 CopyBlocker::GraphicsLayers,

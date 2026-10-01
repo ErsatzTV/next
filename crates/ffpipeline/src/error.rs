@@ -34,4 +34,8 @@ pub enum FFPipelineError {
     FailedToConvertSubtitle,
     #[error("failed to parse subtitle")]
     FailedToParseSubtitle,
+    #[error("keyframe search failed: {0}")]
+    KeyframeSearchFailed(String),
+    #[error("no keyframe {0}")]
+    NoKeyframe(String),
 }

@@ -11,6 +11,36 @@ async fn accel() -> Option<HardwareAccel> {
 
 shared_tests!(accel);
 
+#[tokio::test]
+#[ignore]
+async fn copy_input_start() {
+    common::copy_seek::run_input_start_test().await;
+}
+
+/// Copy doesn't use the accel, so only the software suite runs this.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn copy_seek(
+    #[values(
+        ("long_gop_h264.mp4", false),
+        ("long_gop_h264.mkv", false),
+        ("long_gop_h264.ts", false),
+        ("long_gop_h264_open.ts", true),
+        ("long_gop_hevc_open.ts", true)
+    )]
+    fixture: (&'static str, bool),
+    #[values(6.5, 9.9)] join: f64,
+) {
+    let (fixture_name, open_gop) = fixture;
+    common::copy_seek::run_copy_seek_test(common::copy_seek::CopySeekCase {
+        fixture_name,
+        join: std::time::Duration::from_secs_f64(join),
+        open_gop,
+    })
+    .await;
+}
+
 // Negative control: progressive encoder metadata does not prove deinterlacing.
 #[rstest]
 #[tokio::test]

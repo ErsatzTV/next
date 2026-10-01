@@ -5,8 +5,10 @@ use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
 
 use crate::ArgVec;
+use crate::copy_decision::CopyBlocker;
 use crate::error::FFPipelineError;
 use crate::frame_size::FrameSize;
+use crate::keyframe_seek::CopySeek;
 use crate::overlay_filter::FramePoint;
 use crate::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
@@ -22,6 +24,10 @@ pub struct InputSettings {
     pub subtitle_input: Option<ProbedInput>,
     pub graphics_inputs: Vec<GraphicsInput>,
     pub channel_number: Option<String>,
+    /// Only for copied video. The audio must be in the same input, because the seek moves both.
+    pub video_copy_seek: Option<CopySeek>,
+    /// Blockers that need a dry run, so only the caller can find them
+    pub video_copy_blockers: Vec<CopyBlocker>,
 }
 
 impl InputSettings {

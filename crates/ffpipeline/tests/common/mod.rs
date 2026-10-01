@@ -26,6 +26,7 @@ use ffpipeline::probe::{
 use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 
+pub mod copy_seek;
 pub mod shared;
 
 static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
@@ -740,6 +741,8 @@ pub fn build_input(
         subtitle_input: None,
         graphics_inputs: watermark.into_iter().collect(),
         channel_number: None,
+        video_copy_seek: None,
+        video_copy_blockers: Vec::new(),
     }
 }
 
