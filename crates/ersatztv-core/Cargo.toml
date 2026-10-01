@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 serde_json = { workspace = true }
 simple-expand-tilde = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }

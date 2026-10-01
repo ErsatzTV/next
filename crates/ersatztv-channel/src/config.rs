@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ersatztv_core::{SchemaVersion, VersionedSchema};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -8,6 +9,13 @@ use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
 
 use crate::error::ChannelError;
+
+pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
+    breaking: 0,
+    compatible: 1,
+};
+pub const SCHEMA: VersionedSchema =
+    VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
 
 pub const PATH_FIELDS: &[&str] = &[
     "/playout/folder",
@@ -21,6 +29,10 @@ const DEFAULT_VAAPI_DEVICE: &str = "/dev/dri/renderD128";
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
+    /// Schema version URI, e.g. "https://ersatztv.org/channel/version/0.0.1"; missing is 0.0.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub version: Option<String>,
     pub playout: PlayoutConfig,
     pub ffmpeg: FfmpegConfig,
     pub normalization: NormalizationConfig,
@@ -554,8 +566,9 @@ impl ChannelConfig {
 
         for config_path in sources {
             let relative_to;
+            let is_stdin = config_path.to_str().is_some_and(|p| p == "-");
 
-            let config_string = if config_path.to_str().is_some_and(|p| p == "-") {
+            let config_string = if is_stdin {
                 let mut result = String::new();
                 let limit = 256 * 1024; // 256K
                 let mut reader = tokio::io::stdin().take(limit);
@@ -578,6 +591,18 @@ impl ChannelConfig {
             let mut v: Value = serde_json::from_str(config_string.as_str())
                 .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
 
+            // Check per source, not after merge: unversioned overlays must fail on a breaking bump.
+            SCHEMA.take_and_check(&mut v).map_err(|error| {
+                ChannelError::ChannelConfigSchemaVersion {
+                    config: if is_stdin {
+                        String::from("stdin")
+                    } else {
+                        config_path.display().to_string()
+                    },
+                    error,
+                }
+            })?;
+
             ersatztv_core::resolve_relative_paths(&mut v, &relative_to, PATH_FIELDS);
 
             ersatztv_core::deep_merge(&mut config_value, v);
@@ -585,6 +610,7 @@ impl ChannelConfig {
 
         let mut channel_config: ChannelConfig = serde_json::from_value(config_value)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
+        channel_config.version = Some(SCHEMA.uri());
 
         channel_config.finalize(output_folder, number)?;
 
@@ -670,6 +696,76 @@ fn deserialize_optional_accel<'de, D: Deserializer<'de>>(
         Some(v) => {
             HardwareAccel::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(v))
                 .map(Some)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ersatztv_core::SchemaVersionError;
+    use serde_json::json;
+
+    use super::*;
+
+    fn base() -> Value {
+        json!({
+            "playout": { "folder": "./playout" },
+            "ffmpeg": {},
+            "normalization": {
+                "audio": { "format": "aac" },
+                "video": { "format": "h264", "bit_depth": 8 }
+            }
+        })
+    }
+
+    async fn load(sources: &[Value]) -> Result<ChannelConfig, ChannelError> {
+        let dir = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for (i, source) in sources.iter().enumerate() {
+            let path = dir.path().join(format!("{i}.json"));
+            tokio::fs::write(&path, serde_json::to_vec(source).unwrap())
+                .await
+                .unwrap();
+            paths.push(path);
+        }
+        ChannelConfig::from_sources(&paths, &dir.path().to_path_buf(), "1").await
+    }
+
+    #[tokio::test]
+    async fn unversioned_and_versioned_sources_merge() {
+        let mut base = base();
+        base["version"] = json!(SCHEMA.uri());
+        let overlay = json!({ "normalization": { "video": { "bit_depth": 10 } } });
+
+        let config = load(&[base, overlay]).await.unwrap();
+
+        assert_eq!(config.normalization.video.bit_depth, Some(10));
+        assert_eq!(config.version, Some(SCHEMA.uri()));
+    }
+
+    #[tokio::test]
+    async fn example_loads_at_current_version() {
+        let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/channel.json");
+        let raw: Value =
+            serde_json::from_str(&tokio::fs::read_to_string(&example).await.unwrap()).unwrap();
+        assert_eq!(raw["version"], SCHEMA.uri());
+
+        let output = tempfile::tempdir().unwrap();
+        ChannelConfig::from_sources(&[example], &output.path().to_path_buf(), "1")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unsupported_overlay_is_named() {
+        let overlay = json!({ "version": "https://ersatztv.org/channel/version/0.0.999" });
+
+        match load(&[base(), overlay]).await {
+            Err(ChannelError::ChannelConfigSchemaVersion { config, error }) => {
+                assert!(config.ends_with("1.json"), "{config}");
+                assert!(matches!(error, SchemaVersionError::Unsupported { .. }));
+            }
+            other => panic!("expected ChannelConfigSchemaVersion, got {:?}", other.err()),
         }
     }
 }

@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use ersatztv_core::SchemaVersionError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -9,6 +10,9 @@ pub enum LineupError {
 
     #[error("unable to load lineup config: {0}")]
     LineupConfigFailure(String),
+
+    #[error("unable to load lineup config: {0}")]
+    LineupConfigSchemaVersion(#[from] SchemaVersionError),
 
     #[error("unable to locate parent of lineup.json")]
     LineupConfigNoParent,

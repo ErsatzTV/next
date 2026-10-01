@@ -1,4 +1,5 @@
 {
+  "$id": "https://ersatztv.org/channel/version/0.0.1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ChannelConfig",
   "type": "object",
@@ -17,6 +18,10 @@
     },
     "playout": {
       "$ref": "#/$defs/PlayoutConfig"
+    },
+    "version": {
+      "description": "Schema version URI, e.g. \"https://ersatztv.org/channel/version/0.0.1\"; missing is 0.0.0.",
+      "type": "string"
     }
   },
   "required": [
