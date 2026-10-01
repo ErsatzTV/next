@@ -12,8 +12,8 @@ use ffpipeline::input::{
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
-    AudioLoudnessSettings, AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode,
-    VideoFilterOptions,
+    AudioLoudnessSettings, AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings,
+    ScalingMode, SubtitleMode, VideoFilterOptions, VideoOutputSettings, VideoTranscodeSettings,
 };
 use ffpipeline::pipeline::{
     AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, PixelFormat, generate_pipeline,
@@ -734,21 +734,29 @@ impl Default for TestOutputParams {
 pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
     OutputSettings {
         audio: AudioOutputSettings {
-            format: params.audio_format,
-            bitrate: params.audio_bitrate,
-            buffer: params.audio_bitrate.map(|b| Kbps(b.0 * 2)),
-            channels: params.audio_channels,
-            sample_rate: Some(Hz(48000)),
-            loudness: params.loudness,
+            copy: params.audio_format.is_none().then(CopyPolicy::default),
+            transcode: AudioTranscodeSettings {
+                format: params.audio_format.unwrap_or(AudioFormat::Aac),
+                bitrate: params.audio_bitrate,
+                buffer: params.audio_bitrate.map(|b| Kbps(b.0 * 2)),
+                channels: params.audio_channels,
+                sample_rate: Some(Hz(48000)),
+                loudness: params.loudness,
+            },
         },
-        video_format: params.video_format,
-        bit_depth: params.bit_depth,
-        video_bitrate: params.video_bitrate,
-        video_buffer: params.video_buffer,
-        video_size: params.video_size,
-        scaling_mode: ScalingMode::ScaleAndPad,
-        filter_options: params.filter_options,
-        deinterlace: params.deinterlace,
+        video: VideoOutputSettings {
+            copy: params.video_format.is_none().then(CopyPolicy::default),
+            transcode: VideoTranscodeSettings {
+                format: params.video_format.unwrap_or(EncodeFormat::H264),
+                bit_depth: params.bit_depth.unwrap_or(8),
+                bitrate: params.video_bitrate,
+                buffer: params.video_buffer,
+                size: params.video_size,
+                scaling_mode: ScalingMode::ScaleAndPad,
+                deinterlace: params.deinterlace,
+                filter_options: params.filter_options,
+            },
+        },
         accel: params.accel,
         format: OutputFormat::Hls {
             playlist: dir.join("live.m3u8").to_string_lossy().into_owned(),

@@ -25,7 +25,7 @@ use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
 };
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOverlay};
-use crate::video_codec::{MetadataBsf, VideoCodec};
+use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, EnsureAlphaFilter,
@@ -99,7 +99,7 @@ pub(crate) struct OutputContext {
     pub(crate) media_frame_rate: FrameRate,
     pub(crate) audio_codec: AudioCodec,
     pub(crate) audio_channels: Option<u32>,
-    pub(crate) video_codec: VideoCodec,
+    pub(crate) video_encoder: VideoEncoder,
     pub(crate) pts_offset: Option<PtsOffset>,
     pub(crate) preferred_surface: FrameSurface,
     pub(crate) preferred_pixel_format: Option<PixelFormat>,
@@ -347,11 +347,10 @@ impl Pipeline {
             final_output_settings.accel = None;
         }
 
-        if final_output_settings.video_format == Some(EncodeFormat::Mpeg2Video)
-            && final_output_settings.bit_depth == Some(10)
-        {
+        let video_transcode = &mut final_output_settings.video.transcode;
+        if video_transcode.format == EncodeFormat::Mpeg2Video && video_transcode.bit_depth == 10 {
             log::debug!("mpeg2video does not support 10-bit output, using 8-bit");
-            final_output_settings.bit_depth = Some(8);
+            video_transcode.bit_depth = 8;
         }
 
         let duration = std::cmp::min(
@@ -359,10 +358,13 @@ impl Pipeline {
             input_settings.video_input.out_point - input_settings.video_input.in_point,
         );
 
-        let audio_codec = match final_output_settings.audio.format {
-            Some(AudioFormat::Aac) => AudioCodec::Aac,
-            Some(AudioFormat::Ac3) => AudioCodec::Ac3,
-            None => AudioCodec::Copy,
+        let audio_codec = match (
+            &final_output_settings.audio.copy,
+            final_output_settings.audio.transcode.format,
+        ) {
+            (Some(_), _) => AudioCodec::Copy,
+            (None, AudioFormat::Aac) => AudioCodec::Aac,
+            (None, AudioFormat::Ac3) => AudioCodec::Ac3,
         };
 
         let video_stream = input_settings.select_video_stream()?;
@@ -374,23 +376,26 @@ impl Pipeline {
             .map(|input| input_settings.select_graphics_stream(input))
             .collect();
 
+        let video_transcode = &final_output_settings.video.transcode;
+
         // TODO: add target profile to config
-        let video_codec = match final_output_settings.video_format {
-            None => VideoCodec::copy(),
-            Some(format) => {
-                let bit_depth = final_output_settings.bit_depth.unwrap_or(8);
-                final_output_settings
-                    .accel
-                    .as_ref()
-                    .filter(|a| a.can_encode(&format, bit_depth))
-                    .and_then(|a| {
-                        a.codec_for_format(&format, bit_depth, final_output_settings.video_size)
-                    })
-                    .unwrap_or_else(|| match format {
-                        EncodeFormat::H264 => VideoCodec::libx264(),
-                        EncodeFormat::Hevc => VideoCodec::libx265(),
-                        EncodeFormat::Mpeg2Video => VideoCodec::mpeg2video(),
-                    })
+        let video_encoder = match &final_output_settings.video.copy {
+            Some(_) => VideoEncoder::Copy,
+            None => {
+                let format = video_transcode.format;
+                let bit_depth = video_transcode.bit_depth;
+                VideoEncoder::Encode(
+                    final_output_settings
+                        .accel
+                        .as_ref()
+                        .filter(|a| a.can_encode(&format, bit_depth))
+                        .and_then(|a| a.codec_for_format(&format, bit_depth, video_transcode.size))
+                        .unwrap_or_else(|| match format {
+                            EncodeFormat::H264 => VideoCodec::libx264(),
+                            EncodeFormat::Hevc => VideoCodec::libx265(),
+                            EncodeFormat::Mpeg2Video => VideoCodec::mpeg2video(),
+                        }),
+                )
             }
         };
 
@@ -399,7 +404,8 @@ impl Pipeline {
             ffmpeg_info,
             video_stream,
             is_still_image,
-            &final_output_settings,
+            &video_encoder,
+            final_output_settings.accel.as_ref(),
         );
 
         let hdr = match (
@@ -426,7 +432,7 @@ impl Pipeline {
             },
             is_anamorphic: video_stream.is_anamorphic(),
             // if user does not want to deinterlace, pretend content is not interlaced
-            is_interlaced: final_output_settings.deinterlace && video_stream.is_interlaced(),
+            is_interlaced: video_transcode.deinterlace && video_stream.is_interlaced(),
             sample_aspect_ratio: video_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: video_stream.display_aspect_ratio.to_owned(),
             surface: video_decoder.output_surface(),
@@ -436,26 +442,20 @@ impl Pipeline {
             rotation: video_stream.rotation,
         };
 
-        let preferred_pixel_format = match final_output_settings.bit_depth {
-            Some(10) => video_codec.preferred_pixel_format_10bit,
-            Some(8) => video_codec.preferred_pixel_format_8bit,
-            _ => None,
-        };
-
         let output_context = OutputContext {
             audio_codec,
-            audio_channels: final_output_settings.audio.channels,
-            video_codec: video_codec.clone(),
+            audio_channels: final_output_settings.audio.transcode.channels,
+            video_encoder: video_encoder.clone(),
             pts_offset: final_output_settings.pts_offset,
             media_frame_rate: video_stream.frame_rate.to_owned(),
-            preferred_surface: video_codec.preferred_surface,
-            preferred_pixel_format,
+            preferred_surface: video_encoder.preferred_surface(),
+            preferred_pixel_format: video_encoder.preferred_pixel_format(video_transcode.bit_depth),
         };
 
         let mut filters = vec![
             PipelineFilter::Audio(AudioFilter::LoudNorm {
-                settings: final_output_settings.audio.loudness.clone(),
-                sample_rate: final_output_settings.audio.sample_rate,
+                settings: final_output_settings.audio.transcode.loudness.clone(),
+                sample_rate: final_output_settings.audio.transcode.sample_rate,
             }),
             PipelineFilter::Audio(AudioFilter::Resample),
             PipelineFilter::Audio(AudioFilter::Pad),
@@ -469,15 +469,15 @@ impl Pipeline {
         // tonemap first when decoded with vulkan (for libplacebo), or when not downscaling
         let source = initial_state.size;
         let tonemap_first = video_decoder.output_surface() == FrameSurface::Vulkan
-            || final_output_settings
-                .video_size
+            || video_transcode
+                .size
                 .is_none_or(|target| target.pixel_count() >= source.pixel_count());
 
         let tonemap = PipelineFilter::Video(
             ToneMapFilter {
-                algorithm: final_output_settings.filter_options.tonemap.tonemap.clone(),
-                output_format: match final_output_settings.bit_depth {
-                    Some(10) => PixelFormat::Yuv420p10le,
+                algorithm: video_transcode.filter_options.tonemap.tonemap.clone(),
+                output_format: match video_transcode.bit_depth {
+                    10 => PixelFormat::Yuv420p10le,
                     _ => PixelFormat::Yuv420p,
                 },
             }
@@ -489,9 +489,9 @@ impl Pipeline {
                 DeinterlaceFilter {
                     filter: SoftwareDeinterlaceFilter::Yadif(YadifOptions::default()),
                     options: SoftwareDeinterlaceOptions {
-                        bwdif: final_output_settings.filter_options.bwdif.clone(),
-                        w3fdif: final_output_settings.filter_options.w3fdif.clone(),
-                        yadif: final_output_settings.filter_options.yadif.clone(),
+                        bwdif: video_transcode.filter_options.bwdif.clone(),
+                        w3fdif: video_transcode.filter_options.w3fdif.clone(),
+                        yadif: video_transcode.filter_options.yadif.clone(),
                     },
                     input_is_interlaced: initial_state.is_interlaced,
                 }
@@ -500,23 +500,23 @@ impl Pipeline {
             PipelineFilter::Video(TransposeFilter::default().into()),
             PipelineFilter::Video(
                 ScaleFilter {
-                    size: final_output_settings.video_size,
-                    scaling_mode: final_output_settings.scaling_mode,
+                    size: video_transcode.size,
+                    scaling_mode: video_transcode.scaling_mode,
                     input_is_anamorphic: initial_state.is_anamorphic,
                 }
                 .into(),
             ),
             PipelineFilter::Video(
                 PadFilter {
-                    size: final_output_settings.video_size.to_owned(),
-                    scaling_mode: final_output_settings.scaling_mode,
+                    size: video_transcode.size,
+                    scaling_mode: video_transcode.scaling_mode,
                 }
                 .into(),
             ),
             PipelineFilter::Video(
                 CropFilter {
-                    size: final_output_settings.video_size.to_owned(),
-                    scaling_mode: final_output_settings.scaling_mode,
+                    size: video_transcode.size,
+                    scaling_mode: video_transcode.scaling_mode,
                 }
                 .into(),
             ),
@@ -557,7 +557,7 @@ impl Pipeline {
             && let Some(subtitle_input) = input_settings.subtitle_input.as_ref()
         {
             if subtitle_stream.is_subtitle_image()
-                && let Some(size) = final_output_settings.video_size
+                && let Some(size) = video_transcode.size
             {
                 inputs.push(PipelineInput::Subtitle {
                     input_source: subtitle_input.input_source.to_owned(),
@@ -722,10 +722,7 @@ impl Pipeline {
                 rotation: None,
             };
 
-            let video_size = final_output_settings
-                .video_size
-                .as_ref()
-                .unwrap_or(&initial_state.size);
+            let video_size = video_transcode.size.as_ref().unwrap_or(&initial_state.size);
 
             // a canvas is authored at the output size; a mismatch means the playout metadata is
             // stale, so scale rather than fail the whole item
@@ -742,7 +739,7 @@ impl Pipeline {
                 );
             }
 
-            let source_content_size = match final_output_settings.scaling_mode {
+            let source_content_size = match video_transcode.scaling_mode {
                 ScalingMode::ScaleAndPad => {
                     let mut rotated_state = initial_state.clone();
                     rotated_state.apply_rotation();
@@ -751,10 +748,8 @@ impl Pipeline {
                 ScalingMode::Crop | ScalingMode::Stretch => *video_size,
             };
 
-            let scaled_size = graphics_input.scaled_size(
-                FrameSize { width, height },
-                final_output_settings.video_size,
-            );
+            let scaled_size =
+                graphics_input.scaled_size(FrameSize { width, height }, video_transcode.size);
 
             let location = if graphics_input.kind == GraphicsKind::Canvas {
                 Some(FramePoint { x: 0, y: 0 })
@@ -894,7 +889,7 @@ impl Pipeline {
         Ok(Pipeline {
             ffmpeg_info: ffmpeg_info.clone(),
             accel: final_output_settings.accel.clone(),
-            filter_options: final_output_settings.filter_options,
+            filter_options: final_output_settings.video.transcode.filter_options,
             initial_state: initial_state.clone(),
             global_options: vec![
                 // hardware accel should use a single thread
@@ -914,13 +909,13 @@ impl Pipeline {
                 OutputOption::MovFlagsFastStart,
                 OutputOption::CudaNoAutoScale,
                 OutputOption::AudioCodec(audio_codec),
-                OutputOption::AudioBitrate(final_output_settings.audio.bitrate),
-                OutputOption::AudioBuffer(final_output_settings.audio.buffer),
-                OutputOption::AudioChannels(final_output_settings.audio.channels),
-                OutputOption::AudioSampleRate(final_output_settings.audio.sample_rate),
-                OutputOption::VideoCodec(video_codec),
-                OutputOption::VideoBitrate(final_output_settings.video_bitrate),
-                OutputOption::VideoBuffer(final_output_settings.video_buffer),
+                OutputOption::AudioBitrate(final_output_settings.audio.transcode.bitrate),
+                OutputOption::AudioBuffer(final_output_settings.audio.transcode.buffer),
+                OutputOption::AudioChannels(final_output_settings.audio.transcode.channels),
+                OutputOption::AudioSampleRate(final_output_settings.audio.transcode.sample_rate),
+                OutputOption::VideoCodec(video_encoder),
+                OutputOption::VideoBitrate(final_output_settings.video.transcode.bitrate),
+                OutputOption::VideoBuffer(final_output_settings.video.transcode.buffer),
                 OutputOption::DoNotMapMetadata,
                 OutputOption::Duration(duration),
                 OutputOption::TsOffset(final_output_settings.pts_offset),
@@ -965,7 +960,7 @@ impl Pipeline {
         }
 
         // video copy shouldn't have bitrate, etc
-        if self.output_context.video_codec.codec_name == VideoCodec::COPY {
+        if self.output_context.video_encoder == VideoEncoder::Copy {
             self.output_options.retain(|o| {
                 !matches!(
                     o,
@@ -983,15 +978,16 @@ impl Pipeline {
         // ffmpeg keeps only the last -bsf:v, so all header fixups share one filter
         let tonemapped = self.initial_state.hdr_format != HdrFormat::None
             && final_state.hdr_format == HdrFormat::None;
-        if let Some(bsf) = self
-            .accel
-            .as_ref()
-            .and_then(|a| a.metadata_bsf(&self.output_context.video_codec))
-            .map(|bsf| MetadataBsf {
-                bt709: bsf.bt709 && tonemapped,
-                ..bsf
-            })
-            .filter(|bsf| !bsf.is_empty())
+        if let VideoEncoder::Encode(codec) = &self.output_context.video_encoder
+            && let Some(bsf) = self
+                .accel
+                .as_ref()
+                .and_then(|a| a.metadata_bsf(codec))
+                .map(|bsf| MetadataBsf {
+                    bt709: bsf.bt709 && tonemapped,
+                    ..bsf
+                })
+                .filter(|bsf| !bsf.is_empty())
             && let Some(index) = self
                 .output_options
                 .iter()
@@ -1313,24 +1309,32 @@ mod tests {
     fn stereo_output() -> OutputSettings {
         OutputSettings {
             audio: crate::output_settings::AudioOutputSettings {
-                format: Some(AudioFormat::Aac),
-                bitrate: Some(Kbps(320)),
-                buffer: Some(Kbps(640)),
-                channels: Some(2),
-                sample_rate: Some(Hz(48000)),
-                loudness: None,
+                copy: None,
+                transcode: crate::output_settings::AudioTranscodeSettings {
+                    format: AudioFormat::Aac,
+                    bitrate: Some(Kbps(320)),
+                    buffer: Some(Kbps(640)),
+                    channels: Some(2),
+                    sample_rate: Some(Hz(48000)),
+                    loudness: None,
+                },
             },
-            video_format: Some(EncodeFormat::H264),
-            bit_depth: Some(8),
-            video_bitrate: Some(Kbps(2000)),
-            video_buffer: Some(Kbps(4000)),
-            video_size: Some(FrameSize {
-                width: 1280,
-                height: 720,
-            }),
-            scaling_mode: ScalingMode::ScaleAndPad,
-            filter_options: VideoFilterOptions::default(),
-            deinterlace: true,
+            video: crate::output_settings::VideoOutputSettings {
+                copy: None,
+                transcode: crate::output_settings::VideoTranscodeSettings {
+                    format: EncodeFormat::H264,
+                    bit_depth: 8,
+                    bitrate: Some(Kbps(2000)),
+                    buffer: Some(Kbps(4000)),
+                    size: Some(FrameSize {
+                        width: 1280,
+                        height: 720,
+                    }),
+                    scaling_mode: ScalingMode::ScaleAndPad,
+                    deinterlace: true,
+                    filter_options: VideoFilterOptions::default(),
+                },
+            },
             accel: None,
             format: crate::output_format::OutputFormat::Hls {
                 playlist: "out.m3u8".to_owned(),
@@ -1346,6 +1350,37 @@ mod tests {
             subtitle_force_style: None,
             reports_folder: None,
             report_id: None,
+        }
+    }
+
+    #[test]
+    fn copy_omits_encoder_options() {
+        let mut output = stereo_output();
+        output.video.copy = Some(crate::output_settings::CopyPolicy::default());
+        output.audio.copy = Some(crate::output_settings::CopyPolicy::default());
+        let mut pipeline = Pipeline::full(
+            &FfmpegInfo::default(),
+            multichannel_ac3_input("main.mkv"),
+            output,
+        )
+        .unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+
+        for (option, value) in [("-vcodec", "copy"), ("-acodec", "copy")] {
+            let index = args.iter().rposition(|a| a == option).expect(option);
+            assert_eq!(args[index + 1], value, "{args:?}");
+        }
+        for option in [
+            "-g",
+            "-force_key_frames",
+            "-b:v",
+            "-maxrate:v",
+            "-b:a",
+            "-ac",
+            "-ar",
+        ] {
+            assert!(!args.iter().any(|a| a == option), "{option}: {args:?}");
         }
     }
 
@@ -1414,11 +1449,11 @@ mod tests {
                 }
             }
         }
-        let output = OutputSettings {
-            video_format: Some(format),
+        let mut output = OutputSettings {
             accel: Some(amf_encoder_only()),
             ..stereo_output()
         };
+        output.video.transcode.format = format;
         let ffmpeg_info = FfmpegInfo {
             hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::Amf.to_string()].into(),
             ..FfmpegInfo::default()
@@ -1471,11 +1506,11 @@ mod tests {
                 supported_encoders: [(VideoFormat::H264, 8), (VideoFormat::Hevc, 8)].into(),
             },
         });
-        let output = OutputSettings {
-            video_format: Some(format),
+        let mut output = OutputSettings {
             accel: Some(accel),
             ..stereo_output()
         };
+        output.video.transcode.format = format;
         let ffmpeg_info = FfmpegInfo {
             hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::VideoToolbox.to_string()].into(),
             ..FfmpegInfo::default()

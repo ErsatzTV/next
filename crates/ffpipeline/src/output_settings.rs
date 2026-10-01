@@ -2,19 +2,12 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HardwareAccel;
 use crate::output_format::OutputFormat;
-use crate::pipeline::{AudioFormat, EncodeFormat, Hz, Kbps, PtsOffset};
+use crate::pipeline::{AudioFormat, EncodeFormat, Hz, Kbps, PtsOffset, VideoFormat};
 
 #[derive(Debug)]
 pub struct OutputSettings {
     pub audio: AudioOutputSettings,
-    pub video_format: Option<EncodeFormat>,
-    pub bit_depth: Option<u8>,
-    pub video_bitrate: Option<Kbps>,
-    pub video_buffer: Option<Kbps>,
-    pub video_size: Option<FrameSize>,
-    pub scaling_mode: ScalingMode,
-    pub filter_options: VideoFilterOptions,
-    pub deinterlace: bool,
+    pub video: VideoOutputSettings,
     pub accel: Option<HardwareAccel>,
     pub format: OutputFormat,
     pub pts_offset: Option<PtsOffset>,
@@ -26,6 +19,48 @@ pub struct OutputSettings {
     pub subtitle_force_style: Option<String>,
     pub reports_folder: Option<String>,
     pub report_id: Option<String>,
+}
+
+/// Source codecs a stream may copy; items that can't be copied use the transcode settings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CopyPolicy<T> {
+    pub formats: Vec<T>,
+}
+
+impl Default for CopyPolicy<VideoFormat> {
+    fn default() -> Self {
+        Self {
+            formats: vec![VideoFormat::H264, VideoFormat::Hevc],
+        }
+    }
+}
+
+/// ffprobe codec names
+impl Default for CopyPolicy<String> {
+    fn default() -> Self {
+        Self {
+            formats: ["aac", "ac3", "eac3", "mp3"].map(String::from).to_vec(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct VideoOutputSettings {
+    /// `None` always transcodes
+    pub copy: Option<CopyPolicy<VideoFormat>>,
+    pub transcode: VideoTranscodeSettings,
+}
+
+#[derive(Debug)]
+pub struct VideoTranscodeSettings {
+    pub format: EncodeFormat,
+    pub bit_depth: u8,
+    pub bitrate: Option<Kbps>,
+    pub buffer: Option<Kbps>,
+    pub size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
+    pub deinterlace: bool,
+    pub filter_options: VideoFilterOptions,
 }
 
 #[derive(Debug, Default)]
@@ -94,7 +129,14 @@ pub struct YadifCudaOptions {
 
 #[derive(Debug)]
 pub struct AudioOutputSettings {
-    pub format: Option<AudioFormat>,
+    /// `None` always transcodes
+    pub copy: Option<CopyPolicy<String>>,
+    pub transcode: AudioTranscodeSettings,
+}
+
+#[derive(Debug)]
+pub struct AudioTranscodeSettings {
+    pub format: AudioFormat,
     pub bitrate: Option<Kbps>,
     pub buffer: Option<Kbps>,
     pub channels: Option<u32>,

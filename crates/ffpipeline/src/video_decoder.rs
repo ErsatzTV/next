@@ -2,9 +2,9 @@ use crate::ArgVec;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::filter_chain::PipelineFilter;
 use crate::hw_accel::{HardwareAccel, HwAccel, HwDecoder};
-use crate::output_settings::OutputSettings;
 use crate::pipeline::{FrameSurface, PixelFormat};
 use crate::probe::ProbeResultVideoStream;
+use crate::video_codec::VideoEncoder;
 
 pub enum VideoDecoder {
     None,
@@ -20,14 +20,15 @@ impl VideoDecoder {
         ffmpeg_info: &FfmpegInfo,
         video_stream: &ProbeResultVideoStream,
         is_still_image: bool,
-        output_settings: &OutputSettings,
+        video_encoder: &VideoEncoder,
+        accel: Option<&HardwareAccel>,
     ) -> VideoDecoder {
         // stream copy should not have a decoder; still image should not use accel
-        if output_settings.video_format.is_none() || is_still_image {
+        if *video_encoder == VideoEncoder::Copy || is_still_image {
             return VideoDecoder::None;
         }
 
-        match &output_settings.accel {
+        match accel {
             Some(accel) => {
                 if let Some(decoder) = accel.make_decoder(ffmpeg_info, video_stream) {
                     VideoDecoder::HardwareAccel {
