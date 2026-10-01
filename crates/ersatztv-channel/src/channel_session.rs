@@ -20,7 +20,10 @@ use ffpipeline::input::{
     FfmpegInputArgs, GraphicsInput, HttpInputOptions, HttpInputSource, InputSettings, InputSource,
     LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
 };
-use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings, SubtitleMode};
+use ffpipeline::output_settings::{
+    AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings, SubtitleMode,
+    VideoOutputSettings, VideoTranscodeSettings,
+};
 use ffpipeline::pipeline::{AudioFormat, EncodeFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS};
 use ffpipeline::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
@@ -548,34 +551,48 @@ impl ChannelSession {
         // live sources can never seek or work ahead
         let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
 
-        // generate pipeline
+        // generate pipeline; until config has an explicit copy mode, a missing format means copy
         let output_settings = OutputSettings {
             audio: AudioOutputSettings {
-                format: audio_norm.format.clone().map(AudioFormat::from),
-                bitrate: audio_norm.bitrate_kbps.map(Kbps),
-                buffer: audio_norm.buffer_kbps.map(Kbps),
-                channels: audio_norm.channels,
-                sample_rate: audio_norm.sample_rate_hz.map(Hz),
-                loudness: if audio_norm.normalize_loudness {
-                    Some(
-                        audio_norm
-                            .loudness
-                            .as_ref()
-                            .map(|l| l.into())
-                            .unwrap_or_default(),
-                    )
-                } else {
-                    None
+                copy: audio_norm.format.is_none().then(CopyPolicy::default),
+                transcode: AudioTranscodeSettings {
+                    format: audio_norm
+                        .format
+                        .clone()
+                        .map_or(AudioFormat::Aac, AudioFormat::from),
+                    bitrate: audio_norm.bitrate_kbps.map(Kbps),
+                    buffer: audio_norm.buffer_kbps.map(Kbps),
+                    channels: audio_norm.channels,
+                    sample_rate: audio_norm.sample_rate_hz.map(Hz),
+                    loudness: if audio_norm.normalize_loudness {
+                        Some(
+                            audio_norm
+                                .loudness
+                                .as_ref()
+                                .map(|l| l.into())
+                                .unwrap_or_default(),
+                        )
+                    } else {
+                        None
+                    },
                 },
             },
-            video_format: video_norm.format.clone().map(EncodeFormat::from),
-            bit_depth: video_norm.bit_depth,
-            video_bitrate: video_norm.bitrate_kbps.map(Kbps),
-            video_buffer: video_norm.buffer_kbps.map(Kbps),
-            video_size,
-            scaling_mode: video_norm.scaling_mode.into(),
-            filter_options: video_norm.filters.clone().into(),
-            deinterlace: video_norm.deinterlace,
+            video: VideoOutputSettings {
+                copy: video_norm.format.is_none().then(CopyPolicy::default),
+                transcode: VideoTranscodeSettings {
+                    format: video_norm
+                        .format
+                        .clone()
+                        .map_or(EncodeFormat::H264, EncodeFormat::from),
+                    bit_depth: video_norm.bit_depth.unwrap_or(8),
+                    bitrate: video_norm.bitrate_kbps.map(Kbps),
+                    buffer: video_norm.buffer_kbps.map(Kbps),
+                    size: video_size,
+                    scaling_mode: video_norm.scaling_mode.into(),
+                    deinterlace: video_norm.deinterlace,
+                    filter_options: video_norm.filters.clone().into(),
+                },
+            },
             accel: self.hw_accel.clone(),
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),

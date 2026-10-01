@@ -5,11 +5,11 @@ use crate::audio_codec::AudioCodec;
 use crate::frame_rate::FrameRate;
 use crate::output_format::OutputFormat;
 use crate::pipeline::{Hz, Kbps, OutputContext, PtsOffset};
-use crate::video_codec::{MetadataBsf, VideoCodec};
+use crate::video_codec::{MetadataBsf, VideoEncoder};
 
 pub enum OutputOption {
     Format(OutputFormat),
-    VideoCodec(VideoCodec),
+    VideoCodec(VideoEncoder),
     VideoMetadata(MetadataBsf),
     VideoBitrate(Option<Kbps>),
     VideoBuffer(Option<Kbps>),

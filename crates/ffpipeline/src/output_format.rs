@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::ArgVec;
 use crate::pipeline::{KEYFRAME_INTERVAL_SECONDS, OutputContext, SEGMENT_SECONDS};
-use crate::video_codec::VideoCodec;
+use crate::video_codec::VideoEncoder;
 
 #[derive(Debug, Clone)]
 pub enum OutputFormat {
@@ -34,7 +34,7 @@ impl OutputFormat {
                 segment_template,
                 troubleshoot,
             } => {
-                if output_context.video_codec.codec_name != VideoCodec::COPY {
+                if output_context.video_encoder != VideoEncoder::Copy {
                     args.extend(args![
                         "-g",
                         gop,

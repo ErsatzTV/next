@@ -36,20 +36,8 @@ pub struct VideoCodec {
 }
 
 impl VideoCodec {
-    pub const COPY: &'static str = "copy";
-
     pub fn codec_name(&self) -> &'static str {
         self.codec_name
-    }
-
-    pub fn copy() -> Self {
-        Self {
-            codec_name: Self::COPY,
-            options: Vec::new(),
-            preferred_pixel_format_8bit: None,
-            preferred_pixel_format_10bit: None,
-            preferred_surface: FrameSurface::System,
-        }
     }
 
     pub fn libx264() -> Self {
@@ -86,5 +74,36 @@ impl VideoCodec {
         let mut args = args!["-vcodec", self.codec_name];
         args.extend(self.options.iter().cloned());
         args
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub enum VideoEncoder {
+    Copy,
+    Encode(VideoCodec),
+}
+
+impl VideoEncoder {
+    pub(crate) fn preferred_surface(&self) -> FrameSurface {
+        match self {
+            VideoEncoder::Copy => FrameSurface::System,
+            VideoEncoder::Encode(codec) => codec.preferred_surface,
+        }
+    }
+
+    pub(crate) fn preferred_pixel_format(&self, bit_depth: u8) -> Option<PixelFormat> {
+        match (self, bit_depth) {
+            (VideoEncoder::Copy, _) => None,
+            (VideoEncoder::Encode(codec), 10) => codec.preferred_pixel_format_10bit,
+            (VideoEncoder::Encode(codec), 8) => codec.preferred_pixel_format_8bit,
+            (VideoEncoder::Encode(_), _) => None,
+        }
+    }
+
+    pub(crate) fn as_arg(&self) -> ArgVec {
+        match self {
+            VideoEncoder::Copy => args!["-vcodec", "copy"],
+            VideoEncoder::Encode(codec) => codec.as_arg(),
+        }
     }
 }
