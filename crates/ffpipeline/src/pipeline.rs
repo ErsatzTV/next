@@ -99,7 +99,6 @@ impl Default for PtsOffset {
     }
 }
 
-/// A subtitle the pipeline draws onto the video, which rules out video copy.
 enum SubtitleBurn<'a> {
     Image {
         stream: &'a ProbeResultVideoStream,
@@ -392,7 +391,7 @@ impl Pipeline {
             (Some(stream), Some(input)) if stream.is_subtitle_image() => video_transcode
                 .size
                 .or_else(|| {
-                    // without a target size only the transpose filter changes the frame size
+                    // with no target size, only transpose changes the frame size
                     let (width, height) = (video_stream.width?, video_stream.height?);
                     Some(if video_stream.is_quarter_turn() {
                         FrameSize {

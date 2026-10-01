@@ -95,7 +95,7 @@ macro_rules! shared_tests {
             .await;
         }
 
-        /// Width and height differ from the source, so a copy that honoured them would fail.
+        /// Target size differs from the source; copy must ignore it.
         #[::tokio::test]
         #[ignore]
         async fn codec_copy() {
@@ -477,8 +477,6 @@ const SIZE_720P: FrameSize = FrameSize {
     height: 720,
 };
 
-/// Copies both streams of a source the default policy allows. Tests override the parts that
-/// should block a copy, and the transcode settings that the blocked stream must end up with.
 fn copy(src: &'static str, size: FrameSize) -> TestCase {
     let mut test_case = source_sized(src, size);
     test_case.params.video_copy = Some(CopyPolicy::default());
@@ -500,7 +498,7 @@ pub fn codec_copy() -> TestCase {
     test_case
 }
 
-/// Without a configured size the transcoded item keeps the source size.
+/// No target size: the transcode keeps the source size.
 pub fn copy_graphics(res: Option<FrameSize>) -> TestCase {
     let mut test_case = copy("1080p_h264.ts", res.unwrap_or(SIZE_1080P));
     test_case.params.video_size = res;
@@ -509,19 +507,19 @@ pub fn copy_graphics(res: Option<FrameSize>) -> TestCase {
     test_case
 }
 
-/// Without a configured size the subtitle is burned in at the source size.
+/// No target size: the subtitle burns in at the source size.
 pub fn copy_image_subtitle(res: Option<FrameSize>) -> TestCase {
     let size = res.unwrap_or(SIZE_1080P);
     let mut test_case = copy("1080p_h264.ts", size);
     test_case.params.video_size = res;
     test_case.subtitle_fixture = Some("subtitle_pgs.sup");
-    // inside the fixture's white box (760..1160, 940..1020 at 1080p), over the blue bar
+    // inside the fixture box (760..1160 x 940..1020 at 1080p), over the dark blue bar
     test_case.burned_point = Some((1060 * size.width / 1920, 980 * size.height / 1080));
     test_case.expected_copy.video = blocked(vec![CopyBlocker::ImageSubtitle]);
     test_case
 }
 
-/// A copy drops the subtitles filter without an error, so the size has to change to tell them apart.
+/// Copy drops the subtitles filter silently; a size change makes that visible.
 pub fn copy_text_subtitle() -> TestCase {
     let mut test_case = copy("1080p_h264.ts", SIZE_720P);
     test_case.params.video_size = Some(SIZE_720P);
@@ -546,7 +544,6 @@ pub fn copy_still_image() -> TestCase {
     test_case
 }
 
-/// The silent audio the scheduler supplies for images and video without audio.
 pub fn copy_generated_audio() -> TestCase {
     let mut test_case = copy("720p_h264.ts", SIZE_720P);
     test_case.audio_source = Some(TestAudioSource::Lavfi(
@@ -559,7 +556,7 @@ pub fn copy_generated_audio() -> TestCase {
     test_case
 }
 
-/// mpeg2video is opt-in, and a narrowed audio list transcodes aac to the configured ac3.
+/// mpeg2video is not in the default copy list.
 pub fn copy_codec_not_allowed() -> TestCase {
     let mut test_case = copy(
         "480i_mpeg2.ts",
@@ -597,7 +594,7 @@ pub fn copy_codec_allowed() -> TestCase {
     test_case
 }
 
-/// The transcode tonemaps, which `run_test_case` checks for any HDR source it transcodes.
+/// `run_test_case` checks that the transcode tonemaps to SDR.
 pub fn copy_dv5() -> TestCase {
     let mut test_case = copy("1080p_hevc_10_dv5.mp4", SIZE_1080P);
     test_case.expected_copy.video = blocked(vec![CopyBlocker::DolbyVision5]);

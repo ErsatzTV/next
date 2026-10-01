@@ -34,7 +34,7 @@ pub enum CopyBlocker {
     BurnedSubtitle,
     DolbyVision5,
     GeneratedSource,
-    /// AVI packets carry no pts, so a copied timeline drifts; AAC copy from AVI into mpegts fails
+    /// AVI packets have no pts, so copied timing is wrong; AAC copy from AVI to mpegts fails
     ContainerWithoutPts,
 }
 
@@ -53,7 +53,7 @@ impl fmt::Display for CopyBlocker {
     }
 }
 
-/// One decision per stream the channel wants to copy; `None` means that stream always transcodes.
+/// `None`: the stream has no copy policy and always transcodes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CopyDecisions {
     pub video: Option<CopyDecision>,
@@ -61,7 +61,6 @@ pub struct CopyDecisions {
 }
 
 impl CopyDecisions {
-    /// Names each stream that wanted to copy but has to transcode, with its blockers.
     pub fn transcode_summary(&self) -> Option<String> {
         let streams: Vec<String> = [("video", &self.video), ("audio", &self.audio)]
             .into_iter()
@@ -82,7 +81,6 @@ impl CopyDecisions {
     }
 }
 
-/// Video filters that a copied stream can't carry.
 #[derive(Debug, Default)]
 pub(crate) struct VideoCopyContext {
     pub(crate) is_still_image: bool,

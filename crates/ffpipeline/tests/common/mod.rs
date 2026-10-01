@@ -41,16 +41,15 @@ pub struct TestEnv {
 #[allow(dead_code)]
 pub struct TestCase {
     pub fixture_name: &'static str,
-    /// `None` takes audio from `fixture_name`
+    /// `None`: audio comes from `fixture_name`
     pub audio_source: Option<TestAudioSource>,
     pub subtitle_fixture: Option<&'static str>,
     pub params: TestOutputParams,
     pub expected_video_codec: String,
     pub expected_video_size: FrameSize,
     pub expected_audio_codec: String,
-    /// Both `None` unless the test sets a copy policy
     pub expected_copy: CopyDecisions,
-    /// An output pixel that a burned-in white subtitle box must cover
+    /// Output pixel that a burned-in subtitle must make white
     pub burned_point: Option<(u32, u32)>,
 }
 
@@ -156,7 +155,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         .expect("no video stream found in source");
     let video_copied = test_case.expected_copy.video == Some(CopyDecision::Copy);
     let audio_copied = test_case.expected_copy.audio == Some(CopyDecision::Copy);
-    // a copied stream keeps whatever HDR the source has
+    // copied video keeps the source HDR, so skip the SDR check
     let source_is_hdr =
         !video_copied && (source_video.color_params.is_hdr() || source_video.dv_profile == Some(5));
     // without frame rate normalization, output must keep the source frame rate
@@ -516,8 +515,7 @@ pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
     );
 }
 
-/// Skips the first frames because the subtitle overlay can miss them: sub2video only
-/// shows a subtitle once its packet has been read.
+/// Skip the first frames: sub2video shows a subtitle only after its packet is read.
 pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
     let output = tokio::time::timeout(
         Duration::from_secs(30),
@@ -768,8 +766,7 @@ async fn build_audio_input(
             let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
             local_input(&path, probe, duration)
         }
-        // mirrors the probe hint the channel gives its silent audio; probing lavfi through nut
-        // would report vorbis instead
+        // match the channel's probe hint; probing lavfi through nut reports vorbis
         TestAudioSource::Lavfi(params) => ProbedInput {
             input_source: InputSource::Lavfi(LavfiInputSource {
                 params: params.to_string(),
@@ -1025,7 +1022,7 @@ fn frame_rates_equal(a: &FrameRate, b: &FrameRate) -> bool {
     }
 }
 
-/// The output probe can't tell a copy from a same-codec transcode, so check the encoder arg.
+/// The output probe can't tell copy from a same-codec transcode.
 fn assert_stream_copy(args: &[String], option: &str, copied: bool) {
     let codec = args
         .iter()
