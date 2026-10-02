@@ -167,6 +167,10 @@ impl QsvCapabilities {
         self.runtime_api
     }
 
+    pub fn requires_fixed_pool(&self) -> bool {
+        self.runtime_api.is_none_or(|api| api < (2, 9))
+    }
+
     pub fn vpp_filters(&self) -> Vec<String> {
         let mut filters: Vec<String> = self.vpp_filters.iter().map(QsvFourCC::name).collect();
         filters.sort();

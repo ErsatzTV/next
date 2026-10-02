@@ -494,6 +494,119 @@ pub async fn run_canvas_test(
     );
 }
 
+/// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
+/// canvas that only arrives in real time (like legacy's renderer). The frames that pile up in
+/// front of the overlay exhaust fixed hardware frame pools (QSV on legacy runtimes).
+#[allow(dead_code)]
+pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<HardwareAccel>) {
+    let size = FrameSize {
+        width: 854,
+        height: 480,
+    };
+    let duration = Duration::from_secs(5);
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.mp4");
+    let generated = tokio::time::timeout(
+        Duration::from_secs(60),
+        tokio::process::Command::new(&test_env.ffmpeg)
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=656x480:rate=30000/1001",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-t",
+                "8",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "300",
+                "-c:a",
+                "aac",
+                "-ac",
+                "2",
+            ])
+            .arg(&main)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("fixture generation timed out")
+    .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let canvas_source = format!(
+        "color=black@0:s={}x{}:r=30000/1001,format=bgra,realtime",
+        size.width, size.height
+    );
+    let graphics = WatermarkInput {
+        layer_index: 0,
+        input_source: InputSource::Lavfi(LavfiInputSource {
+            params: canvas_source.clone(),
+        }),
+        probe_result: ProbeResult {
+            path: canvas_source,
+            streams: vec![ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
+                stream_index: 0,
+                codec: "rawvideo".to_owned(),
+                codec_type: ffpipeline::probe::CodecType::Video,
+                dv_profile: None,
+                profile: String::new(),
+                height: Some(size.height),
+                width: Some(size.width),
+                frame_rate: FrameRate::parse("30000/1001"),
+                sample_aspect_ratio: Some("1:1".to_owned()),
+                display_aspect_ratio: None,
+                pix_fmt: "bgra".to_owned(),
+                color_params: Default::default(),
+                field_order: None,
+                rotation: None,
+            }))],
+            duration: None,
+            format_name: Some("lavfi".to_owned()),
+        },
+        stream_index: None,
+        location: WatermarkLocation::TopLeft,
+        width_percent: None,
+        within_source_content: None,
+        horizontal_margin_percent: None,
+        vertical_margin_percent: None,
+        opacity_percent: None,
+        kind: GraphicsKind::Canvas,
+        in_point: Duration::ZERO,
+        timing: None,
+    };
+    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
+    let input = build_input(&main, probe, duration, Some(graphics));
+    let output = build_output(
+        dir.path(),
+        TestOutputParams {
+            video_size: Some(size),
+            loudness: Some(AudioLoudnessSettings::default()),
+            accel,
+            ..TestOutputParams::default()
+        },
+    );
+    let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
+    pipeline.optimize();
+
+    let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
+    assert!(success, "ffmpeg failed:\n{stderr}");
+
+    let segment = find_first_segment(dir.path());
+    assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
+}
+
 /// ffprobe reads the stream parameters from headers alone, so a segment whose parameter sets
 /// don't match its slices (e.g. a 10-bit SPS in front of 8-bit slices) still probes fine.
 pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {

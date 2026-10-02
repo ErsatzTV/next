@@ -421,6 +421,15 @@ macro_rules! shared_tests {
                 $crate::common::run_canvas_test(env, accel, source.0, source.1).await;
             }
         }
+
+        #[::tokio::test]
+        #[ignore]
+        async fn loudness_normalization_with_realtime_canvas() {
+            let accel = $accel().await;
+            if let Some(env) = $crate::common::test_env().await {
+                $crate::common::run_loudnorm_canvas_test(env, accel).await;
+            }
+        }
     };
 }
 
