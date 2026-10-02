@@ -27,7 +27,9 @@ use crate::output_option::OutputOption;
 use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
 };
-use crate::overlay_filter::{FramePoint, OverlayFilter, OverlaySource, SoftwareOverlay};
+use crate::overlay_filter::{
+    FramePoint, OverlayFilter, OverlayKind, OverlaySource, SoftwareOverlay,
+};
 use crate::probe::{ProbeResultAudioStream, ProbeResultVideoStream};
 use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
@@ -288,6 +290,8 @@ pub enum PipelineInput {
         seek: Duration,
         channels: u32,
         decoder: AudioDecoder,
+        /// Open the file again for audio, even when it is also the video input.
+        own_input: bool,
     },
     Video {
         input_source: InputSource,
@@ -590,6 +594,8 @@ impl Pipeline {
                 seek: input_settings.audio_input.in_point,
                 channels: audio_stream.channels,
                 decoder: AudioDecoder::new(audio_stream, &final_output_settings),
+                // decided in optimize, once overlay surfaces are resolved
+                own_input: false,
             },
             PipelineInput::Video {
                 input_source: input_settings.video_input.input_source.to_owned(),
@@ -1081,6 +1087,14 @@ impl Pipeline {
 
         self.filter_chain.optimize();
 
+        if self.audio_needs_own_input() {
+            for input in &mut self.inputs {
+                if let PipelineInput::Audio { own_input, .. } = input {
+                    *own_input = true;
+                }
+            }
+        }
+
         if let Some(accel) = &self.accel {
             let mut surfaces = self.filter_chain.surfaces().clone();
             surfaces.insert(self.initial_state.surface);
@@ -1090,6 +1104,48 @@ impl Pipeline {
                 self.global_options.push(GlobalOption::InitHwDevice(args));
             }
         }
+    }
+
+    /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
+    /// slow canvas. The qsv frames queued for overlay_qsv exhaust fixed pools (runtime < 2.9).
+    fn audio_needs_own_input(&self) -> bool {
+        let Some(HardwareAccel::Qsv(qsv)) = &self.accel else {
+            return false;
+        };
+
+        let canvas_layers: Vec<usize> = self
+            .inputs
+            .iter()
+            .filter_map(|i| match i {
+                PipelineInput::Graphics {
+                    input, layer_index, ..
+                } if input.kind == GraphicsKind::Canvas => Some(*layer_index),
+                _ => None,
+            })
+            .collect();
+
+        let has_loudnorm = self.filter_chain.filters.iter().any(|f| {
+            matches!(
+                f,
+                PipelineFilter::Audio(AudioFilter::LoudNorm {
+                    settings: Some(_),
+                    ..
+                })
+            )
+        });
+
+        let qsv_overlays_canvas = self.filter_chain.filters.iter().any(|f| {
+            matches!(
+                f,
+                PipelineFilter::Overlay(OverlayFilter {
+                    kind: OverlayKind::Qsv(_),
+                    secondary_source: OverlaySource::Graphics(layer),
+                    ..
+                }) if canvas_layers.contains(layer)
+            )
+        });
+
+        qsv.capabilities.requires_fixed_pool() && has_loudnorm && qsv_overlays_canvas
     }
 
     pub fn args(&self) -> ArgVec {
@@ -1113,9 +1169,14 @@ impl Pipeline {
         let mut input_paths: Vec<&str> = Vec::new();
 
         // audio decoder options must come before their input's `-i`.
-        // the video input writes that `-i` when both share a file.
+        // the video input writes that `-i` when both share a demuxer.
         let audio_decoder_args: Option<(&str, ArgVec)> = self.inputs.iter().find_map(|i| match i {
-            PipelineInput::Audio { path, decoder, .. } => Some((path.as_str(), decoder.as_arg())),
+            PipelineInput::Audio {
+                path,
+                decoder,
+                own_input: false,
+                ..
+            } => Some((path.as_str(), decoder.as_arg())),
             _ => None,
         });
 
@@ -1170,25 +1231,33 @@ impl Pipeline {
                     path,
                     seek,
                     decoder,
+                    own_input,
                     ..
                 } => {
-                    // if we haven't yet used this input, add it
-                    if !input_paths.contains(&path.as_str()) {
-                        input_paths.push(path.as_str());
+                    let shared_index = input_paths
+                        .iter()
+                        .position(|p| p == path)
+                        .filter(|_| !own_input);
 
-                        result.extend(decoder.as_arg());
+                    let audio_input_index = match shared_index {
+                        Some(shared_index) => shared_index,
+                        None => {
+                            input_paths.push(path.as_str());
 
-                        // lavfi can't seek
-                        if !seek.is_zero() && !matches!(input_source, InputSource::Lavfi(_)) {
-                            result.extend(args!["-ss", format!("{}ms", seek.as_millis())]);
+                            result.extend(decoder.as_arg());
+
+                            // lavfi can't seek
+                            if !seek.is_zero() && !matches!(input_source, InputSource::Lavfi(_)) {
+                                result.extend(args!["-ss", format!("{}ms", seek.as_millis())]);
+                            }
+
+                            result.extend(input_source.args_for_input());
+
+                            result.extend(args!["-i", path.to_owned()]);
+
+                            input_paths.len() - 1
                         }
-
-                        result.extend(input_source.args_for_input());
-
-                        result.extend(args!["-i", path.to_owned()]);
-                    }
-
-                    let audio_input_index = input_paths.iter().position(|p| p == path).unwrap_or(0);
+                    };
                     audio_label = format!("{}:{}", audio_input_index, index);
                 }
                 PipelineInput::Subtitle {
@@ -1957,6 +2026,129 @@ mod tests {
                     && !filter.contains("colorchannelmixer")
                     && !filter.contains("loop="),
                 "{filter}"
+            );
+        }
+    }
+
+    fn qsv_with_runtime(runtime_api: (u16, u16)) -> HardwareAccel {
+        HardwareAccel::Qsv(crate::accel::qsv::Qsv {
+            capabilities: crate::capabilities::qsv::QsvCapabilities {
+                supported_decoders: Default::default(),
+                supported_encoders: Default::default(),
+                upload_formats: Default::default(),
+                convert_pairs: Default::default(),
+                vpp_filters: Default::default(),
+                rotation_formats: Default::default(),
+                composite_pairs: Default::default(),
+                runtime_api: Some(runtime_api),
+            },
+        })
+    }
+
+    fn loudnorm_args(seek: Duration, canvas: bool, loudness: bool) -> ArgVec {
+        loudnorm_args_with(seek, canvas, loudness, (1, 35), true)
+    }
+
+    fn loudnorm_args_with(
+        seek: Duration,
+        canvas: bool,
+        loudness: bool,
+        runtime_api: (u16, u16),
+        overlay_qsv: bool,
+    ) -> ArgVec {
+        let mut input = multichannel_ac3_input("main.mkv");
+        input.video_input.in_point = seek;
+        input.audio_input.in_point = seek;
+        if canvas {
+            input.graphics_inputs.push(canvas_input(InputSource::Local(
+                crate::input::LocalInputSource {
+                    path: "canvas.nut".to_owned(),
+                },
+            )));
+        }
+        let mut output = stereo_output();
+        if loudness {
+            output.audio.transcode.loudness =
+                Some(crate::output_settings::AudioLoudnessSettings::default());
+        }
+        output.accel = Some(qsv_with_runtime(runtime_api));
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::Qsv.to_string()].into(),
+            video_filters: overlay_qsv
+                .then(|| crate::ffmpeg_info::KnownVideoFilter::OverlayQsv.to_string())
+                .into_iter()
+                .collect(),
+            ..FfmpegInfo::default()
+        };
+        let mut pipeline = Pipeline::full(&ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        pipeline.args()
+    }
+
+    #[test]
+    fn loudnorm_with_canvas_reads_audio_through_its_own_input() {
+        let args = loudnorm_args(Duration::from_millis(12_345), true, true);
+
+        assert_eq!(
+            input_seeks(&args),
+            vec![
+                ("main.mkv".to_owned(), Some("12345ms".to_owned())),
+                ("main.mkv".to_owned(), Some("12345ms".to_owned())),
+                ("canvas.nut".to_owned(), Some("3000ms".to_owned())),
+            ]
+        );
+
+        let filter = args
+            .windows(2)
+            .filter(|a| a[0] == "-filter_complex")
+            .map(|a| a[1].as_ref())
+            .collect::<Vec<_>>()
+            .join(";");
+        assert!(filter.contains("[1:1]loudnorm="), "{filter}");
+        assert!(filter.contains("[0:0]"), "{filter}");
+        assert!(filter.contains("overlay_qsv"), "{filter}");
+
+        // the downmix belongs to the audio input, not the video input that shares its file
+        let inputs: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-i")
+            .map(|(i, _)| i)
+            .collect();
+        let downmix = args.iter().position(|a| a == "-downmix").expect("-downmix");
+        assert!(inputs[0] < downmix && downmix < inputs[1], "{args:?}");
+    }
+
+    #[test]
+    fn audio_shares_the_video_input_with_dynamic_qsv_pools() {
+        for runtime_api in [(2, 9), (2, 10), (2, 15)] {
+            let args = loudnorm_args_with(Duration::ZERO, true, true, runtime_api, true);
+            assert_eq!(
+                args.iter().filter(|a| *a == "main.mkv").count(),
+                1,
+                "runtime {runtime_api:?}: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn audio_shares_the_video_input_with_a_software_canvas_overlay() {
+        let args = loudnorm_args_with(Duration::ZERO, true, true, (1, 35), false);
+        assert_eq!(
+            args.iter().filter(|a| *a == "main.mkv").count(),
+            1,
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn audio_shares_the_video_input_without_loudnorm_or_canvas() {
+        for (canvas, loudness) in [(false, true), (true, false), (false, false)] {
+            let args = loudnorm_args(Duration::ZERO, canvas, loudness);
+            assert_eq!(
+                args.iter().filter(|a| *a == "main.mkv").count(),
+                1,
+                "canvas={canvas} loudness={loudness}: {args:?}"
             );
         }
     }
