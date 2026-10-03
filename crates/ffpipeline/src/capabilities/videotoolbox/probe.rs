@@ -2,8 +2,9 @@ use std::collections::HashSet;
 
 use libvt_sys::probe::*;
 
-use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
+use crate::capabilities::videotoolbox::{EncodeSizeCache, VideoToolboxCapabilities};
 use crate::error::FFPipelineError;
+use crate::frame_size::FrameSize;
 use crate::pipeline::VideoFormat;
 
 /// Codec types to probe, paired with their VideoFormat and whether 10-bit is
@@ -44,6 +45,16 @@ impl VideoToolboxCapabilities {
         Ok(VideoToolboxCapabilities {
             supported_decoders,
             supported_encoders,
+            encode_sizes: Some(EncodeSizeCache::default()),
         })
+    }
+
+    pub(crate) fn probe_encode_size(format: &VideoFormat, size: FrameSize) -> bool {
+        CODECS
+            .iter()
+            .find(|(_, f, _)| f == format)
+            .is_some_and(|&(codec_type, _, _)| {
+                is_hardware_encode_supported(codec_type, size.width, size.height)
+            })
     }
 }

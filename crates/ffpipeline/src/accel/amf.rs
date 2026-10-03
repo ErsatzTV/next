@@ -100,7 +100,7 @@ impl HwAccel for Amf {
         })
     }
 
-    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8, _size: FrameSize) -> bool {
         self.capabilities
             .can_encode(&VideoFormat::from(*format), bit_depth)
     }
@@ -109,9 +109,12 @@ impl HwAccel for Amf {
         &self,
         format: &EncodeFormat,
         bit_depth: u8,
-        _video_size: Option<FrameSize>,
+        _size: FrameSize,
     ) -> Option<VideoCodec> {
-        if !self.can_encode(format, bit_depth) {
+        if !self
+            .capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
+        {
             return None;
         }
 
@@ -611,19 +614,23 @@ mod tests {
     #[test]
     fn encoder_is_gated_by_capabilities() {
         let amf = make_amf();
-        assert!(amf.can_encode(&EncodeFormat::Hevc, 8));
-        assert!(!amf.can_encode(&EncodeFormat::Hevc, 10));
+        let size = FrameSize {
+            width: 1920,
+            height: 1080,
+        };
+        assert!(amf.can_encode(&EncodeFormat::Hevc, 8, size));
+        assert!(!amf.can_encode(&EncodeFormat::Hevc, 10, size));
         assert_eq!(
-            amf.codec_for_format(&EncodeFormat::Hevc, 8, None)
+            amf.codec_for_format(&EncodeFormat::Hevc, 8, size)
                 .map(|c| c.codec_name),
             Some("hevc_amf")
         );
         assert!(
-            amf.codec_for_format(&EncodeFormat::Hevc, 10, None)
+            amf.codec_for_format(&EncodeFormat::Hevc, 10, size)
                 .is_none()
         );
         assert!(
-            amf.codec_for_format(&EncodeFormat::Mpeg2Video, 8, None)
+            amf.codec_for_format(&EncodeFormat::Mpeg2Video, 8, size)
                 .is_none()
         );
     }

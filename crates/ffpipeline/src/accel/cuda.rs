@@ -137,7 +137,7 @@ impl HwAccel for Cuda {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8, _size: FrameSize) -> bool {
         self.capabilities
             .can_encode(&VideoFormat::from(*format), bit_depth)
     }
@@ -146,7 +146,7 @@ impl HwAccel for Cuda {
         &self,
         format: &EncodeFormat,
         _bit_depth: u8,
-        _video_size: Option<FrameSize>,
+        _size: FrameSize,
     ) -> Option<VideoCodec> {
         match format {
             EncodeFormat::H264 => Some(VideoCodec {

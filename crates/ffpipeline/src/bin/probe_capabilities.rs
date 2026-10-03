@@ -7,6 +7,7 @@ use ffpipeline::capabilities::rkmpp::RkmppCapabilities;
 use ffpipeline::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
 use ffpipeline::capabilities::videotoolbox::VideoToolboxCapabilities;
 use ffpipeline::capabilities::vulkan::{VulkanCapabilities, format_uuid};
+use ffpipeline::frame_size::FrameSize;
 use ffpipeline::pipeline::{PixelFormat, VideoFormat};
 
 #[derive(Parser)]
@@ -441,6 +442,25 @@ fn print_videotoolbox() -> Result<(), String> {
     print_decode_table(ALL_FORMATS, |f, bd| caps.can_decode(f, bd));
     println!();
     print_encode_table(ALL_FORMATS, |f, bd| caps.can_encode(f, bd));
+    println!();
+
+    const SIZES: [(u32, u32); 4] = [(200, 200), (448, 448), (480, 480), (1920, 1080)];
+    println!("Encoder frame sizes:");
+    print!("  {:<12}", "Codec");
+    for (width, height) in SIZES {
+        print!(" {:<10}", format!("{width}x{height}"));
+    }
+    println!();
+    for f in ALL_FORMATS.iter().filter(|f| caps.can_encode(f, 8)) {
+        print!("  {:<12}", format_name(f));
+        for (width, height) in SIZES {
+            print!(
+                " {:<10}",
+                yn(caps.can_encode_size(f, FrameSize { width, height }))
+            );
+        }
+        println!();
+    }
 
     Ok(())
 }

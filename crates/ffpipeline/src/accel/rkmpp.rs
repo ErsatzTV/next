@@ -43,7 +43,7 @@ impl HwAccel for Rkmpp {
             .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8, _size: FrameSize) -> bool {
         self.capabilities
             .can_encode(&VideoFormat::from(*format), bit_depth)
     }
@@ -52,17 +52,18 @@ impl HwAccel for Rkmpp {
         &self,
         format: &EncodeFormat,
         bit_depth: u8,
-        _video_size: Option<FrameSize>,
+        _size: FrameSize,
     ) -> Option<VideoCodec> {
+        let supported = self.capabilities.can_encode(&VideoFormat::from(*format), 8);
         match (format, bit_depth) {
-            (EncodeFormat::H264, 8) if self.can_encode(format, 8) => Some(VideoCodec {
+            (EncodeFormat::H264, 8) if supported => Some(VideoCodec {
                 codec_name: "h264_rkmpp",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
             }),
-            (EncodeFormat::Hevc, 8) if self.can_encode(format, 8) => Some(VideoCodec {
+            (EncodeFormat::Hevc, 8) if supported => Some(VideoCodec {
                 codec_name: "hevc_rkmpp",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),

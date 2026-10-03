@@ -41,7 +41,8 @@ pub trait HwAccel {
             _ => false,
         }
     }
-    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+    /// `size` is the frame size the encoder receives, here and in `codec_for_format`
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8, _size: FrameSize) -> bool {
         match bit_depth {
             10 => matches!(format, EncodeFormat::Hevc),
             8 => matches!(format, EncodeFormat::H264 | EncodeFormat::Hevc),
@@ -52,7 +53,7 @@ pub trait HwAccel {
         &self,
         format: &EncodeFormat,
         bit_depth: u8,
-        video_size: Option<FrameSize>,
+        size: FrameSize,
     ) -> Option<VideoCodec>;
     /// `bt709` is only applied when the pipeline tonemaps
     fn metadata_bsf(&self, _codec: &VideoCodec) -> Option<MetadataBsf> {

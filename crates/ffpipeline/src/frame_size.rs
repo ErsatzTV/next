@@ -4,7 +4,7 @@ use derive_more::Display;
 
 use crate::pipeline::FrameState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
 #[display("FrameSize(w={},h={})", width, height)]
 pub struct FrameSize {
     pub width: u32,

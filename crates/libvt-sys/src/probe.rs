@@ -3,9 +3,9 @@ use std::ptr;
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
-use core_foundation::dictionary::CFDictionary;
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::CFNumber;
-use core_foundation::string::CFString;
+use core_foundation::string::{CFString, CFStringRef};
 
 // CMVideoCodecType constants (FourCharCode / u32)
 pub const kCMVideoCodecType_H264: u32 = u32::from_be_bytes(*b"avc1");
@@ -19,11 +19,21 @@ const ENCODER_LIST_IS_HW_ACCELERATED: &str = "IsHardwareAccelerated";
 
 #[link(name = "VideoToolbox", kind = "framework")]
 unsafe extern "C" {
+    static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
+
     fn VTRegisterSupplementalVideoDecoderIfAvailable(codec_type: u32);
     fn VTIsHardwareDecodeSupported(codec_type: u32) -> u8;
     fn VTCopyVideoEncoderList(
         options: *const core_foundation::base::CFTypeRef,
         list_of_video_encoders_out: *mut core_foundation::base::CFTypeRef,
+    ) -> i32;
+    fn VTCopySupportedPropertyDictionaryForEncoder(
+        width: i32,
+        height: i32,
+        codec_type: u32,
+        encoder_specification: CFDictionaryRef,
+        encoder_id_out: *mut CFStringRef,
+        supported_properties_out: *mut CFDictionaryRef,
     ) -> i32;
 }
 
@@ -35,6 +45,46 @@ pub fn is_hardware_decode_supported(codec_type: u32) -> bool {
         }
         VTIsHardwareDecodeSupported(codec_type) != 0
     }
+}
+
+/// Returns true if a hardware encoder accepts frames of the given size. Some hardware encoders
+/// reject small frames, e.g. the 2018 Intel MacBook Pro rejects 448x448 but accepts 480x480.
+pub fn is_hardware_encode_supported(codec_type: u32, width: u32, height: u32) -> bool {
+    let (Ok(width), Ok(height)) = (i32::try_from(width), i32::try_from(height)) else {
+        return false;
+    };
+
+    let key = unsafe {
+        CFString::wrap_under_get_rule(
+            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
+        )
+    };
+    let specification = CFDictionary::from_CFType_pairs(&[(key, CFBoolean::true_value())]);
+
+    let mut encoder_id: CFStringRef = ptr::null();
+    let mut supported_properties: CFDictionaryRef = ptr::null();
+    let status = unsafe {
+        VTCopySupportedPropertyDictionaryForEncoder(
+            width,
+            height,
+            codec_type,
+            specification.as_concrete_TypeRef(),
+            &mut encoder_id,
+            &mut supported_properties,
+        )
+    };
+
+    // release the copied outputs
+    if !encoder_id.is_null() {
+        drop(unsafe { CFString::wrap_under_create_rule(encoder_id) });
+    }
+    if !supported_properties.is_null() {
+        drop(unsafe {
+            CFDictionary::<CFType, CFType>::wrap_under_create_rule(supported_properties)
+        });
+    }
+
+    status == 0
 }
 
 /// Returns the FourCC string for a codec type (e.g. 0x61766331 -> "avc1").
@@ -169,6 +219,21 @@ mod tests {
                     codec_type_name(*codec_type),
                     fourcc_str,
                     codec_type
+                );
+            }
+        }
+
+        println!("\n=== VideoToolbox Hardware Encode Sizes ===");
+        let mut unique_encoders = hw_encoders;
+        unique_encoders.sort_unstable();
+        unique_encoders.dedup();
+        for codec_type in unique_encoders {
+            for (width, height) in [(200, 200), (448, 448), (480, 480), (1920, 1080)] {
+                let supported = is_hardware_encode_supported(codec_type, width, height);
+                println!(
+                    "  {:<8} {width}x{height}: {}",
+                    codec_type_name(codec_type),
+                    if supported { "YES" } else { "no" }
                 );
             }
         }

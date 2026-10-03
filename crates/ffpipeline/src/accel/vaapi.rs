@@ -182,7 +182,7 @@ impl HwAccel for Vaapi {
         result
     }
 
-    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8, _size: FrameSize) -> bool {
         let video_format = VideoFormat::from(*format);
         let result = self.capabilities.can_encode(&video_format, bit_depth)
             || self
@@ -204,7 +204,7 @@ impl HwAccel for Vaapi {
         &self,
         format: &EncodeFormat,
         bit_depth: u8,
-        _video_size: Option<FrameSize>,
+        _size: FrameSize,
     ) -> Option<VideoCodec> {
         let force_cqp = self
             .capabilities

@@ -217,7 +217,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             source_is_hdr,
             (!video_copied).then_some(video_format),
             bit_depth,
-            video_size,
+            test_case.expected_video_size,
             &args,
         );
     }
@@ -441,7 +441,7 @@ pub async fn run_canvas_test(
             false,
             Some(EncodeFormat::H264),
             8,
-            Some(size),
+            size,
             &args,
         );
     }
@@ -1174,7 +1174,7 @@ pub fn assert_accel_usage(
     source_is_hdr: bool,
     video_format: Option<EncodeFormat>,
     bit_depth: u8,
-    video_size: Option<FrameSize>,
+    encode_size: FrameSize,
     args: &[impl AsRef<str>],
 ) {
     let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
@@ -1215,9 +1215,9 @@ pub fn assert_accel_usage(
         .position(|a| *a == "-vcodec")
         .map(|i| args[i + 1])
         .expect("no -vcodec in pipeline args");
-    if accel.can_encode(&format, bit_depth) {
+    if accel.can_encode(&format, bit_depth, encode_size) {
         let expected = accel
-            .codec_for_format(&format, bit_depth, video_size)
+            .codec_for_format(&format, bit_depth, encode_size)
             .map(|c| c.codec_name())
             .unwrap_or_else(|| {
                 panic!(
@@ -1237,7 +1237,7 @@ pub fn assert_accel_usage(
 
         assert_eq!(
             actual, expected,
-            "{accel} reports it cannot encode {bit_depth}-bit {format} but the pipeline used {actual}"
+            "{accel} reports it cannot encode {bit_depth}-bit {format} at {encode_size} but the pipeline used {actual}"
         );
     }
 }

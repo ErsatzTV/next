@@ -414,12 +414,13 @@ impl Pipeline {
             _ => {
                 let format = video_transcode.format;
                 let bit_depth = video_transcode.bit_depth;
+                let size = encode_size(video_transcode.size, video_stream)?;
                 VideoEncoder::Encode(
                     final_output_settings
                         .accel
                         .as_ref()
-                        .filter(|a| a.can_encode(&format, bit_depth))
-                        .and_then(|a| a.codec_for_format(&format, bit_depth, video_transcode.size))
+                        .filter(|a| a.can_encode(&format, bit_depth, size))
+                        .and_then(|a| a.codec_for_format(&format, bit_depth, size))
                         .unwrap_or_else(|| match format {
                             EncodeFormat::H264 => VideoCodec::libx264(),
                             EncodeFormat::Hevc => VideoCodec::libx265(),
@@ -1349,6 +1350,31 @@ impl std::fmt::Display for Pipeline {
     }
 }
 
+/// Without a target size only the transpose filter changes the frame size.
+fn encode_size(
+    target: Option<FrameSize>,
+    video_stream: &ProbeResultVideoStream,
+) -> Result<FrameSize, FFPipelineError> {
+    if let Some(size) = target {
+        return Ok(size);
+    }
+
+    let width = video_stream
+        .width
+        .ok_or(FFPipelineError::VideoInputIsRequired)?;
+    let height = video_stream
+        .height
+        .ok_or(FFPipelineError::VideoInputIsRequired)?;
+    Ok(if video_stream.is_quarter_turn() {
+        FrameSize {
+            width: height,
+            height: width,
+        }
+    } else {
+        FrameSize { width, height }
+    })
+}
+
 fn subtitle_burn<'a>(
     input_settings: &'a InputSettings,
     output_settings: &OutputSettings,
@@ -1856,8 +1882,8 @@ mod tests {
 
         let accel = HardwareAccel::VideoToolbox(crate::accel::video_toolbox::VideoToolbox {
             capabilities: VideoToolboxCapabilities {
-                supported_decoders: Default::default(),
                 supported_encoders: [(VideoFormat::H264, 8), (VideoFormat::Hevc, 8)].into(),
+                ..Default::default()
             },
         });
         let mut output = OutputSettings {
