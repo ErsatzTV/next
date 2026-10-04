@@ -19,6 +19,13 @@ pub enum FallbackReason {
         finish: OffsetDateTime,
         error: ChannelError,
     },
+
+    /// the playout item's source ended before its scheduled finish
+    SourceEnded {
+        item_id: String,
+        reached: OffsetDateTime,
+        finish: OffsetDateTime,
+    },
 }
 
 impl FallbackReason {
@@ -31,7 +38,18 @@ impl FallbackReason {
         }
     }
 
+    pub fn source_ended(item: &PlayoutItem, reached: OffsetDateTime) -> FallbackReason {
+        FallbackReason::SourceEnded {
+            item_id: item.id.clone(),
+            reached,
+            finish: item.finish,
+        }
+    }
+
     pub fn from_transcode_error(item: &PlayoutItem, error: ChannelError) -> FallbackReason {
+        if let ChannelError::SourceEnded { reached, .. } = error {
+            return FallbackReason::source_ended(item, reached);
+        }
         FallbackReason::TranscodeFailed {
             item_id: item.id.clone(),
             start: item.start,
@@ -46,6 +64,7 @@ impl FallbackReason {
             FallbackReason::ScheduledGap { next_start } => *next_start,
             FallbackReason::ItemSelectionFailed(_) => None,
             FallbackReason::TranscodeFailed { finish, .. } => Some(*finish),
+            FallbackReason::SourceEnded { finish, .. } => Some(*finish),
         }
     }
 
@@ -57,6 +76,9 @@ impl FallbackReason {
             }
             FallbackReason::ItemSelectionFailed(error) => error,
             FallbackReason::TranscodeFailed { error, .. } => error,
+            FallbackReason::SourceEnded {
+                item_id, reached, ..
+            } => ChannelError::SourceEnded { item_id, reached },
         }
     }
 
@@ -76,6 +98,13 @@ impl FallbackReason {
                 error,
             } => log::error!(
                 "item {item_id} ({start} .. {finish}) failed, replacing with black/silence: {error}"
+            ),
+            FallbackReason::SourceEnded {
+                item_id,
+                reached,
+                finish,
+            } => log::warn!(
+                "item {item_id} source ended at {reached}, replacing with black/silence until {finish}"
             ),
         }
     }
@@ -97,6 +126,9 @@ impl Display for FallbackReason {
             }
             FallbackReason::TranscodeFailed { item_id, error, .. } => {
                 write!(f, "playout item {item_id} failed to transcode: {error}")
+            }
+            FallbackReason::SourceEnded { item_id, .. } => {
+                write!(f, "playout item {item_id} ended early")
             }
         }
     }
@@ -159,6 +191,32 @@ mod tests {
                 "Dialogue: 0,0:00:00.00,99:99:99.99,Default,,0,0,54,,line one\\Nline two\n"
             )
         );
+    }
+
+    #[test]
+    fn source_ended_fills_rest_of_item() {
+        let item = PlayoutItem {
+            id: String::from("item"),
+            start: datetime!(2026-01-01 12:00 UTC),
+            finish: datetime!(2026-01-01 12:30 UTC),
+            source: None,
+            tracks: None,
+            watermark: None,
+            graphics: Vec::new(),
+        };
+        let reason = FallbackReason::from_transcode_error(
+            &item,
+            ChannelError::SourceEnded {
+                item_id: item.id.clone(),
+                reached: item.start,
+            },
+        );
+
+        assert!(matches!(
+            reason,
+            FallbackReason::SourceEnded { reached, .. } if reached == item.start
+        ));
+        assert_eq!(reason.fallback_until(), Some(item.finish));
     }
 
     #[test]
