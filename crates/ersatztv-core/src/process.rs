@@ -37,6 +37,38 @@ pub async fn stop(child: &mut Child, deadline: Duration) -> std::io::Result<Exit
     }
 }
 
+/// Reads the parent at call time, not first poll. Never resolves if the parent is init or none.
+#[cfg(unix)]
+pub fn parent_exit() -> impl Future<Output = ()> + Send + 'static {
+    use std::os::unix::process::parent_id;
+
+    let parent = parent_id();
+
+    async move {
+        // not PDEATHSIG: it is per spawning thread, and .NET spawns from pool threads
+        if parent > 1 {
+            let mut interval = tokio::time::interval(PARENT_POLL_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                if parent_id() != parent {
+                    return;
+                }
+            }
+        }
+
+        std::future::pending().await
+    }
+}
+
+#[cfg(unix)]
+const PARENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+#[cfg(not(unix))]
+pub async fn parent_exit() {
+    std::future::pending().await
+}
+
 #[cfg(unix)]
 pub async fn shutdown_signal() -> &'static str {
     use tokio::signal::unix::{SignalKind, signal};
@@ -94,7 +126,7 @@ mod tests {
 
     use tokio::io::AsyncBufReadExt;
 
-    use super::{command, stop};
+    use super::{command, parent_exit, stop};
 
     #[tokio::test]
     async fn stop_sends_sigterm() {
@@ -121,6 +153,59 @@ mod tests {
         let start = Instant::now();
         let status = stop(&mut child, Duration::from_millis(200)).await.unwrap();
         assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    const WATCHER_ENV: &str = "ETV_TEST_PARENT_EXIT_WATCHER";
+
+    // parent_exit_resolves_when_reparented runs this in a subprocess; no-op otherwise
+    #[tokio::test]
+    async fn parent_exit_watcher() {
+        if std::env::var_os(WATCHER_ENV).is_none() {
+            return;
+        }
+
+        let parent_exit = parent_exit();
+        println!("watching");
+        if tokio::time::timeout(Duration::from_secs(10), parent_exit)
+            .await
+            .is_ok()
+        {
+            println!("parent exited");
+        }
+    }
+
+    #[test]
+    fn parent_exit_resolves_when_reparented() {
+        use std::io::{BufRead, BufReader};
+
+        // std, not the helper, so the watcher outlives sh; exec keeps sh's pid
+        let mut parent = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "\"$0\" --exact process::tests::parent_exit_watcher --nocapture & exec sleep 30",
+            ])
+            .arg(std::env::current_exe().unwrap())
+            .env(WATCHER_ENV, "1")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let mut lines = BufReader::new(parent.stdout.take().unwrap())
+            .lines()
+            .map_while(Result::ok);
+        assert!(lines.any(|line| line == "watching"));
+
+        let start = Instant::now();
+        parent.kill().unwrap();
+        parent.wait().unwrap();
+
+        // to EOF, so the watcher never writes to a closed pipe
+        let rest: Vec<String> = lines.collect();
+        assert!(
+            rest.iter().any(|line| line == "parent exited"),
+            "watcher didn't notice its parent exit"
+        );
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
