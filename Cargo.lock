@@ -464,6 +464,7 @@ dependencies = [
 name = "ersatztv-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde_json",
  "simple-expand-tilde",
  "thiserror",
@@ -519,6 +520,7 @@ dependencies = [
  "derive_more",
  "enum_dispatch",
  "env_logger",
+ "ersatztv-core",
  "libamf-sys",
  "libcl-sys",
  "libd3d11-sys",

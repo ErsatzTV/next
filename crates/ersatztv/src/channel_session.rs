@@ -18,7 +18,7 @@ impl ChannelSession {
         channel: &ChannelModel,
         active: Arc<Mutex<HashMap<String, ChannelSession>>>,
     ) -> Result<Self, LineupError> {
-        let mut child = tokio::process::Command::new(channel_binary_path()?)
+        let mut child = ersatztv_core::process::command(channel_binary_path()?)
             .arg("run")
             .arg("--output-folder")
             .arg(channel.output_folder())

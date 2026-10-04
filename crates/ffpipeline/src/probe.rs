@@ -5,9 +5,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use enum_dispatch::enum_dispatch;
+use ersatztv_core::process;
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
-use tokio::process::Command;
 
 use crate::ArgVec;
 use crate::error::FFPipelineError;
@@ -346,7 +346,7 @@ impl Probeable for LocalInputSource {
 
 impl Probeable for LavfiInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
-        let mut ffmpeg = Command::new(probe_deps.ffmpeg_path)
+        let mut ffmpeg = process::command(probe_deps.ffmpeg_path)
             .args([
                 "-f",
                 "lavfi",
@@ -370,7 +370,7 @@ impl Probeable for LavfiInputSource {
             .try_into()
             .map_err(|_| FFPipelineError::ProbeFailed)?;
 
-        let output = Command::new(probe_deps.ffprobe_path)
+        let output = process::command(probe_deps.ffprobe_path)
             .args([
                 "-hide_banner",
                 "-print_format",
@@ -431,7 +431,7 @@ async fn probe_with_args(
     args.extend(input_args.iter().cloned());
     args.extend(args!["-i", path.to_owned()]);
 
-    let output = Command::new(ffprobe_path)
+    let output = process::command(ffprobe_path)
         .args(args.iter().map(Cow::as_ref))
         .output()
         .await
@@ -550,7 +550,7 @@ pub async fn probe_rotation(
 
     let output = tokio::time::timeout(
         FRAME_PROBE_TIMEOUT,
-        Command::new(probe_deps.ffprobe_path)
+        process::command(probe_deps.ffprobe_path)
             .args(args.iter().map(Cow::as_ref))
             .output(),
     )
@@ -621,7 +621,7 @@ async fn probe_hdr10_metadata(
 
         let output = tokio::time::timeout(
             FRAME_PROBE_TIMEOUT,
-            Command::new(ffprobe_path)
+            process::command(ffprobe_path)
                 .args(args.iter().map(Cow::as_ref))
                 .output(),
         )

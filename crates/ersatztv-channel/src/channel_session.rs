@@ -809,7 +809,7 @@ impl ChannelSession {
             .await?;
 
         // stream current item
-        let mut ffmpeg_child = tokio::process::Command::new(&self.ffmpeg_path)
+        let mut ffmpeg_child = ersatztv_core::process::command(&self.ffmpeg_path)
             .args(args.iter().map(Cow::as_ref))
             .envs(
                 envs.iter()
@@ -817,7 +817,6 @@ impl ChannelSession {
             )
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
             .spawn()
             .map_err(|_| ChannelError::StreamFailure(String::from("failed to spawn ffmpeg")))?;
 

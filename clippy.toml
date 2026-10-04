@@ -1,0 +1,3 @@
+disallowed-methods = [
+    { path = "tokio::process::Command::new", reason = "use ersatztv_core::process::command so children die with this process" },
+]

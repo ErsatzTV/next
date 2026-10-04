@@ -32,6 +32,7 @@ ffpipeline = { path = "crates/ffpipeline" }
 filetime = "0.2"
 futures-core = "0.3.32"
 futures-util = "0.3.32"
+libc = "0.2"
 libloading = "0.9"
 libamf-sys = { path = "crates/libamf-sys" }
 libcl-sys = { path = "crates/libcl-sys" }

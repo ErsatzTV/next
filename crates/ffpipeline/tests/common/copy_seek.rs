@@ -315,7 +315,7 @@ fn extinf_total(dir: &Path) -> f64 {
 /// Matches `PtsScanner` in ersatztv-channel.
 async fn last_segment_end(ffprobe: &Path, dir: &Path) -> Duration {
     let segment = segments(dir).pop().expect("no segments");
-    let output = tokio::process::Command::new(ffprobe)
+    let output = ersatztv_core::process::command(ffprobe)
         .args([
             "-v",
             "error",
@@ -342,7 +342,7 @@ async fn last_segment_end(ffprobe: &Path, dir: &Path) -> Duration {
 
 /// First in decode order, so an open GOP's leading B-frames don't count.
 async fn first_video_pts(ffprobe: &Path, segment: &Path) -> Duration {
-    let output = tokio::process::Command::new(ffprobe)
+    let output = ersatztv_core::process::command(ffprobe)
         .args(["-v", "error", "-select_streams", "v:0"])
         .args(["-show_entries", "packet=pts_time", "-of", "csv=p=0"])
         .arg(segment)
@@ -357,7 +357,7 @@ async fn first_video_pts(ffprobe: &Path, segment: &Path) -> Duration {
 }
 
 async fn framemd5(ffmpeg: &Path, path: &Path) -> Vec<String> {
-    let output = tokio::process::Command::new(ffmpeg)
+    let output = ersatztv_core::process::command(ffmpeg)
         .args(["-nostdin", "-v", "error", "-i"])
         .arg(path)
         .args(["-map", "0:v:0", "-f", "framemd5", "-"])

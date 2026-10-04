@@ -13,9 +13,9 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use ersatztv_channel::error::ChannelError;
+use ersatztv_core::process;
 use futures_core::Stream;
 use tokio::net::TcpListener;
-use tokio::process::Command;
 
 #[derive(Clone, Hash)]
 pub struct ScriptCommand {
@@ -103,12 +103,11 @@ async fn handle(State(st): State<ServerState>, Path(token): Path<String>) -> Res
         cmd
     };
 
-    let mut child = match Command::new(&cmd.command)
+    let mut child = match process::command(&cmd.command)
         .args(&cmd.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
         .spawn()
     {
         Ok(c) => c,

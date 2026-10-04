@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use ersatztv_core::process;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -106,7 +107,7 @@ impl<'a> KeyframeLocator<'a> {
     }
 
     fn dry_run_command(&self, seek: Duration, limit: &[&str]) -> Command {
-        let mut command = Command::new(self.ffmpeg_path);
+        let mut command = process::command(self.ffmpeg_path);
         command.args(["-nostdin", "-hide_banner", "-v", "error"]);
         command.args(
             self.input
@@ -129,8 +130,7 @@ impl<'a> KeyframeLocator<'a> {
             .args(limit)
             .args(["-f", "framecrc", "-"])
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
+            .stderr(std::process::Stdio::null());
         command
     }
 
