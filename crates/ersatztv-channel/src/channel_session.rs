@@ -779,7 +779,11 @@ impl ChannelSession {
         self.playlist_manager
             .lock()
             .await
-            .before_new_pipeline(pts_offset, subtitle_source)
+            .before_new_pipeline(
+                self.transcoded_until - self.start_time_offset,
+                pts_offset,
+                subtitle_source,
+            )
             .await?;
 
         // stream current item

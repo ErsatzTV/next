@@ -16,6 +16,10 @@ const MIN_SEGMENTS: usize = 4;
 const PUBLISH_LEAD: Duration =
     Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 3);
 
+// smaller gaps are frame rounding
+const PIPELINE_SHORTFALL_WARNING: Duration =
+    Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64);
+
 #[derive(Clone)]
 pub struct SubtitleSource {
     pub cues: Arc<Vec<Cue>>,
@@ -118,6 +122,7 @@ impl PlaylistManager {
 
     pub async fn before_new_pipeline(
         &mut self,
+        scheduled_start: OffsetDateTime,
         new_pts_offset: Option<PtsOffset>,
         new_subtitle_source: Option<SubtitleSource>,
     ) -> Result<(), ChannelError> {
@@ -125,6 +130,20 @@ impl PlaylistManager {
         self.pts_offset = new_pts_offset;
         self.subtitle_source = new_subtitle_source;
         self.pending_discontinuity = true;
+
+        // pacing follows the schedule, not segment output; a short source would leave
+        // program date times behind for good, and new segments would be trimmed on arrival.
+        // never move back: program date times must only increase
+        if scheduled_start > self.last_segment_end {
+            let lag = scheduled_start - self.last_segment_end;
+            if lag > PIPELINE_SHORTFALL_WARNING {
+                log::warn!(
+                    "hls timeline is {:.3}s behind schedule; jumping ahead to {scheduled_start}",
+                    lag.as_seconds_f64()
+                );
+            }
+            self.last_segment_end = scheduled_start;
+        }
         self.current_session_start = self.last_segment_end;
 
         self.last_progress = OffsetDateTime::now_utc();
@@ -419,4 +438,78 @@ fn render_subtitle_segment(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn playlist_manager(folder: &Path, channel_start_time: OffsetDateTime) -> PlaylistManager {
+        let file = |name: &str| folder.join(name).to_string_lossy().into_owned();
+        PlaylistManager::new(
+            channel_start_time,
+            ffpipeline::pipeline::SEGMENT_SECONDS,
+            folder.to_path_buf(),
+            folder.join(ersatztv_core::READY_FILE_NAME),
+            PlaylistManagerOutputFiles {
+                generated_playlist_file: file("live.m3u8"),
+                ffmpeg_playlist_file: file("ffmpeg.m3u8"),
+                generated_subtitle_playlist_file: file("live_sub.m3u8"),
+            },
+        )
+    }
+
+    // the parser expects the segment two lines after EXTINF
+    async fn write_ffmpeg_segments(folder: &Path, names: &[&str]) {
+        let mut playlist = String::from("#EXTM3U\n");
+        for name in names {
+            tokio::fs::write(folder.join(name), b"").await.unwrap();
+            playlist.push_str(&format!(
+                "#EXTINF:4.000000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00.000+0000\n{name}\n"
+            ));
+        }
+        tokio::fs::write(folder.join("ffmpeg.m3u8"), playlist)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn segments_after_shortfall_are_not_trimmed_on_arrival() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        // 10 minute shortfall
+        let mut pm = playlist_manager(folder.path(), now - Duration::from_mins(10));
+        pm.before_new_pipeline(now - Duration::from_secs(8), None, None)
+            .await
+            .unwrap();
+
+        let names = ["live000000.ts", "live000001.ts", "live000002.ts"];
+        write_ffmpeg_segments(folder.path(), &names).await;
+        pm.update().await.unwrap();
+
+        assert_eq!(pm.segments.len(), names.len());
+        assert_eq!(pm.media_sequence, 0);
+        let live = tokio::fs::read_to_string(folder.path().join("live.m3u8"))
+            .await
+            .unwrap();
+        for name in names {
+            assert!(folder.path().join(name).exists());
+            assert!(live.contains(name));
+        }
+    }
+
+    #[tokio::test]
+    async fn timeline_ahead_of_schedule_is_not_moved_back() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now - Duration::from_mins(1), None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(pm.last_segment_end, now);
+        assert_eq!(pm.current_session_start, now);
+    }
 }
