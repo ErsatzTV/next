@@ -8,16 +8,15 @@ mod pts_scanner;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
+use ersatztv_core::SHUTDOWN_DEADLINE;
+use ersatztv_core::process::shutdown_signal;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
-
-const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Parser, Debug)]
 #[command(version = ersatztv_core::VERSION, about, long_about = None)]
@@ -90,34 +89,6 @@ async fn run_until_shutdown() -> Result<(), ChannelError> {
             Ok(())
         }
     }
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() -> &'static str {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    let (Ok(mut terminate), Ok(mut interrupt)) = (
-        signal(SignalKind::terminate()),
-        signal(SignalKind::interrupt()),
-    ) else {
-        log::warn!("failed to install signal handlers");
-        return std::future::pending().await;
-    };
-
-    tokio::select! {
-        _ = terminate.recv() => "SIGTERM",
-        _ = interrupt.recv() => "SIGINT",
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() -> &'static str {
-    if tokio::signal::ctrl_c().await.is_err() {
-        log::warn!("failed to install ctrl+c handler");
-        return std::future::pending().await;
-    }
-
-    "ctrl+c"
 }
 
 async fn run() -> Result<(), ChannelError> {
