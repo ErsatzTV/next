@@ -55,7 +55,7 @@ async fn motion_check_rejects_missing_deinterlace(
         "scale={}:{}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={}:{}:(ow-iw)/2:(oh-ih)/2,setsar=1",
         res.width, res.height, res.width, res.height,
     );
-    let output = tokio::process::Command::new(&env.ffmpeg)
+    let output = ersatztv_core::process::command(&env.ffmpeg)
         .args(["-v", "error", "-i"])
         .arg(fixture_path("480i_h264_motion.ts"))
         .args(["-t", "1", "-an", "-vf", &filter, "-c:v", "libx264"])
@@ -140,11 +140,10 @@ async fn canvas_local() {
     ] {
         let generated = tokio::time::timeout(
             Duration::from_secs(30),
-            tokio::process::Command::new(&env.ffmpeg)
+            ersatztv_core::process::command(&env.ffmpeg)
                 .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
                 .args(args)
                 .arg(path)
-                .kill_on_drop(true)
                 .output(),
         )
         .await
@@ -218,7 +217,7 @@ async fn canvas_local() {
     let segment = find_first_segment(dir.path());
     let decoded = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(&env.ffmpeg)
+        ersatztv_core::process::command(&env.ffmpeg)
             .args(["-nostdin", "-v", "error", "-i"])
             .arg(segment)
             .args([
@@ -230,7 +229,6 @@ async fn canvas_local() {
                 "rawvideo",
                 "pipe:1",
             ])
-            .kill_on_drop(true)
             .output(),
     )
     .await

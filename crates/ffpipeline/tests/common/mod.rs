@@ -340,11 +340,10 @@ pub async fn run_canvas_test(
     ] {
         let generated = tokio::time::timeout(
             Duration::from_secs(30),
-            tokio::process::Command::new(&test_env.ffmpeg)
+            ersatztv_core::process::command(&test_env.ffmpeg)
                 .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
                 .args(args)
                 .arg(path)
-                .kill_on_drop(true)
                 .output(),
         )
         .await
@@ -450,7 +449,7 @@ pub async fn run_canvas_test(
     assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
     let decoded = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(&test_env.ffmpeg)
+        ersatztv_core::process::command(&test_env.ffmpeg)
             .args(["-nostdin", "-v", "error", "-i"])
             .arg(&segment)
             .args([
@@ -462,7 +461,6 @@ pub async fn run_canvas_test(
                 "rawvideo",
                 "pipe:1",
             ])
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -508,7 +506,7 @@ pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<Hardware
     let main = dir.path().join("main.mp4");
     let generated = tokio::time::timeout(
         Duration::from_secs(60),
-        tokio::process::Command::new(&test_env.ffmpeg)
+        ersatztv_core::process::command(&test_env.ffmpeg)
             .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
             .args([
                 "-f",
@@ -533,7 +531,6 @@ pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<Hardware
                 "2",
             ])
             .arg(&main)
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -612,11 +609,10 @@ pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<Hardware
 pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
     let output = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(ffmpeg)
+        ersatztv_core::process::command(ffmpeg)
             .args(["-nostdin", "-hide_banner", "-v", "error", "-i"])
             .arg(path)
             .args(["-f", "null", "-"])
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -633,7 +629,7 @@ pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
 pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
     let output = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(ffmpeg)
+        ersatztv_core::process::command(ffmpeg)
             .args(["-nostdin", "-v", "error", "-i"])
             .arg(path)
             .args(["-map", "0:v:0", "-vf"])
@@ -643,7 +639,6 @@ pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
                 y & !1
             ))
             .args(["-frames:v", "1", "-f", "rawvideo", "-"])
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -668,13 +663,12 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
     async fn mean_luma(ffmpeg: &Path, path: &Path, crop: &str) -> f64 {
         let output = tokio::time::timeout(
             Duration::from_secs(30),
-            tokio::process::Command::new(ffmpeg)
+            ersatztv_core::process::command(ffmpeg)
                 .args(["-v", "error", "-i"])
                 .arg(path)
                 .args(["-map", "0:v:0", "-an", "-vf"])
                 .arg(format!("crop={crop},format=gray"))
                 .args(["-frames:v", "10", "-f", "rawvideo", "-"])
-                .kill_on_drop(true)
                 .output(),
         )
         .await
@@ -712,7 +706,7 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
 pub async fn motion_combing_score(ffmpeg: &Path, path: &Path, size: FrameSize) -> f64 {
     let output = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(ffmpeg)
+        ersatztv_core::process::command(ffmpeg)
             .args(["-v", "error", "-i"])
             .arg(path)
             .args([
@@ -727,7 +721,6 @@ pub async fn motion_combing_score(ffmpeg: &Path, path: &Path, size: FrameSize) -
                 "rawvideo",
                 "-",
             ])
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -1001,7 +994,7 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
 
     let output = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(ffmpeg)
+        ersatztv_core::process::command(ffmpeg)
             .args(args.iter().map(Cow::as_ref))
             .envs(
                 envs.iter()
@@ -1009,7 +1002,6 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
             )
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -1027,7 +1019,7 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
 /// (480p_h264_sps_change.ts reports 240/1 for 30 fps content), so the expected source
 /// rate comes from avg_frame_rate instead
 pub async fn probe_avg_frame_rate(ffprobe: &Path, path: &Path) -> FrameRate {
-    let output = tokio::process::Command::new(ffprobe)
+    let output = ersatztv_core::process::command(ffprobe)
         .args(["-v", "error", "-select_streams", "v:0"])
         // not csv: a stream with side data (MPEG-2 CPB properties) gets an extra
         // empty field, so the value would come out as "30/1,"

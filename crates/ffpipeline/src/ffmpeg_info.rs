@@ -5,9 +5,9 @@ use std::iter::Iterator;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use ersatztv_core::process;
 use serde::Serialize;
 use strum::{Display, EnumIter, IntoEnumIterator, IntoStaticStr};
-use tokio::process::Command;
 
 use crate::error::FFPipelineError;
 
@@ -251,7 +251,7 @@ impl FfmpegInfo {
     }
 
     async fn load_hw_accels(path: &Path) -> Result<HashSet<String>, FFPipelineError> {
-        let output = Command::new(path)
+        let output = process::command(path)
             .args(["-hide_banner", "-hwaccels"])
             .output()
             .await
@@ -277,7 +277,7 @@ impl FfmpegInfo {
     }
 
     async fn load_decoders(path: &Path) -> Result<HashSet<String>, FFPipelineError> {
-        let output = Command::new(path)
+        let output = process::command(path)
             .args(["-hide_banner", "-decoders"])
             .output()
             .await
@@ -308,7 +308,7 @@ impl FfmpegInfo {
         path: &Path,
         filter: &str,
     ) -> Result<HashSet<String>, FFPipelineError> {
-        let output = Command::new(path)
+        let output = process::command(path)
             .args(["-hide_banner", "-h", &format!("filter={filter}")])
             .output()
             .await
@@ -342,7 +342,7 @@ impl FfmpegInfo {
         path: &Path,
         disabled_filters: &[String],
     ) -> Result<HashSet<String>, FFPipelineError> {
-        let output = Command::new(path)
+        let output = process::command(path)
             .args(["-hide_banner", "-filters"])
             .output()
             .await

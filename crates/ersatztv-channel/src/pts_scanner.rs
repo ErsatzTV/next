@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
-use tokio::process::Command;
+use ersatztv_core::process;
 
 pub struct PtsTime {
     pub duration: Duration,
@@ -46,7 +46,7 @@ impl PtsScanner {
                 .into_string()
                 .map_err(|_| ChannelError::PtsScannerFailure)?;
 
-            let output = Command::new("ffprobe")
+            let output = process::command("ffprobe")
                 .args([
                     "-v",
                     "-0",

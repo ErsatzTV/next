@@ -8,3 +8,6 @@ serde_json = { workspace = true }
 simple-expand-tilde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
