@@ -162,7 +162,6 @@ impl ChannelSession {
         let ready_file = output_folder.join(READY_FILE_NAME);
 
         let playout_loader = PlayoutLoader::new(&channel_config);
-        let pts_scanner = PtsScanner::new(&channel_config);
         let playlist_manager = PlaylistManager::new(
             now,
             SEGMENT_SECONDS,
@@ -190,6 +189,8 @@ impl ChannelSession {
             .ffmpeg_path
             .clone()
             .unwrap_or(default_ffmpeg_path);
+
+        let pts_scanner = PtsScanner::new(&channel_config, &ffprobe_path);
 
         let local_proxy_server = LocalProxyServer::start().await?;
 

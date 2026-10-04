@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ersatztv_channel::config::ChannelConfig;
@@ -11,12 +11,14 @@ pub struct PtsTime {
 
 pub struct PtsScanner {
     output_folder: PathBuf,
+    ffprobe_path: PathBuf,
 }
 
 impl PtsScanner {
-    pub fn new(channel_config: &ChannelConfig) -> PtsScanner {
+    pub fn new(channel_config: &ChannelConfig, ffprobe_path: &Path) -> PtsScanner {
         PtsScanner {
             output_folder: channel_config.expanded_output_folder().to_owned(),
+            ffprobe_path: ffprobe_path.to_owned(),
         }
     }
 
@@ -46,7 +48,7 @@ impl PtsScanner {
                 .into_string()
                 .map_err(|_| ChannelError::PtsScannerFailure)?;
 
-            let output = process::command("ffprobe")
+            let output = process::command(&self.ffprobe_path)
                 .args([
                     "-v",
                     "-0",
