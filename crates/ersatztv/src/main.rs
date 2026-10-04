@@ -170,9 +170,21 @@ async fn run() -> Result<(), LineupError> {
             });
 
             // stop channels during the drain, not after: a request waiting on .ready blocks it
-            axum::serve(listener, app)
-                .with_graceful_shutdown(state.shutdown.clone().cancelled_owned())
-                .await?;
+            let serve = axum::serve(listener, app)
+                .with_graceful_shutdown(state.shutdown.clone().cancelled_owned());
+
+            // a client that stops reading holds its response, and so the drain, open forever
+            let drain_deadline = async {
+                state.shutdown.cancelled().await;
+                tokio::time::sleep(SHUTDOWN_DEADLINE).await;
+            };
+
+            tokio::select! {
+                result = serve => result?,
+                _ = drain_deadline => {
+                    log::warn!("connections still open {SHUTDOWN_DEADLINE:?} after shutdown; closing them");
+                }
+            }
 
             state.tracker.close();
             state.tracker.wait().await;
