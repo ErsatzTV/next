@@ -984,6 +984,8 @@ impl Pipeline {
                 OutputOption::VideoBuffer(final_output_settings.video.transcode.buffer),
                 OutputOption::DoNotMapMetadata,
                 OutputOption::Duration(duration),
+                // apad does not end; stop at the end of video
+                OutputOption::Shortest,
                 OutputOption::TsOffset(pts_offset),
                 OutputOption::VideoTrackTimeScale(90_000),
                 OutputOption::FrameRate(final_output_settings.frame_rate.clone()),
@@ -1010,6 +1012,7 @@ impl Pipeline {
                         | OutputOption::AudioBuffer(_)
                         | OutputOption::AudioChannels(_)
                         | OutputOption::AudioSampleRate(_)
+                        | OutputOption::Shortest
                 )
             });
 

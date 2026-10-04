@@ -50,6 +50,9 @@ impl PtsScanner {
                 .args([
                     "-v",
                     "-0",
+                    // audio can end after video; the next video must start where this video ends
+                    "-select_streams",
+                    "v:0",
                     "-show_entries",
                     "packet=pts_time,duration_time",
                     "-of",
