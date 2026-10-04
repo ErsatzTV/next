@@ -40,9 +40,13 @@ impl ChannelSession {
 
         tracker.spawn(async move {
             let ready_file_clone = ready_file.clone();
+            let heartbeat_file_clone = heartbeat_file.clone();
             let watcher = tokio::spawn(async move {
                 loop {
                     if tokio::fs::metadata(&ready_file_clone).await.is_ok() {
+                        // start the idle timer even if no client ever requests a segment;
+                        // not at spawn, because the worker empties its folder on start
+                        let _ = tokio::fs::write(&heartbeat_file_clone, b"").await;
                         let _ = ready_sender.send(true);
                         return;
                     }
