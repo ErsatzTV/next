@@ -36,6 +36,8 @@ pub(crate) async fn write_xmltv_file(
     playout_items: &[XmltvProgramme],
     retain_after: OffsetDateTime,
 ) -> Result<(), PlayoutGeneratorError> {
+    // add-lineup doesn't create the xmltv folder
+    tokio::fs::create_dir_all(xmltv_folder).await?;
     let output_file = xmltv_folder.join(format!("{}.xml", channel_tvg_id));
 
     let kept = match tokio::fs::read(&output_file).await {
