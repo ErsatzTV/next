@@ -20,6 +20,7 @@ pub enum OutputOption {
     AudioChannels(Option<u32>),
     AudioSampleRate(Option<Hz>),
     Duration(Duration),
+    Shortest,
     /// Output `-ss`: drops packets by dts
     Seek(Duration),
     H264CopyParameterSets,
@@ -78,6 +79,7 @@ impl OutputOption {
             OutputOption::Duration(duration) => {
                 args!["-t", format!("{}ms", duration.as_millis())]
             }
+            OutputOption::Shortest => args!["-shortest"],
             OutputOption::Seek(position) => {
                 args!["-ss", format!("{:.6}", position.as_secs_f64())]
             }
