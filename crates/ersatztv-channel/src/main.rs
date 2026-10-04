@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::SHUTDOWN_DEADLINE;
-use ersatztv_core::process::shutdown_signal;
+use ersatztv_core::process::{parent_exit, shutdown_signal};
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
@@ -42,10 +42,16 @@ enum Commands {
         number: String,
         #[arg(short, long)]
         troubleshoot: bool,
+        /// Keep running if the parent process exits
+        #[arg(long)]
+        detached: bool,
     },
 }
 
 pub fn main() -> ExitCode {
+    // first, so a parent that dies during startup is still seen
+    let parent_exit = parent_exit();
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -59,7 +65,17 @@ pub fn main() -> ExitCode {
         }
     };
 
-    let result = runtime.block_on(run_until_shutdown());
+    // clap may exit here; nothing is spawned yet
+    let args = Args::parse();
+    let watch_parent = matches!(
+        args.command,
+        Commands::Run {
+            detached: false,
+            ..
+        }
+    );
+
+    let result = runtime.block_on(run_until_shutdown(args, watch_parent, parent_exit));
 
     // process::exit skips drops, so kill_on_drop children would outlive us
     runtime.shutdown_timeout(SHUTDOWN_DEADLINE);
@@ -78,28 +94,36 @@ pub fn main() -> ExitCode {
     }
 }
 
-async fn run_until_shutdown() -> Result<(), ChannelError> {
+async fn run_until_shutdown(
+    args: Args,
+    watch_parent: bool,
+    parent_exit: impl Future<Output = ()>,
+) -> Result<(), ChannelError> {
     // tokio never restores the default signal action, so a second SIGTERM can't kill us;
     // shutdown_timeout is the backstop
     tokio::select! {
-        result = run() => result,
+        result = run(args) => result,
         signal = shutdown_signal() => {
             // dropping run() killed ffmpeg
             log::info!("received {signal}; shutting down");
             Ok(())
         }
+        // a killed parent can't stop us, and .heartbeat goes stale
+        _ = parent_exit, if watch_parent => {
+            log::warn!("parent process exited; shutting down");
+            Ok(())
+        }
     }
 }
 
-async fn run() -> Result<(), ChannelError> {
-    let args = Args::parse();
-
+async fn run(args: Args) -> Result<(), ChannelError> {
     match args.command {
         Commands::Run {
             config_paths,
             output_folder,
             number,
             troubleshoot,
+            ..
         } => {
             let channel_config =
                 ChannelConfig::from_sources(&config_paths, &output_folder, &number).await?;
