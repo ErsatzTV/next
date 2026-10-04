@@ -76,6 +76,12 @@ pub enum ChannelError {
     #[error("channel {0} terminated after ffmpeg stall")]
     Stalled(String),
 
+    #[error("item {item_id} source ended at {reached}")]
+    SourceEnded {
+        item_id: String,
+        reached: OffsetDateTime,
+    },
+
     #[error("failed to capture ffmpeg stderr")]
     CaptureFFmpegStderrFailure,
 

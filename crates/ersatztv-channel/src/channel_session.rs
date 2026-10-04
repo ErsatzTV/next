@@ -45,7 +45,9 @@ use tokio::sync::Mutex;
 use crate::dossier::DossierBuilder;
 use crate::fallback::{FallbackReason, error_card_subtitle};
 use crate::local_proxy::{LocalProxyServer, ScriptCommand};
-use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
+use crate::playlist_manager::{
+    PlaylistManager, PlaylistManagerOutputFiles, SHORTFALL_TOLERANCE, SubtitleSource,
+};
 use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};
 
@@ -117,6 +119,7 @@ pub struct ChannelSession {
     // work-ahead runs one item as several chunks; warn once per item
     copy_warned_item_id: Option<String>,
     copy_resume: Option<CopyResume>,
+    ended_item_id: Option<String>,
     input_starts: HashMap<(String, u32), Option<InputStart>>,
     dynamic_http_client: reqwest::Client,
 }
@@ -214,6 +217,7 @@ impl ChannelSession {
             cached_subtitles: None,
             copy_warned_item_id: None,
             copy_resume: None,
+            ended_item_id: None,
             input_starts: HashMap::new(),
             dynamic_http_client,
         })
@@ -393,7 +397,15 @@ impl ChannelSession {
 
         let mut is_fallback = false;
         let current_item = match current_item_result {
-            Ok(playout_item) => playout_item,
+            Ok(playout_item) if self.ended_item_id.as_ref() == Some(&playout_item.id) => {
+                is_fallback = true;
+                let reason = FallbackReason::source_ended(&playout_item, self.transcoded_until);
+                self.fallback_playout_item(&reason).await
+            }
+            Ok(playout_item) => {
+                self.ended_item_id = None;
+                playout_item
+            }
             Err(err) => {
                 let reason = FallbackReason::from_selection_error(err);
                 if troubleshoot {
@@ -425,9 +437,19 @@ impl ChannelSession {
             Err(e @ ChannelError::Stalled(_)) => return Err(e),
             Err(e) if troubleshoot => return Err(e),
             Err(e) => {
+                // an ended pass may still output a short tail
+                if let ChannelError::SourceEnded { reached, .. } = &e {
+                    self.transcoded_until = *reached;
+                    self.ended_item_id = Some(current_item.id.clone());
+                }
                 let reason = FallbackReason::from_transcode_error(&current_item, e);
                 reason.log(&self.transcoded_until);
                 let fallback_item = self.fallback_playout_item(&reason).await;
+                // the failed pass may have output segments
+                let pts_duration = match self.pts_scanner.get_last_pts().await {
+                    Ok(scanned_pts_time) => Some(scanned_pts_time.duration),
+                    Err(_) => pts_duration,
+                };
                 self.transcode_item(&fallback_item, realtime, troubleshoot, pts_duration, true)
                     .await?
             }
@@ -874,6 +896,15 @@ impl ChannelSession {
             std::cmp::min(audio_timing.finish, video_timing.finish),
             is_live || (audio_timing.is_complete && video_timing.is_complete),
         ));
+
+        // ffmpeg exits 0 when a source ends early (short file, dropped live stream)
+        let produced = self.playlist_manager.lock().await.pipeline_output().await?;
+        if let Some(reached) = shortfall_end(self.transcoded_until, finish, produced) {
+            return Err(ChannelError::SourceEnded {
+                item_id: current_item.id.clone(),
+                reached,
+            });
+        }
 
         Ok((finish, is_complete))
     }
@@ -1810,6 +1841,15 @@ async fn input_start_blocker(
     input_start.map_or(Some(CopyBlocker::NoKeyframes), |s| s.copy_blocker())
 }
 
+fn shortfall_end(
+    start: OffsetDateTime,
+    finish: OffsetDateTime,
+    produced: time::Duration,
+) -> Option<OffsetDateTime> {
+    let reached = start + produced;
+    (finish - reached > SHORTFALL_TOLERANCE).then_some(reached)
+}
+
 /// Without an out point, the source runs for the scheduled duration.
 fn source_points_ms(item: &PlayoutItem, source: &PlayoutItemSource) -> (u64, u64) {
     let item_duration_ms = (item.finish - item.start).whole_milliseconds() as u64;
@@ -2026,6 +2066,21 @@ mod tests {
         assert!(
             args.iter().any(|a| a.contains("subtitles=")),
             "error card is not burned in: {args:?}"
+        );
+    }
+
+    #[test]
+    fn shortfall_within_tolerance_is_ignored() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let finish = start + Duration::from_secs(44);
+
+        assert_eq!(
+            shortfall_end(start, finish, time::Duration::seconds_f64(43.9)),
+            None
+        );
+        assert_eq!(
+            shortfall_end(start, finish, time::Duration::seconds(20)),
+            Some(start + time::Duration::seconds(20))
         );
     }
 

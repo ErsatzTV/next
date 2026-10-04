@@ -17,7 +17,7 @@ const PUBLISH_LEAD: Duration =
     Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 3);
 
 // smaller gaps are frame rounding
-const PIPELINE_SHORTFALL_WARNING: Duration =
+pub const SHORTFALL_TOLERANCE: Duration =
     Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64);
 
 #[derive(Clone)]
@@ -136,7 +136,7 @@ impl PlaylistManager {
         // never move back: program date times must only increase
         if scheduled_start > self.last_segment_end {
             let lag = scheduled_start - self.last_segment_end;
-            if lag > PIPELINE_SHORTFALL_WARNING {
+            if lag > SHORTFALL_TOLERANCE {
                 log::warn!(
                     "hls timeline is {:.3}s behind schedule; jumping ahead to {scheduled_start}",
                     lag.as_seconds_f64()
@@ -157,6 +157,11 @@ impl PlaylistManager {
         }
 
         Ok(())
+    }
+
+    pub async fn pipeline_output(&mut self) -> Result<time::Duration, ChannelError> {
+        self.update().await?;
+        Ok(self.last_segment_end - self.current_session_start)
     }
 
     pub async fn update(&mut self) -> Result<(), ChannelError> {
@@ -186,15 +191,21 @@ impl PlaylistManager {
 
         // add new segments
         for file in sorted_new_segments {
-            if self.pending_discontinuity {
-                self.discontinuity_before.insert(file.to_owned());
-                self.pending_discontinuity = false;
-            }
-
             let duration = new_segment_durations
                 .get(&file)
                 .map(|f| f.to_owned())
                 .unwrap_or(self.target_duration_f64);
+
+            // ffmpeg writes an empty segment after seeking past the end of the input
+            if duration <= 0.0 {
+                tokio::fs::remove_file(self.output_folder.join(&file)).await?;
+                continue;
+            }
+
+            if self.pending_discontinuity {
+                self.discontinuity_before.insert(file.to_owned());
+                self.pending_discontinuity = false;
+            }
 
             // rfc8216bis 6.2.1 requires EXT-X-TARGETDURATION to stay constant,
             // and 4.4.3.1 only requires it to cover segment durations rounded
@@ -497,6 +508,47 @@ mod tests {
             assert!(folder.path().join(name).exists());
             assert!(live.contains(name));
         }
+    }
+
+    #[tokio::test]
+    async fn empty_segments_are_dropped() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+
+        tokio::fs::write(folder.path().join("live000000.ts"), b"")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            folder.path().join("ffmpeg.m3u8"),
+            "#EXTM3U\n#EXTINF:0.000000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00.000+0000\nlive000000.ts\n",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(pm.pipeline_output().await.unwrap(), time::Duration::ZERO);
+        assert!(pm.segments.is_empty());
+        assert!(!folder.path().join("live000000.ts").exists());
+    }
+
+    #[tokio::test]
+    async fn pipeline_output_counts_only_the_current_pipeline() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now - Duration::from_secs(8));
+        write_ffmpeg_segments(folder.path(), &["live000000.ts"]).await;
+        pm.update().await.unwrap();
+
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+        write_ffmpeg_segments(folder.path(), &["live000001.ts", "live000002.ts"]).await;
+
+        assert_eq!(
+            pm.pipeline_output().await.unwrap(),
+            time::Duration::seconds(8)
+        );
     }
 
     #[tokio::test]
