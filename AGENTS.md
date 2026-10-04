@@ -73,6 +73,9 @@ cargo test --package ffpipeline --test qsv -- --ignored --test-threads 1   # als
 # Point integration tests at a specific ffmpeg build
 ETV_TEST_FFMPEG=/path/to/ffmpeg ETV_TEST_FFPROBE=/path/to/ffprobe cargo test --package ffpipeline -- --ignored --test-threads 1
 
+# Linux only: signal/orphan tests for the channel binary (ffmpeg must not outlive it); same env vars
+cargo test --package ersatztv-channel --test signals -- --ignored
+
 # VAAPI suite: override the render node / driver (defaults: /dev/dri/renderD128, auto-detect iHD/i965/radeonsi)
 ETV_TEST_VAAPI_DEVICE=/dev/dri/renderD129 ETV_TEST_VAAPI_DRIVER=iHD cargo test --package ffpipeline --test vaapi -- --ignored --test-threads 1
 

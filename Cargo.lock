@@ -471,6 +471,7 @@ dependencies = [
  "simple-expand-tilde",
  "thiserror",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

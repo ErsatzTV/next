@@ -14,7 +14,7 @@ use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use clap::{Parser, Subcommand};
 use ersatztv::error::LineupError;
-use ersatztv_core::process::shutdown_signal;
+use ersatztv_core::process::{kill_descendants_on_exit, shutdown_signal};
 use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_TIMEOUT, SHUTDOWN_DEADLINE, empty_folder};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -58,6 +58,7 @@ enum Commands {
 
 pub fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    kill_descendants_on_exit();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

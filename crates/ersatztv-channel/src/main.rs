@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::SHUTDOWN_DEADLINE;
-use ersatztv_core::process::{parent_exit, shutdown_signal};
+use ersatztv_core::process::{kill_descendants_on_exit, parent_exit, shutdown_signal};
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
@@ -53,6 +53,7 @@ pub fn main() -> ExitCode {
     let parent_exit = parent_exit();
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    kill_descendants_on_exit();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

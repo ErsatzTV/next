@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use tokio::process::{Child, Command};
 
+#[cfg(windows)]
+mod windows;
+
 /// A command whose child dies with this process: on drop, and on Linux also when this process is
 /// killed. Spawn only from async context; Linux ties the death signal to the spawning thread, and
 /// blocking-pool threads exit when idle.
@@ -37,21 +40,18 @@ pub async fn stop(child: &mut Child, deadline: Duration) -> std::io::Result<Exit
     }
 }
 
-/// Reads the parent at call time, not first poll. Never resolves if the parent is init or none.
-#[cfg(unix)]
+/// Reads the parent at call time, not first poll. Never resolves if the parent is init or already
+/// gone.
 pub fn parent_exit() -> impl Future<Output = ()> + Send + 'static {
-    use std::os::unix::process::parent_id;
-
-    let parent = parent_id();
+    let parent = Parent::current();
 
     async move {
-        // not PDEATHSIG: it is per spawning thread, and .NET spawns from pool threads
-        if parent > 1 {
+        if let Some(parent) = parent {
             let mut interval = tokio::time::interval(PARENT_POLL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
-                if parent_id() != parent {
+                if parent.exited() {
                     return;
                 }
             }
@@ -61,12 +61,32 @@ pub fn parent_exit() -> impl Future<Output = ()> + Send + 'static {
     }
 }
 
-#[cfg(unix)]
 const PARENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-#[cfg(not(unix))]
-pub async fn parent_exit() {
-    std::future::pending().await
+// not PDEATHSIG: it is per spawning thread, and .NET spawns from pool threads
+#[cfg(unix)]
+struct Parent(u32);
+
+#[cfg(unix)]
+impl Parent {
+    fn current() -> Option<Self> {
+        let pid = std::os::unix::process::parent_id();
+        (pid > 1).then_some(Self(pid))
+    }
+
+    fn exited(&self) -> bool {
+        std::os::unix::process::parent_id() != self.0
+    }
+}
+
+#[cfg(windows)]
+use windows::Parent;
+
+/// Windows only: every descendant dies when this process exits, however it exits. Linux gets this
+/// per child from [`command`]; macOS has no equivalent.
+pub fn kill_descendants_on_exit() {
+    #[cfg(windows)]
+    windows::kill_descendants_on_exit();
 }
 
 #[cfg(unix)]
