@@ -7,6 +7,8 @@ mod playout_loader;
 mod pts_scanner;
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use ersatztv_channel::config::ChannelConfig;
@@ -14,6 +16,8 @@ use ersatztv_channel::error::ChannelError;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
+
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Parser, Debug)]
 #[command(version = ersatztv_core::VERSION, about, long_about = None)]
@@ -42,22 +46,78 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-pub async fn main() {
+pub fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
 
-    if let Err(err) = run().await {
-        match err {
-            // the idle timeout is a routine reap (the heartbeat went stale
-            // because no client is watching), not a failure; supervisors
-            // read a non-zero exit as a crash, so it must exit clean
-            ChannelError::IdleTimeout(_) => log::info!("{err}"),
-            _ => {
-                log::error!("{err}");
-                std::process::exit(1);
-            }
-        };
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            log::error!("failed to start runtime: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let result = runtime.block_on(run_until_shutdown());
+
+    // process::exit skips drops, so kill_on_drop children would outlive us
+    runtime.shutdown_timeout(SHUTDOWN_DEADLINE);
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        // no viewers is not a failure; supervisors treat non-zero as a crash
+        Err(err @ ChannelError::IdleTimeout(_)) => {
+            log::info!("{err}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            log::error!("{err}");
+            ExitCode::FAILURE
+        }
     }
+}
+
+async fn run_until_shutdown() -> Result<(), ChannelError> {
+    // tokio never restores the default signal action, so a second SIGTERM can't kill us;
+    // shutdown_timeout is the backstop
+    tokio::select! {
+        result = run() => result,
+        signal = shutdown_signal() => {
+            // dropping run() killed ffmpeg
+            log::info!("received {signal}; shutting down");
+            Ok(())
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> &'static str {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let (Ok(mut terminate), Ok(mut interrupt)) = (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) else {
+        log::warn!("failed to install signal handlers");
+        return std::future::pending().await;
+    };
+
+    tokio::select! {
+        _ = terminate.recv() => "SIGTERM",
+        _ = interrupt.recv() => "SIGINT",
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> &'static str {
+    if tokio::signal::ctrl_c().await.is_err() {
+        log::warn!("failed to install ctrl+c handler");
+        return std::future::pending().await;
+    }
+
+    "ctrl+c"
 }
 
 async fn run() -> Result<(), ChannelError> {
