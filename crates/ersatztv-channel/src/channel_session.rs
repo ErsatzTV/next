@@ -1638,6 +1638,9 @@ fn fallback_item(
     duration: Duration,
     subtitle: Option<TrackSelection>,
 ) -> PlayoutItem {
+    // lavfi defaults to 25fps, but the gop comes from the hinted rate; they must agree
+    // for keyframes (and segments) to land on the 2s/4s grid
+    let frame_rate = FrameRate::default().r_frame_rate;
     PlayoutItem {
         id: uuid::Uuid::new_v4().to_string(),
         start,
@@ -1663,14 +1666,20 @@ fn fallback_item(
             }),
             video: Some(TrackSelection {
                 source: Some(PlayoutItemSource::Lavfi {
-                    params: format!("color=c=black:s={}x{}", size.width, size.height),
+                    params: format!(
+                        "color=c=black:s={}x{}:r={frame_rate}",
+                        size.width, size.height
+                    ),
                     probe_hint: Some(ProbeHint {
-                        video: vec![VideoHint::new(
-                            String::from("rawvideo"),
-                            size.width,
-                            size.height,
-                            String::from("yuv420p"),
-                        )],
+                        video: vec![VideoHint {
+                            frame_rate: Some(frame_rate),
+                            ..VideoHint::new(
+                                String::from("rawvideo"),
+                                size.width,
+                                size.height,
+                                String::from("yuv420p"),
+                            )
+                        }],
                         audio: Vec::new(),
                         subtitle: Vec::new(),
                         format_name: Some(String::from("mpegts")),
@@ -2061,5 +2070,30 @@ mod tests {
             video.transcode.format,
             ffpipeline::pipeline::EncodeFormat::Hevc
         );
+    }
+
+    #[test]
+    fn fallback_video_rate_matches_hint() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let item = fallback_item(
+            start,
+            start + Duration::from_mins(1),
+            FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            Duration::from_mins(1),
+            None,
+        );
+        let video = item.tracks.unwrap().video.unwrap().source.unwrap();
+        let PlayoutItemSource::Lavfi {
+            params,
+            probe_hint: Some(hint),
+        } = video
+        else {
+            panic!("fallback video should be hinted lavfi")
+        };
+        let rate = hint.video[0].frame_rate.clone().expect("hinted frame rate");
+        assert!(params.ends_with(&format!(":r={rate}")));
     }
 }
