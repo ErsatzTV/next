@@ -430,6 +430,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http",
 ]
@@ -465,6 +466,7 @@ name = "ersatztv-core"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "log",
  "serde_json",
  "simple-expand-tilde",
  "thiserror",
@@ -2146,6 +2148,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

@@ -17,6 +17,8 @@ pub const READY_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HEARTBEAT_FILE_NAME: &str = ".heartbeat";
 pub const HEARTBEAT_FILE_TIMEOUT: Duration = Duration::from_secs(90);
 
+pub const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
+
 pub const VERSION: &str = env!("ETV_VERSION_STRING");
 
 pub async fn empty_folder(output_folder: &std::path::Path) -> Result<(), std::io::Error> {

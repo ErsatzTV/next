@@ -4,8 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ersatztv::error::LineupError;
-use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_NAME};
+use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_NAME, SHUTDOWN_DEADLINE};
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use crate::channel_model::ChannelModel;
 
@@ -17,6 +19,8 @@ impl ChannelSession {
     pub fn spawn(
         channel: &ChannelModel,
         active: Arc<Mutex<HashMap<String, ChannelSession>>>,
+        shutdown: CancellationToken,
+        tracker: &TaskTracker,
     ) -> Result<Self, LineupError> {
         let mut child = ersatztv_core::process::command(channel_binary_path()?)
             .arg("run")
@@ -34,7 +38,7 @@ impl ChannelSession {
         let heartbeat_file = channel.output_folder().join(HEARTBEAT_FILE_NAME);
         let channel_number = channel.number().to_owned();
 
-        tokio::spawn(async move {
+        tracker.spawn(async move {
             let ready_file_clone = ready_file.clone();
             let watcher = tokio::spawn(async move {
                 loop {
@@ -46,7 +50,13 @@ impl ChannelSession {
                 }
             });
 
-            let _ = child.wait().await;
+            tokio::select! {
+                _ = child.wait() => {}
+                _ = shutdown.cancelled() => {
+                    log::debug!("stopping channel {}", channel_number);
+                    let _ = ersatztv_core::process::stop(&mut child, SHUTDOWN_DEADLINE).await;
+                }
+            }
             watcher.abort();
             log::debug!("channel {} exited", channel_number);
             active.lock().await.remove(&channel_number);
