@@ -385,22 +385,25 @@ impl PlaylistManager {
         let path = Path::new(&self.ffmpeg_playlist_file);
         if path.exists() {
             let contents = tokio::fs::read_to_string(&path).await?;
-            let lines: Vec<&str> = contents.split('\n').collect();
-            let mut i: usize = 0;
-            while i < lines.len() {
-                if lines[i].starts_with("#EXTINF:")
-                    && i + 2 < lines.len()
-                    && lines[i + 2].ends_with(".ts")
-                {
-                    let segment_name = lines[i + 2];
-                    let inf_split: Vec<&str> =
-                        lines[i].split(':').map(|s| s.trim_matches(',')).collect();
-                    if let Ok(duration) = inf_split[1].parse::<f64>() {
-                        result.insert(segment_name.to_owned(), duration);
-                    }
-                }
+            let mut lines = contents.lines();
+            while let Some(line) = lines.next() {
+                let Some(inf) = line.strip_prefix("#EXTINF:") else {
+                    continue;
+                };
 
-                i += 1;
+                // tags such as EXT-X-PROGRAM-DATE-TIME (absent when troubleshooting) may precede the uri
+                let Some(segment_name) = lines
+                    .by_ref()
+                    .find(|l| !l.is_empty() && !l.starts_with('#'))
+                else {
+                    break;
+                };
+
+                if segment_name.ends_with(".ts")
+                    && let Some(Ok(duration)) = inf.split(',').next().map(str::parse::<f64>)
+                {
+                    result.insert(segment_name.to_owned(), duration);
+                }
             }
         }
 
@@ -470,7 +473,6 @@ mod tests {
         )
     }
 
-    // the parser expects the segment two lines after EXTINF
     async fn write_ffmpeg_segments(folder: &Path, names: &[&str]) {
         let mut playlist = String::from("#EXTM3U\n");
         for name in names {
@@ -548,6 +550,33 @@ mod tests {
         assert_eq!(
             pm.pipeline_output().await.unwrap(),
             time::Duration::seconds(8)
+        );
+    }
+
+    #[tokio::test]
+    async fn segments_without_program_date_time_are_counted() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+
+        // troubleshooting omits the program_date_time hls flag
+        for name in ["live000000.ts", "live000001.ts"] {
+            tokio::fs::write(folder.path().join(name), b"")
+                .await
+                .unwrap();
+        }
+        tokio::fs::write(
+            folder.path().join("ffmpeg.m3u8"),
+            "#EXTM3U\n#EXT-X-DISCONTINUITY\n#EXTINF:4.004000,\nlive000000.ts\n#EXTINF:3.128333,\nlive000001.ts\n#EXT-X-ENDLIST\n",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            pm.pipeline_output().await.unwrap(),
+            time::Duration::seconds_f64(4.004 + 3.128333)
         );
     }
 
