@@ -146,6 +146,16 @@ macro_rules! shared_tests {
 
         #[::tokio::test]
         #[ignore]
+        async fn copy_still_image_alpha() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_still_image_alpha(),
+            )
+            .await;
+        }
+
+        #[::tokio::test]
+        #[ignore]
         async fn copy_generated_audio() {
             $crate::common::shared::run(
                 $accel().await,
@@ -558,13 +568,17 @@ pub fn copy_text_subtitle() -> TestCase {
 }
 
 pub fn copy_still_image() -> TestCase {
-    let mut test_case = copy(
-        "watermark.png",
-        FrameSize {
-            width: 200,
-            height: 200,
-        },
-    );
+    let mut test_case = copy("background.png", SIZE_1080P);
+    test_case.audio_source = Some(TestAudioSource::Fixture("720p_h264.ts"));
+    test_case.expected_copy.video = blocked(vec![
+        CopyBlocker::CodecNotAllowed(String::from("png")),
+        CopyBlocker::StillImage,
+    ]);
+    test_case
+}
+
+pub fn copy_still_image_alpha() -> TestCase {
+    let mut test_case = copy("background_alpha.png", SIZE_720P);
     test_case.audio_source = Some(TestAudioSource::Fixture("720p_h264.ts"));
     test_case.expected_copy.video = blocked(vec![
         CopyBlocker::CodecNotAllowed(String::from("png")),

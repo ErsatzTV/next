@@ -2404,4 +2404,53 @@ mod tests {
             "encoder format hint (NV12) should win over bit-depth canonical (P010le)",
         );
     }
+
+    fn resolve_rgba_upload_to_cuda(encoder_pixel_format: PixelFormat) -> Vec<String> {
+        use crate::accel::cuda::Cuda;
+        use crate::capabilities::nvidia::NvidiaCapabilities;
+
+        let accel = HardwareAccel::Cuda(Cuda::new(
+            NvidiaCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                device_uuid: None,
+            },
+            None,
+        ));
+
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(accel),
+            &VideoFilterOptions::default(),
+            &sdr_state(FrameSurface::System, PixelFormat::Rgba),
+            &FrameSurface::Cuda,
+            &Some(encoder_pixel_format),
+        );
+
+        chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resolve_drops_alpha_before_cuda_upload_for_opaque_target() {
+        assert_eq!(
+            resolve_rgba_upload_to_cuda(PixelFormat::Nv12),
+            vec!["format=nv12", "hwupload_cuda"]
+        );
+    }
+
+    #[test]
+    fn resolve_keeps_alpha_for_cuda_upload_to_alpha_target() {
+        assert_eq!(
+            resolve_rgba_upload_to_cuda(PixelFormat::Yuva420p),
+            vec!["format=yuva420p", "hwupload_cuda"]
+        );
+    }
 }
