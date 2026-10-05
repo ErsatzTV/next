@@ -7,6 +7,7 @@ impl VideoToolboxCapabilities {
     pub fn probe() -> Result<VideoToolboxCapabilities, FFPipelineError> {
         Ok(VideoToolboxCapabilities {
             supported_decoders: HashSet::new(),
+            supported_interlaced_decoders: HashSet::new(),
             supported_encoders: HashSet::new(),
         })
     }

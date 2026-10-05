@@ -68,6 +68,16 @@ pub enum VideoFormat {
     Vp9,
 }
 
+impl VideoFormat {
+    /// other codecs carry interlaced content as progressive pictures
+    pub fn has_interlaced_coding(&self) -> bool {
+        matches!(
+            self,
+            VideoFormat::H264 | VideoFormat::Mpeg2Video | VideoFormat::Vc1
+        )
+    }
+}
+
 /// The formats next can encode. `VideoFormat` identifies a codec (decode, capability probes);
 /// this is the subset a channel can target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize)]
@@ -1879,6 +1889,7 @@ mod tests {
         let accel = HardwareAccel::VideoToolbox(crate::accel::video_toolbox::VideoToolbox {
             capabilities: VideoToolboxCapabilities {
                 supported_decoders: Default::default(),
+                supported_interlaced_decoders: Default::default(),
                 supported_encoders: [(VideoFormat::H264, 8), (VideoFormat::Hevc, 8)].into(),
             },
         });

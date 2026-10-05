@@ -17,7 +17,7 @@ use ffpipeline::output_settings::{
     ScalingMode, SubtitleMode, VideoFilterOptions, VideoOutputSettings, VideoTranscodeSettings,
 };
 use ffpipeline::pipeline::{
-    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, PixelFormat, VideoFormat, generate_pipeline,
+    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline,
 };
 use ffpipeline::probe::{
     ProbeDeps, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
@@ -1180,14 +1180,13 @@ pub fn assert_accel_usage(
         );
         return;
     };
-    let pixel_format = PixelFormat::parse(&source.pix_fmt);
     if source.rotation_degrees() != 0 {
         assert!(
             cmd.contains("transpose") || cmd.contains("hflip,vflip"),
             "rotated source must be rotated by the pipeline"
         );
     }
-    if accel.can_decode(&source.codec, &source.profile, &pixel_format) {
+    if accel.can_decode_stream(source) {
         assert!(
             hw_decode,
             "{accel} reports it can decode {} {} but the pipeline used software decode",

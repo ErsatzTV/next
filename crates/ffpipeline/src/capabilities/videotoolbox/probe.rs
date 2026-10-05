@@ -13,11 +13,13 @@ const CODECS: &[(u32, VideoFormat, bool)] = &[
     (kCMVideoCodecType_HEVC, VideoFormat::Hevc, true),
     (kCMVideoCodecType_VP9, VideoFormat::Vp9, true),
     (kCMVideoCodecType_AV1, VideoFormat::Av1, true),
+    (kCMVideoCodecType_MPEG2Video, VideoFormat::Mpeg2Video, false),
 ];
 
 impl VideoToolboxCapabilities {
     pub fn probe() -> Result<VideoToolboxCapabilities, FFPipelineError> {
         let mut supported_decoders = HashSet::new();
+        let mut supported_interlaced_decoders = HashSet::new();
         let mut supported_encoders = HashSet::new();
 
         // Probe decoder support
@@ -26,6 +28,14 @@ impl VideoToolboxCapabilities {
                 supported_decoders.insert((format, 8));
                 if supports_10bit {
                     supported_decoders.insert((format, 10));
+                }
+            }
+
+            if format.has_interlaced_coding() && is_hardware_interlaced_decode_supported(codec_type)
+            {
+                supported_interlaced_decoders.insert((format, 8));
+                if supports_10bit {
+                    supported_interlaced_decoders.insert((format, 10));
                 }
             }
         }
@@ -43,6 +53,7 @@ impl VideoToolboxCapabilities {
 
         Ok(VideoToolboxCapabilities {
             supported_decoders,
+            supported_interlaced_decoders,
             supported_encoders,
         })
     }

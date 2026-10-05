@@ -440,6 +440,12 @@ fn print_videotoolbox() -> Result<(), String> {
 
     print_decode_table(ALL_FORMATS, |f, bd| caps.can_decode(f, bd));
     println!();
+    print_interlaced_decode_table(
+        ALL_FORMATS,
+        |f, bd| caps.can_decode(f, bd),
+        |f, bd| caps.can_decode_interlaced(f, bd),
+    );
+    println!();
     print_encode_table(ALL_FORMATS, |f, bd| caps.can_encode(f, bd));
 
     Ok(())
@@ -478,6 +484,27 @@ fn print_decode_table(formats: &[VideoFormat], can_decode: impl Fn(&VideoFormat,
         let dec10 = can_decode(f, 10);
         if dec8 || dec10 {
             println!("  {:<12} {:<8} {:<8}", format_name(f), yn(dec8), yn(dec10),);
+        }
+    }
+}
+
+/// keep unsupported rows, so missing interlaced decode shows as "-"
+fn print_interlaced_decode_table(
+    formats: &[VideoFormat],
+    can_decode: impl Fn(&VideoFormat, u8) -> bool,
+    can_decode_interlaced: impl Fn(&VideoFormat, u8) -> bool,
+) {
+    println!("Interlaced Decoders:");
+    println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
+    println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
+    for f in formats {
+        if f.has_interlaced_coding() && (can_decode(f, 8) || can_decode(f, 10)) {
+            println!(
+                "  {:<12} {:<8} {:<8}",
+                format_name(f),
+                yn(can_decode_interlaced(f, 8)),
+                yn(can_decode_interlaced(f, 10)),
+            );
         }
     }
 }

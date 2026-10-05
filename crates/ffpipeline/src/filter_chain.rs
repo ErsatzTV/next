@@ -1432,6 +1432,7 @@ mod tests {
     fn resolve_converts_10bit_to_8bit_before_upload_to_videotoolbox() {
         let accel = HardwareAccel::VideoToolbox(VideoToolbox::new(VideoToolboxCapabilities {
             supported_decoders: HashSet::new(),
+            supported_interlaced_decoders: HashSet::new(),
             supported_encoders: HashSet::from([(VideoFormat::Hevc, 8)]),
         }));
         let mut chain = FilterChain::new(Vec::new());
