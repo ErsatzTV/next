@@ -985,7 +985,7 @@ impl Pipeline {
                 OutputOption::DoNotMapMetadata,
                 OutputOption::Duration(duration),
                 // apad does not end; stop at the end of video
-                OutputOption::Shortest,
+                OutputOption::Shortest(None),
                 OutputOption::TsOffset(pts_offset),
                 OutputOption::VideoTrackTimeScale(90_000),
                 OutputOption::FrameRate(final_output_settings.frame_rate.clone()),
@@ -1012,7 +1012,7 @@ impl Pipeline {
                         | OutputOption::AudioBuffer(_)
                         | OutputOption::AudioChannels(_)
                         | OutputOption::AudioSampleRate(_)
-                        | OutputOption::Shortest
+                        | OutputOption::Shortest(_)
                 )
             });
 
@@ -1096,6 +1096,14 @@ impl Pipeline {
                     *own_input = true;
                 }
             }
+
+            // -shortest holds video in its sync queue until the delayed audio catches up;
+            // the default 10 s of qsv frames exhausts the same fixed pools
+            for option in &mut self.output_options {
+                if let OutputOption::Shortest(buffer) = option {
+                    *buffer = Some(Duration::from_millis(500));
+                }
+            }
         }
 
         if let Some(accel) = &self.accel {
@@ -1111,6 +1119,7 @@ impl Pipeline {
 
     /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
     /// slow canvas. The qsv frames queued for overlay_qsv exhaust fixed pools (runtime < 2.9).
+    /// The same delay makes -shortest buffer qsv frames, so its buffer is capped too.
     fn audio_needs_own_input(&self) -> bool {
         let Some(HardwareAccel::Qsv(qsv)) = &self.accel else {
             return false;
@@ -2120,6 +2129,15 @@ mod tests {
             .collect();
         let downmix = args.iter().position(|a| a == "-downmix").expect("-downmix");
         assert!(inputs[0] < downmix && downmix < inputs[1], "{args:?}");
+
+        assert_eq!(shortest_buf_duration(&args), Some("0.500"), "{args:?}");
+    }
+
+    fn shortest_buf_duration(args: &ArgVec) -> Option<&str> {
+        assert!(args.iter().any(|a| a == "-shortest"), "{args:?}");
+        args.windows(2)
+            .find(|a| a[0] == "-shortest_buf_duration")
+            .map(|a| a[1].as_ref())
     }
 
     #[test]
@@ -2131,6 +2149,7 @@ mod tests {
                 1,
                 "runtime {runtime_api:?}: {args:?}"
             );
+            assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
         }
     }
 
@@ -2142,6 +2161,7 @@ mod tests {
             1,
             "{args:?}"
         );
+        assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
     }
 
     #[test]
@@ -2153,6 +2173,7 @@ mod tests {
                 1,
                 "canvas={canvas} loudness={loudness}: {args:?}"
             );
+            assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
         }
     }
 
