@@ -190,12 +190,32 @@ macro_rules! shared_tests {
             .await;
         }
 
+        #[::rstest::rstest]
+        #[case::down("1080p_h264.ts", "24", false)]
+        #[case::up_ntsc("720p_h264.ts", "60000/1001", false)]
+        #[case::deinterlaced("1080i_h264.ts", "25", true)]
+        #[case::hdr("1080p_hevc_10_hdr.ts", "30", false)]
         #[::tokio::test]
         #[ignore]
-        async fn custom_frame_rate() {
+        async fn custom_frame_rate(
+            #[case] src: &'static str,
+            #[case] rate: &'static str,
+            #[case] deinterlace: bool,
+        ) {
             $crate::common::shared::run(
                 $accel().await,
-                $crate::common::shared::custom_frame_rate(),
+                $crate::common::shared::custom_frame_rate(src, rate, deinterlace),
+            )
+            .await;
+        }
+
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn copy_frame_rate(#[values("30", "30000/1001")] rate: &'static str) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_frame_rate(rate),
             )
             .await;
         }
@@ -616,9 +636,22 @@ pub fn loudness_normalization() -> TestCase {
     test_case
 }
 
-pub fn custom_frame_rate() -> TestCase {
-    let mut test_case = source_sized("1080p_h264.ts", SIZE_1080P);
-    test_case.params.frame_rate = Some(FrameRate::parse("24"));
+pub fn custom_frame_rate(src: &'static str, rate: &str, deinterlace: bool) -> TestCase {
+    let mut test_case = transcode(src, SIZE_1080P, ("h264", 8), AudioFormat::Aac);
+    test_case.params.frame_rate = FrameRate::parse_target(rate);
+    test_case.params.deinterlace = deinterlace;
+    test_case
+}
+
+pub fn copy_frame_rate(rate: &str) -> TestCase {
+    let mut test_case = copy("720p_h264.ts", SIZE_720P);
+    test_case.params.frame_rate = FrameRate::parse_target(rate);
+    if rate != "30" {
+        test_case.expected_copy.video = blocked(vec![CopyBlocker::FrameRateMismatch {
+            source: String::from("30/1"),
+            target: rate.to_owned(),
+        }]);
+    }
     test_case
 }
 

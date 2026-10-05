@@ -12,7 +12,7 @@ use crate::error::ChannelError;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 1,
-    compatible: 0,
+    compatible: 1,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
@@ -202,6 +202,12 @@ pub struct VideoNormalizationConfig {
     pub height: Option<u32>,
     #[serde(default)]
     pub scaling_mode: ScalingMode,
+    /// Output frame rate, `N` or `N/D` (e.g. `25`, `30000/1001`).
+    /// Frames are dropped or repeated to match it.
+    /// In `copy` mode, only items at this rate are copied. Unset keeps the source rate.
+    #[serde(default, deserialize_with = "deserialize_frame_rate")]
+    #[schemars(pattern(r"^[1-9][0-9]*(/[1-9][0-9]*)?$"))]
+    pub frame_rate: Option<String>,
     pub bitrate_kbps: Option<u32>,
     pub buffer_kbps: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_optional_accel")]
@@ -736,6 +742,17 @@ fn deserialize_bit_depth<'de, D: Deserializer<'de>>(d: D) -> Result<u8, D::Error
     }
 }
 
+fn deserialize_frame_rate<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    match Option::<String>::deserialize(d)? {
+        None => Ok(None),
+        Some(v) if ffpipeline::frame_rate::FrameRate::parse_target(&v).is_some() => Ok(Some(v)),
+        Some(v) => Err(serde::de::Error::custom(format!(
+            "frame_rate \"{v}\" must be N or N/D with positive integers, from 1 to {} fps",
+            ffpipeline::frame_rate::MAX_TARGET_FRAME_RATE
+        ))),
+    }
+}
+
 fn deserialize_optional_path<'de, D: Deserializer<'de>>(d: D) -> Result<Option<PathBuf>, D::Error> {
     Ok(Option::<PathBuf>::deserialize(d)?.filter(|p| !p.as_os_str().is_empty()))
 }
@@ -918,5 +935,31 @@ mod tests {
             }
             other => panic!("expected ChannelConfigSchemaVersion, got {:?}", other.err()),
         }
+    }
+
+    #[tokio::test]
+    async fn frame_rate_accepts_rationals() {
+        let mut base = base();
+        base["normalization"]["video"]["frame_rate"] = json!("30000/1001");
+
+        let config = load(&[base]).await.unwrap();
+
+        assert_eq!(
+            config.normalization.video.frame_rate.as_deref(),
+            Some("30000/1001")
+        );
+    }
+
+    #[tokio::test]
+    async fn frame_rate_rejects_decimals() {
+        let mut base = base();
+        base["normalization"]["video"]["frame_rate"] = json!("29.97");
+
+        let message = config_error(load(&[base]).await);
+
+        assert!(
+            message.contains("frame_rate \"29.97\" must be N or N/D"),
+            "{message}"
+        );
     }
 }

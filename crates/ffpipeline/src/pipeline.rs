@@ -35,9 +35,9 @@ use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, EnsureAlphaFilter,
-    FadeFilter, FormatFilter, LoopFilter, PadFilter, ScaleFilter, SoftwareDeinterlaceFilter,
-    SoftwareDeinterlaceOptions, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
-    TransposeDir, TransposeFilter, VideoFilter,
+    FadeFilter, FormatFilter, FpsFilter, LoopFilter, PadFilter, ScaleFilter,
+    SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions, SubtitleImageScaleFilter,
+    SubtitlesFilter, ToneMapFilter, TransposeDir, TransposeFilter, VideoFilter,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -114,7 +114,7 @@ enum SubtitleBurn<'a> {
 }
 
 pub(crate) struct OutputContext {
-    pub(crate) media_frame_rate: FrameRate,
+    pub(crate) frame_rate: FrameRate,
     pub(crate) audio_codec: AudioCodec,
     pub(crate) audio_channels: Option<u32>,
     pub(crate) video_encoder: VideoEncoder,
@@ -498,12 +498,20 @@ impl Pipeline {
             rotation: video_stream.rotation,
         };
 
+        // copy can't change the rate; only items already at the target are copied
+        let output_frame_rate = final_output_settings
+            .frame_rate
+            .clone()
+            .filter(|_| video_encoder != VideoEncoder::Copy);
+
         let output_context = OutputContext {
             audio_codec,
             audio_channels: final_output_settings.audio.transcode.channels,
             video_encoder: video_encoder.clone(),
             pts_offset,
-            media_frame_rate: video_stream.frame_rate.to_owned(),
+            frame_rate: output_frame_rate
+                .clone()
+                .unwrap_or_else(|| video_stream.frame_rate.to_owned()),
             preferred_surface: video_encoder.preferred_surface(),
             preferred_pixel_format: video_encoder.preferred_pixel_format(video_transcode.bit_depth),
         };
@@ -550,6 +558,14 @@ impl Pipeline {
                         yadif: video_transcode.filter_options.yadif.clone(),
                     },
                     input_is_interlaced: initial_state.is_interlaced,
+                }
+                .into(),
+            ),
+            // after deinterlace, which can double the rate; before the rest, so it runs at the
+            // target rate
+            PipelineFilter::Video(
+                FpsFilter {
+                    frame_rate: output_frame_rate.clone(),
                 }
                 .into(),
             ),
@@ -739,10 +755,7 @@ impl Pipeline {
             } else if graphics_stream.is_still_image() {
                 // decode a single frame; the loop filter below repeats it *after* scaling, so
                 // decode and scale happen once instead of once per output frame
-                args![
-                    "-framerate",
-                    output_context.media_frame_rate.r_frame_rate.clone()
-                ]
+                args!["-framerate", output_context.frame_rate.r_frame_rate.clone()]
             } else if graphics_stream.codec == "gif" || graphics_stream.codec == "apng" {
                 args![
                     "-ignore_loop",
@@ -940,11 +953,7 @@ impl Pipeline {
             channel_number: input_settings.channel_number.clone(),
             playout_offset: input_settings.playout_offset,
             duration,
-            frame_rate: final_output_settings
-                .frame_rate
-                .as_ref()
-                .map(|fr| fr.r_frame_rate.clone())
-                .unwrap_or(output_context.media_frame_rate.r_frame_rate.clone()),
+            frame_rate: output_context.frame_rate.r_frame_rate.clone(),
         };
 
         Ok(Pipeline {
@@ -988,7 +997,7 @@ impl Pipeline {
                 OutputOption::Shortest(None),
                 OutputOption::TsOffset(pts_offset),
                 OutputOption::VideoTrackTimeScale(90_000),
-                OutputOption::FrameRate(final_output_settings.frame_rate.clone()),
+                OutputOption::FrameRate(output_frame_rate),
                 OutputOption::Format(final_output_settings.format),
             ])
             .collect(),
@@ -1417,6 +1426,7 @@ fn copy_decisions(
                     has_graphics: !input_settings.graphics_inputs.is_empty(),
                     image_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Image { .. })),
                     burned_subtitle: matches!(subtitle_burn, Some(SubtitleBurn::Text { .. })),
+                    target_frame_rate: output_settings.frame_rate.as_ref(),
                 },
             )
         }),
@@ -2286,5 +2296,121 @@ mod tests {
             }
         }
         assert_eq!(inputs, 4);
+    }
+
+    fn filter_complex(args: &ArgVec) -> String {
+        args.windows(2)
+            .filter(|a| a[0] == "-filter_complex")
+            .map(|a| a[1].as_ref())
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
+    fn arg_value<'a>(args: &'a ArgVec, option: &str) -> Option<&'a str> {
+        args.iter()
+            .rposition(|a| a == option)
+            .map(|i| args[i + 1].as_ref())
+    }
+
+    #[test]
+    fn target_frame_rate_converts_after_deinterlace_and_before_scale() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut input.video_input.probe_result.streams[0]
+        {
+            video.field_order = Some("tt".to_owned());
+        }
+        let mut output = stereo_output();
+        output.frame_rate = FrameRate::parse_target("25");
+        let ffmpeg_info = FfmpegInfo {
+            video_filters: [crate::ffmpeg_info::KnownVideoFilter::Yadif.to_string()].into(),
+            ..Default::default()
+        };
+        let mut pipeline = Pipeline::full(&ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+
+        let filter = filter_complex(&args);
+        let position = |needle: &str| filter.find(needle).expect(&filter);
+        assert!(
+            position("yadif") < position("fps=25") && position("fps=25") < position("scale="),
+            "{filter}"
+        );
+        assert_eq!(arg_value(&args, "-g"), Some("50"), "{args:?}");
+        assert_eq!(arg_value(&args, "-r"), Some("25"), "{args:?}");
+        assert_eq!(arg_value(&args, "-fps_mode"), Some("cfr"), "{args:?}");
+    }
+
+    #[test]
+    fn no_target_frame_rate_keeps_source_rate() {
+        let mut pipeline = Pipeline::full(
+            &FfmpegInfo::default(),
+            multichannel_ac3_input("main.mkv"),
+            stereo_output(),
+        )
+        .unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+
+        assert!(!filter_complex(&args).contains("fps="), "{args:?}");
+        assert_eq!(arg_value(&args, "-g"), Some("60"), "{args:?}");
+        assert!(!args.iter().any(|a| a == "-r"), "{args:?}");
+    }
+
+    #[test]
+    fn copy_with_target_frame_rate_copies_only_matching_rates() {
+        for (target, copies) in [("30000/1001", true), ("25", false)] {
+            let mut output = stereo_output();
+            output.video.copy = Some(crate::output_settings::CopyPolicy::default());
+            output.frame_rate = FrameRate::parse_target(target);
+            let mut pipeline = Pipeline::full(
+                &FfmpegInfo::default(),
+                multichannel_ac3_input("main.mkv"),
+                output,
+            )
+            .unwrap();
+            pipeline.optimize();
+            let args = pipeline.args();
+
+            if copies {
+                assert_eq!(arg_value(&args, "-vcodec"), Some("copy"), "{args:?}");
+                assert!(!args.iter().any(|a| a == "-r"), "{args:?}");
+            } else {
+                assert_eq!(arg_value(&args, "-vcodec"), Some("libx264"), "{args:?}");
+                assert_eq!(arg_value(&args, "-r"), Some(target), "{args:?}");
+                assert!(filter_complex(&args).contains("fps=25"), "{args:?}");
+                assert_eq!(
+                    pipeline.copy_decisions().transcode_summary().as_deref(),
+                    Some("video (frame rate 30000/1001 is not 25)")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn still_image_graphics_decode_at_target_frame_rate() {
+        for (target, expected) in [(None, "30000/1001"), (Some("25"), "25")] {
+            let mut input = multichannel_ac3_input("main.mkv");
+            let mut watermark = canvas_input(InputSource::Local(crate::input::LocalInputSource {
+                path: "watermark.png".to_owned(),
+            }));
+            watermark.kind = GraphicsKind::Media;
+            watermark.timing = None;
+            watermark.probe_result.format_name = Some("image2".to_owned());
+            if let crate::probe::ProbeResultStream::Video(video) =
+                &mut watermark.probe_result.streams[0]
+            {
+                video.codec = "png".to_owned();
+                video.pix_fmt = "rgba".to_owned();
+            }
+            input.graphics_inputs.push(watermark);
+            let mut output = stereo_output();
+            output.frame_rate = target.and_then(FrameRate::parse_target);
+            let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, output).unwrap();
+            pipeline.optimize();
+            let args = pipeline.args();
+
+            assert_eq!(arg_value(&args, "-framerate"), Some(expected), "{args:?}");
+        }
     }
 }
