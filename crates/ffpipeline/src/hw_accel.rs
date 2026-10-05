@@ -41,6 +41,14 @@ pub trait HwAccel {
             _ => false,
         }
     }
+    /// support can depend on more than codec, profile and pixel format (e.g. interlacing)
+    fn can_decode_stream(&self, video_stream: &ProbeResultVideoStream) -> bool {
+        self.can_decode(
+            &video_stream.codec,
+            &video_stream.profile,
+            &PixelFormat::parse(&video_stream.pix_fmt),
+        )
+    }
     fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
         match bit_depth {
             10 => matches!(format, EncodeFormat::Hevc),
