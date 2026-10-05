@@ -270,6 +270,21 @@ impl ChannelSession {
         self.transcode(realtime, troubleshoot).await?;
 
         if troubleshoot {
+            // a troubleshooting playout can have more than one item
+            while self
+                .playout_loader
+                .has_remaining(&self.transcoded_until)
+                .await?
+            {
+                let before = self.transcoded_until;
+                self.transcode(realtime, troubleshoot).await?;
+                if self.transcoded_until <= before {
+                    break;
+                }
+            }
+
+            self.playlist_manager.lock().await.finish().await?;
+
             log::debug!("troubleshooting complete; terminating.");
             return Ok(());
         }

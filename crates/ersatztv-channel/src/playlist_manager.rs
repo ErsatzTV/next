@@ -278,21 +278,7 @@ impl PlaylistManager {
             }
         }
 
-        // generate and atomically save playlist
-        let (generated_playlist, playlist_segment_count) =
-            self.generate_playlist(|s| s.to_owned(), Some(10))?;
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-        tokio::fs::write(temp.path(), generated_playlist).await?;
-        tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
-
-        // generate and atomically save subtitle playlist
-        let (generated_subtitle_playlist, _) = self.generate_playlist(
-            |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
-            Some(10),
-        )?;
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-        tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
-        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
+        let playlist_segment_count = self.write_playlists(Some(10), false).await?;
 
         if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
             tokio::fs::write(&self.ready_file, b"").await?;
@@ -306,6 +292,41 @@ impl PlaylistManager {
         }
 
         Ok(())
+    }
+
+    /// A session that stops (troubleshooting) must publish segments after the publish horizon.
+    pub async fn finish(&mut self) -> Result<(), ChannelError> {
+        self.update().await?;
+        self.write_playlists(None, true).await?;
+        Ok(())
+    }
+
+    async fn write_playlists(
+        &mut self,
+        max_segments: Option<usize>,
+        end: bool,
+    ) -> Result<usize, ChannelError> {
+        let (mut generated_playlist, playlist_segment_count) =
+            self.generate_playlist(|s| s.to_owned(), max_segments)?;
+        let (mut generated_subtitle_playlist, _) = self.generate_playlist(
+            |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
+            max_segments,
+        )?;
+
+        if end {
+            generated_playlist.push_str("#EXT-X-ENDLIST\n");
+            generated_subtitle_playlist.push_str("#EXT-X-ENDLIST\n");
+        }
+
+        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
+        tokio::fs::write(temp.path(), generated_playlist).await?;
+        tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
+
+        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
+        tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
+        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
+
+        Ok(playlist_segment_count)
     }
 
     fn generate_playlist(
@@ -509,6 +530,35 @@ mod tests {
         for name in names {
             assert!(folder.path().join(name).exists());
             assert!(live.contains(name));
+        }
+    }
+
+    #[tokio::test]
+    async fn finish_publishes_past_the_horizon_and_ends_playlists() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+
+        // longer than the publish horizon
+        let names: Vec<String> = (0..8).map(|i| format!("live{i:06}.ts")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        write_ffmpeg_segments(folder.path(), &names).await;
+
+        pm.update().await.unwrap();
+        let live = tokio::fs::read_to_string(folder.path().join("live.m3u8"))
+            .await
+            .unwrap();
+        assert!(!live.contains(names[7]));
+
+        pm.finish().await.unwrap();
+        for file in ["live.m3u8", "live_sub.m3u8"] {
+            let playlist = tokio::fs::read_to_string(folder.path().join(file))
+                .await
+                .unwrap();
+            assert_eq!(playlist.matches("#EXTINF").count(), names.len());
+            assert!(playlist.ends_with("#EXT-X-ENDLIST\n"));
         }
     }
 
