@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::frame_rate::FrameRate;
 use crate::input::{InputSource, ProbedInput};
 use crate::output_settings::CopyPolicy;
 use crate::pipeline::VideoFormat;
@@ -41,6 +42,11 @@ pub enum CopyBlocker {
     /// Copy would drop video until the first keyframe and shorten the timeline. A transcode
     /// holds the first picture.
     StartsBetweenKeyframes,
+    /// Copy can't change the frame rate.
+    FrameRateMismatch {
+        source: String,
+        target: String,
+    },
 }
 
 impl fmt::Display for CopyBlocker {
@@ -56,6 +62,9 @@ impl fmt::Display for CopyBlocker {
             CopyBlocker::ContainerWithoutPts => f.write_str("avi container"),
             CopyBlocker::NoKeyframes => f.write_str("no keyframes where playback starts"),
             CopyBlocker::StartsBetweenKeyframes => f.write_str("starts between keyframes"),
+            CopyBlocker::FrameRateMismatch { source, target } => {
+                write!(f, "frame rate {source} is not {target}")
+            }
         }
     }
 }
@@ -95,6 +104,7 @@ pub(crate) struct VideoCopyContext<'a> {
     pub(crate) has_graphics: bool,
     pub(crate) image_subtitle: bool,
     pub(crate) burned_subtitle: bool,
+    pub(crate) target_frame_rate: Option<&'a FrameRate>,
 }
 
 pub(crate) fn video_copy_decision(
@@ -124,6 +134,15 @@ pub(crate) fn video_copy_decision(
         if blocked {
             blockers.push(blocker);
         }
+    }
+
+    if let Some(target) = context.target_frame_rate
+        && !stream.frame_rate.same_rate(target)
+    {
+        blockers.push(CopyBlocker::FrameRateMismatch {
+            source: stream.frame_rate.r_frame_rate.clone(),
+            target: target.r_frame_rate.clone(),
+        });
     }
 
     CopyDecision::from_blockers(blockers)
@@ -159,7 +178,6 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::frame_rate::FrameRate;
     use crate::input::{LavfiInputSource, LocalInputSource};
     use crate::probe::{CodecType, ProbeResult};
 
@@ -314,6 +332,7 @@ mod tests {
             has_graphics: true,
             image_subtitle: true,
             burned_subtitle: true,
+            target_frame_rate: None,
         };
         assert_eq!(
             video_copy_decision(
@@ -330,6 +349,45 @@ mod tests {
                 CopyBlocker::ImageSubtitle,
                 CopyBlocker::BurnedSubtitle,
             ])
+        );
+    }
+
+    #[test]
+    fn target_frame_rate_copies_only_matching_rates() {
+        let decide = |source: &str, target: &str| {
+            let target = FrameRate::parse_target(target).unwrap();
+            video_copy_decision(
+                &CopyPolicy::default(),
+                &local("matroska"),
+                &ProbeResultVideoStream {
+                    frame_rate: FrameRate::parse(source),
+                    ..video("h264")
+                },
+                &VideoCopyContext {
+                    target_frame_rate: Some(&target),
+                    ..Default::default()
+                },
+            )
+        };
+
+        assert!(decide("30000/1001", "30000/1001").is_copy());
+        assert!(decide("25/1", "25").is_copy());
+        let decision = decide("30/1", "30000/1001");
+        assert_eq!(
+            decision,
+            CopyDecision::Transcode(vec![CopyBlocker::FrameRateMismatch {
+                source: String::from("30/1"),
+                target: String::from("30000/1001"),
+            }])
+        );
+        assert_eq!(
+            CopyDecisions {
+                video: Some(decision),
+                audio: None,
+            }
+            .transcode_summary()
+            .as_deref(),
+            Some("video (frame rate 30/1 is not 30000/1001)")
         );
     }
 

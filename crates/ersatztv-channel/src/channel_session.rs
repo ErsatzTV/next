@@ -595,11 +595,8 @@ impl ChannelSession {
             pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
             realtime,
             is_live,
-            frame_rate: if video_probe_result.is_still_image() {
-                Some(FrameRate::default())
-            } else {
-                None
-            },
+            frame_rate: target_frame_rate(&self.channel_config.normalization)
+                .or_else(|| video_probe_result.is_still_image().then(FrameRate::default)),
             subtitle_mode,
             fonts_folder: self
                 .channel_config
@@ -1297,6 +1294,7 @@ impl ChannelSession {
             self.transcoded_until,
             finish,
             FrameSize { width, height },
+            target_frame_rate(&self.channel_config.normalization).unwrap_or_default(),
             duration,
             subtitle,
         )
@@ -1667,12 +1665,13 @@ fn fallback_item(
     start: OffsetDateTime,
     finish: OffsetDateTime,
     size: FrameSize,
+    frame_rate: FrameRate,
     duration: Duration,
     subtitle: Option<TrackSelection>,
 ) -> PlayoutItem {
     // lavfi defaults to 25fps, but the gop comes from the hinted rate; they must agree
     // for keyframes (and segments) to land on the 2s/4s grid
-    let frame_rate = FrameRate::default().r_frame_rate;
+    let frame_rate = frame_rate.r_frame_rate;
     PlayoutItem {
         id: uuid::Uuid::new_v4().to_string(),
         start,
@@ -1746,6 +1745,14 @@ fn error_card_track(path: String, duration: Duration) -> TrackSelection {
         }),
         stream_index: None,
     }
+}
+
+fn target_frame_rate(normalization: &NormalizationConfig) -> Option<FrameRate> {
+    normalization
+        .video
+        .frame_rate
+        .as_deref()
+        .and_then(FrameRate::parse_target)
 }
 
 fn stream_output_settings(
@@ -2006,6 +2013,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             },
+            FrameRate::default(),
             duration,
             Some(error_card_track(String::from("fallback.ass"), duration)),
         );
@@ -2131,25 +2139,32 @@ mod tests {
     #[test]
     fn fallback_video_rate_matches_hint() {
         let start = datetime!(2026-01-01 12:00 UTC);
-        let item = fallback_item(
-            start,
-            start + Duration::from_mins(1),
-            FrameSize {
-                width: 1920,
-                height: 1080,
-            },
-            Duration::from_mins(1),
-            None,
-        );
-        let video = item.tracks.unwrap().video.unwrap().source.unwrap();
-        let PlayoutItemSource::Lavfi {
-            params,
-            probe_hint: Some(hint),
-        } = video
-        else {
-            panic!("fallback video should be hinted lavfi")
-        };
-        let rate = hint.video[0].frame_rate.clone().expect("hinted frame rate");
-        assert!(params.ends_with(&format!(":r={rate}")));
+        for (frame_rate, expected) in [
+            (FrameRate::default(), "24"),
+            (FrameRate::parse_target("30000/1001").unwrap(), "30000/1001"),
+        ] {
+            let item = fallback_item(
+                start,
+                start + Duration::from_mins(1),
+                FrameSize {
+                    width: 1920,
+                    height: 1080,
+                },
+                frame_rate,
+                Duration::from_mins(1),
+                None,
+            );
+            let video = item.tracks.unwrap().video.unwrap().source.unwrap();
+            let PlayoutItemSource::Lavfi {
+                params,
+                probe_hint: Some(hint),
+            } = video
+            else {
+                panic!("fallback video should be hinted lavfi")
+            };
+            let rate = hint.video[0].frame_rate.clone().expect("hinted frame rate");
+            assert_eq!(rate, expected);
+            assert!(params.ends_with(&format!(":r={rate}")));
+        }
     }
 }

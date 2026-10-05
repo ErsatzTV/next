@@ -5,6 +5,7 @@ use time::OffsetDateTime;
 
 use crate::accel;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
+use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
@@ -40,6 +41,7 @@ pub enum VideoFilter {
     Scale(ScaleFilter),
     Pad(PadFilter),
     Loop(LoopFilter),
+    Fps(FpsFilter),
     Format(FormatFilter),
     ToneMap(ToneMapFilter),
     Deinterlace(DeinterlaceFilter),
@@ -296,6 +298,30 @@ impl VideoFilterOp for LoopFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(String::from("loop=-1:1"))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FpsFilter {
+    pub frame_rate: Option<FrameRate>,
+}
+
+impl VideoFilterOp for FpsFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        self.frame_rate.as_ref().map(|_| self.clone().into())
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {}
+
+    // fps only changes timing, so any surface works
+    fn required_surface(&self) -> Option<FrameSurface> {
+        None
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        self.frame_rate
+            .as_ref()
+            .map(|frame_rate| format!("fps={}", frame_rate.r_frame_rate))
     }
 }
 

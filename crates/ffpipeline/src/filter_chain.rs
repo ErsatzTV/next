@@ -165,6 +165,30 @@ impl FilterChain {
                         _ => video_filter.clone(),
                     };
 
+                    // reverse hwmap only works on frames the OpenCL filter got from it, so
+                    // nothing can go between them
+                    if matches!(best, VideoFilter::Fps(_))
+                        && current_state.surface == FrameSurface::OpenCL
+                        && let Some(mapped_from) = resolved.iter().rev().find_map(|f| match f {
+                            PipelineFilter::Video(VideoFilter::HwMap(m))
+                                if m.to_surface == FrameSurface::OpenCL =>
+                            {
+                                Some(m.from_surface)
+                            }
+                            _ => None,
+                        })
+                    {
+                        Self::transfer_surface(
+                            ffmpeg_info,
+                            accel,
+                            &mut resolved,
+                            &mut current_state,
+                            mapped_from,
+                            encoder_pixel_format,
+                            &mut surfaces,
+                        );
+                    }
+
                     if let Some(required) = best.required_surface()
                         && current_state.surface != required
                         && !Self::transfer_surface(
@@ -556,9 +580,14 @@ impl FilterChain {
                     continue;
                 }
 
-                // find the next video filter (before overlay)
+                // find the next video filter (before overlay). skipping fps is safe: only
+                // per-frame filters come after it
                 let mut j = i + 1;
-                while j < self.filters.len() && matches!(self.filters[j], PipelineFilter::Audio(_))
+                while j < self.filters.len()
+                    && matches!(
+                        self.filters[j],
+                        PipelineFilter::Audio(_) | PipelineFilter::Video(VideoFilter::Fps(_))
+                    )
                 {
                     j += 1;
                 }
@@ -838,6 +867,44 @@ mod tests {
         ToneMapFilter,
     };
 
+    #[test]
+    fn optimize_fuses_qsv_vpp_across_fps() {
+        use crate::accel::qsv::VppQsv;
+        use crate::frame_rate::FrameRate;
+        use crate::video_filter::FpsFilter;
+
+        let size = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+        let fps: VideoFilter = FpsFilter {
+            frame_rate: FrameRate::parse_target("25"),
+        }
+        .into();
+        let mut chain = FilterChain::new(vec![
+            PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::deinterlace(None))),
+            PipelineFilter::Video(fps),
+            PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::scale(size))),
+        ]);
+
+        chain.optimize();
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 2, "{args:?}");
+        assert!(
+            args[0].starts_with("vpp_qsv=deinterlace") && args[0].contains("w=1280"),
+            "{args:?}"
+        );
+        assert_eq!(args[1], "fps=25");
+    }
+
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
             device: String::from("/dev/dri/renderD128"),
@@ -1101,6 +1168,46 @@ mod tests {
             hdr_format: HdrFormat::Pq,
             rotation: None,
         }
+    }
+
+    #[test]
+    fn resolve_maps_back_from_opencl_before_fps() {
+        let tonemap: VideoFilter = TonemapOpencl {
+            algorithm: Some(String::from("hable")),
+            output_format: HwPixelFormat::Nv12,
+        }
+        .into();
+        let fps: VideoFilter = crate::video_filter::FpsFilter {
+            frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
+        }
+        .into();
+        let mut chain = FilterChain::new(vec![
+            PipelineFilter::Video(tonemap),
+            PipelineFilter::Video(fps),
+        ]);
+
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(vaapi_accel()),
+            &VideoFilterOptions::default(),
+            &hdr_vaapi_state(),
+            &FrameSurface::Vaapi,
+            &Some(PixelFormat::Nv12),
+        );
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 4, "{args:?}");
+        assert_eq!(args[0], "hwmap=derive_device=opencl");
+        assert!(args[1].starts_with("tonemap_opencl="), "{args:?}");
+        assert_eq!(args[2], "hwmap=derive_device=vaapi:reverse=1");
+        assert_eq!(args[3], "fps=30");
     }
 
     #[test]
