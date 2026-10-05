@@ -187,6 +187,16 @@ impl HwAccel for Cuda {
         )
     }
 
+    // alpha uploads land as yuva420p, which scale_cuda rejects as input
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        from: &PixelFormat,
+        _to: &PixelFormat,
+    ) -> bool {
+        !from.has_alpha()
+    }
+
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
         if surfaces.contains(&FrameSurface::Vulkan) {
             args![
