@@ -1115,9 +1115,9 @@ impl Pipeline {
                     *own_input = true;
                 }
             }
+        }
 
-            // -shortest holds video in its sync queue until the delayed audio catches up;
-            // the default 10 s of qsv frames exhausts the same fixed pools
+        if self.shortest_needs_small_buffer() {
             for option in &mut self.output_options {
                 if let OutputOption::Shortest(buffer) = option {
                     *buffer = Some(Duration::from_millis(500));
@@ -1138,7 +1138,6 @@ impl Pipeline {
 
     /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
     /// slow canvas. The qsv frames queued for overlay_qsv exhaust fixed pools (runtime < 2.9).
-    /// The same delay makes -shortest buffer qsv frames, so its buffer is capped too.
     fn audio_needs_own_input(&self) -> bool {
         let Some(HardwareAccel::Qsv(qsv)) = &self.accel else {
             return false;
@@ -1155,16 +1154,6 @@ impl Pipeline {
             })
             .collect();
 
-        let has_loudnorm = self.filter_chain.filters.iter().any(|f| {
-            matches!(
-                f,
-                PipelineFilter::Audio(AudioFilter::LoudNorm {
-                    settings: Some(_),
-                    ..
-                })
-            )
-        });
-
         let qsv_overlays_canvas = self.filter_chain.filters.iter().any(|f| {
             matches!(
                 f,
@@ -1176,7 +1165,29 @@ impl Pipeline {
             )
         });
 
-        qsv.capabilities.requires_fixed_pool() && has_loudnorm && qsv_overlays_canvas
+        qsv.capabilities.requires_fixed_pool() && self.has_loudnorm() && qsv_overlays_canvas
+    }
+
+    /// loudnorm delays audio by ~3 s, so -shortest queues video until audio arrives.
+    /// The default 10 s queue uses all surfaces of a fixed qsv pool (64), with or without a canvas.
+    fn shortest_needs_small_buffer(&self) -> bool {
+        let Some(HardwareAccel::Qsv(qsv)) = &self.accel else {
+            return false;
+        };
+
+        qsv.capabilities.requires_fixed_pool() && self.has_loudnorm()
+    }
+
+    fn has_loudnorm(&self) -> bool {
+        self.filter_chain.filters.iter().any(|f| {
+            matches!(
+                f,
+                PipelineFilter::Audio(AudioFilter::LoudNorm {
+                    settings: Some(_),
+                    ..
+                })
+            )
+        })
     }
 
     pub fn args(&self) -> ArgVec {
@@ -2182,20 +2193,31 @@ mod tests {
             1,
             "{args:?}"
         );
-        assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
+        // encoder input is still qsv frames from a fixed pool
+        assert_eq!(shortest_buf_duration(&args), Some("0.500"), "{args:?}");
     }
 
     #[test]
     fn audio_shares_the_video_input_without_loudnorm_or_canvas() {
-        for (canvas, loudness) in [(false, true), (true, false), (false, false)] {
+        for (canvas, loudness, buffer) in [
+            (false, true, Some("0.500")),
+            (true, false, None),
+            (false, false, None),
+        ] {
             let args = loudnorm_args(Duration::ZERO, canvas, loudness);
             assert_eq!(
                 args.iter().filter(|a| *a == "main.mkv").count(),
                 1,
                 "canvas={canvas} loudness={loudness}: {args:?}"
             );
-            assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
+            assert_eq!(shortest_buf_duration(&args), buffer, "{args:?}");
         }
+    }
+
+    #[test]
+    fn loudnorm_without_canvas_keeps_default_shortest_buffer_with_dynamic_qsv_pools() {
+        let args = loudnorm_args_with(Duration::ZERO, false, true, (2, 9), true);
+        assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
     }
 
     #[test]
