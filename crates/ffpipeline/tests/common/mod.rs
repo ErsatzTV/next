@@ -785,7 +785,7 @@ pub async fn assert_black_bars(
         );
         let pixels = (output.stdout.len() / 3) as f64;
         let mut sums = [0.0; 3];
-        for rgb in output.stdout.chunks_exact(3) {
+        for rgb in output.stdout.as_chunks::<3>().0 {
             for (sum, value) in sums.iter_mut().zip(rgb) {
                 *sum += f64::from(*value);
             }
