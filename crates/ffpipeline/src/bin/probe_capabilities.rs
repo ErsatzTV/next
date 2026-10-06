@@ -405,6 +405,7 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
 
     println!();
     println!("Overlay: {}", yn(caps.can_overlay()));
+    println!("Pad: {}", yn(caps.can_pad()));
     for dir in [
         ffpipeline::video_filter::TransposeDir::Clock,
         ffpipeline::video_filter::TransposeDir::CClock,

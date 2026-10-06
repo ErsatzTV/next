@@ -169,6 +169,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         Some(watermark) => Some(build_watermark_input(test_env, &watermark).await),
         None => None,
     };
+    let has_watermark = watermark.is_some();
     let duration = Duration::from_secs(1);
     let mut input = build_input(&source, probe, duration, watermark);
     if let Some(audio_source) = &test_case.audio_source {
@@ -238,6 +239,16 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if !video_copied && let Some(size) = video_size {
+        assert_black_bars(
+            &test_env.ffmpeg,
+            &segment,
+            &source_video,
+            size,
+            has_watermark,
+        )
+        .await;
+    }
     if source_video.is_quarter_turn()
         && let Some(size) = video_size
     {
@@ -698,6 +709,96 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
         center > 64.0,
         "rotated video has no picture in the centre: luma {center:.1}"
     );
+}
+
+/// Checks all channels: zero YUV (green) has dark luma.
+/// Skips the top/left bar with a watermark, which can cover it.
+pub async fn assert_black_bars(
+    ffmpeg: &Path,
+    path: &Path,
+    source: &ProbeResultVideoStream,
+    size: FrameSize,
+    has_watermark: bool,
+) {
+    // avoid scaler ringing and chroma bleed at the picture edge
+    const MARGIN: f64 = 4.0;
+
+    let (Some(width), Some(height)) = (source.width, source.height) else {
+        return;
+    };
+    let sar = source
+        .sample_aspect_ratio
+        .as_deref()
+        .and_then(|sar| sar.split_once(':'))
+        .and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?))
+        .filter(|sar| sar.is_finite() && *sar > 0.0)
+        .unwrap_or(1.0);
+    let mut source_ratio = f64::from(width) * sar / f64::from(height);
+    if source.is_quarter_turn() {
+        source_ratio = 1.0 / source_ratio;
+    }
+    let (out_w, out_h) = (f64::from(size.width), f64::from(size.height));
+    let letterbox = source_ratio > out_w / out_h;
+    let bar = if letterbox {
+        (out_h - out_w / source_ratio) / 2.0
+    } else {
+        (out_w - out_h * source_ratio) / 2.0
+    };
+    let depth = ((bar - MARGIN).floor() as u32) & !1;
+    if depth < 8 {
+        return;
+    }
+
+    let crops = if letterbox {
+        [
+            ("top", format!("iw:{depth}:0:0")),
+            ("bottom", format!("iw:{depth}:0:ih-{depth}")),
+        ]
+    } else {
+        [
+            ("left", format!("{depth}:ih:0:0")),
+            ("right", format!("{depth}:ih:iw-{depth}:0")),
+        ]
+    };
+    for (side, crop) in crops.iter().skip(usize::from(has_watermark)) {
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            ersatztv_core::process::command(ffmpeg)
+                .args(["-v", "error", "-i"])
+                .arg(path)
+                .args(["-map", "0:v:0", "-an", "-vf"])
+                .arg(format!("crop={crop},format=rgb24"))
+                .args(["-frames:v", "10", "-f", "rawvideo", "-"])
+                .output(),
+        )
+        .await
+        .expect("pixel check timed out")
+        .expect("failed to decode output");
+        assert!(
+            output.status.success(),
+            "pixel check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.stdout.is_empty(),
+            "no decoded frames for pixel check"
+        );
+        let pixels = (output.stdout.len() / 3) as f64;
+        let mut sums = [0.0; 3];
+        for rgb in output.stdout.as_chunks::<3>().0 {
+            for (sum, value) in sums.iter_mut().zip(rgb) {
+                *sum += f64::from(*value);
+            }
+        }
+        let mean = sums.map(|sum| sum / pixels);
+        assert!(
+            mean.iter().all(|channel| *channel < 12.0),
+            "{side} pad bar is not black: mean rgb {:.1}/{:.1}/{:.1}",
+            mean[0],
+            mean[1],
+            mean[2]
+        );
+    }
 }
 
 /// Only for 480i_h264_motion.ts: a vertical moving bar has identical rows after

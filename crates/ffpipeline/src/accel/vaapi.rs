@@ -4,6 +4,7 @@ use crate::ArgVec;
 use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
 use crate::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
+use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
@@ -58,7 +59,10 @@ impl HwAccel for Vaapi {
                 ScaleVaapi { size: *size }.into()
             }
             VideoFilter::Pad(PadFilter { size, .. }) => {
-                let mut pad_options = vec![KnownVideoFilter::PadVaapi];
+                let mut pad_options = vec![];
+                if self.capabilities.can_pad() {
+                    pad_options.push(KnownVideoFilter::PadVaapi);
+                }
                 if self.opencl_capabilities.can_pad() {
                     pad_options.push(KnownVideoFilter::PadOpencl);
                 }
@@ -69,7 +73,11 @@ impl HwAccel for Vaapi {
                                 .capabilities
                                 .vpp_supports_format(&current_state.pixel_format) =>
                         {
-                            PadVaapi { size: *size }.into()
+                            PadVaapi {
+                                size: *size,
+                                color: current_state.color,
+                            }
+                            .into()
                         }
                         KnownVideoFilter::PadOpencl => PadOpencl { size: *size }.into(),
                         _ => video_filter.clone(),
@@ -401,6 +409,7 @@ impl VideoFilterOp for ScaleVaapi {
 #[derive(Debug, Clone)]
 pub struct PadVaapi {
     pub(crate) size: Option<FrameSize>,
+    pub(crate) color: FrameColor,
 }
 
 impl VideoFilterOp for PadVaapi {
@@ -420,9 +429,18 @@ impl VideoFilterOp for PadVaapi {
     }
 
     fn as_arg(&self) -> Option<String> {
-        self.size
-            .as_ref()
-            .map(|s| format!("pad_vaapi={}:{}:-1:-1:color=black", s.width, s.height))
+        let size = self.size?;
+        let pad = format!("pad_vaapi={}:{}:-1:-1:color=black", size.width, size.height);
+
+        // iHD pads BT.2020 frames with zero YUV (green). Black is the same in all matrices.
+        // The driver does not convert the picture when input and output tags are equal.
+        if self.color.is_bt2020()
+            && let Some(retagged) = self.color.as_bt709_around(&pad)
+        {
+            Some(retagged)
+        } else {
+            Some(pad)
+        }
     }
 }
 
@@ -460,9 +478,9 @@ impl VideoFilterOp for TonemapVaapi {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.hdr_format = HdrFormat::None;
         state.pixel_format = self.output_format.into();
         state.surface = FrameSurface::Vaapi;
+        state.apply_tonemap();
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -624,6 +642,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         }
