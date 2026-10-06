@@ -287,6 +287,38 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// `run_test_case` checks that the bars are black. Covers pillarbox and letterbox
+        /// across SDR, SDR BT.2020 and HDR sources, upscaled (tonemap before pad) and
+        /// downscaled (pad before tonemap).
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn pad_color(
+            #[values(
+                "480p_h264.ts",
+                "480p_hevc_10.ts",
+                "1080p_hevc_10_bt2020_4x3.ts",
+                "1080p_hevc_10_hdr_4x3.ts",
+                "1080p_hevc_10_hdr_scope.ts"
+            )]
+            src: &'static str,
+            #[values("2560x1440", "1920x1080", "1280x720")]
+            res: ::ffpipeline::frame_size::FrameSize,
+            #[values(("h264", 8), ("hevc", 10))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::tonemap(
+                    src,
+                    res,
+                    vf,
+                    ::ffpipeline::pipeline::AudioFormat::Aac,
+                    false,
+                ),
+            )
+            .await;
+        }
+
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
