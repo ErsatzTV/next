@@ -405,7 +405,7 @@ impl VideoFilterOp for LibplaceboCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.format;
-        state.hdr_format = HdrFormat::None;
+        state.apply_tonemap();
         state.surface = FrameSurface::Cuda;
 
         if let Some(size) = &self.size {

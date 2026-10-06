@@ -132,6 +132,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::color::FrameColor;
     use crate::pipeline::{FrameSurface, HdrFormat, PixelFormat};
 
     #[rstest]
@@ -155,6 +156,7 @@ mod tests {
             display_aspect_ratio: dar.map(String::from),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: Some(rotation),
         };
@@ -203,6 +205,7 @@ mod tests {
             display_aspect_ratio: Some(String::from("16:9")),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -228,6 +231,7 @@ mod tests {
             display_aspect_ratio: Some(String::from("16:9")),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -263,6 +267,7 @@ mod tests {
             display_aspect_ratio: display_aspect_ratio.map(String::from),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -296,6 +301,7 @@ mod tests {
             display_aspect_ratio: display_aspect_ratio.map(String::from),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -345,6 +351,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -376,6 +383,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };

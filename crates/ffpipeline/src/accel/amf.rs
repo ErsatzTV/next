@@ -295,7 +295,7 @@ impl VideoFilterOp for VppAmf {
         state.surface = FrameSurface::Amf;
 
         if self.tonemap {
-            state.hdr_format = HdrFormat::None;
+            state.apply_tonemap();
         }
 
         if let Some(size) = &self.size {
@@ -353,6 +353,7 @@ mod tests {
 
     use super::*;
     use crate::capabilities::amf::{AmfAdapter, AmfDevice, AmfEncoderCapability, AmfSurfaceFormat};
+    use crate::color::FrameColor;
     use crate::frame_rate::FrameRate;
     use crate::probe::{CodecType, ProbeResultColorParams, ProbeResultVideoStream};
 
@@ -386,6 +387,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Amf,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::Hdr10,
             rotation: None,
         }

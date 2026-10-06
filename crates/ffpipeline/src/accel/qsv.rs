@@ -357,7 +357,7 @@ impl VideoFilterOp for VppQsv {
         }
 
         if self.tonemap {
-            state.hdr_format = HdrFormat::None;
+            state.apply_tonemap();
         }
 
         if let Some(size) = &self.size {
@@ -434,6 +434,7 @@ mod tests {
 
     use super::*;
     use crate::capabilities::qsv::QsvFourCC;
+    use crate::color::FrameColor;
     use crate::output_settings::ScalingMode;
     use crate::pipeline::HdrFormat;
 
@@ -502,6 +503,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Qsv,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         }

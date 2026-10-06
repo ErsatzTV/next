@@ -287,9 +287,7 @@ macro_rules! shared_tests {
             .await;
         }
 
-        /// `run_test_case` checks that the bars are black. Covers pillarbox and letterbox
-        /// across SDR, SDR BT.2020 and HDR sources, upscaled (tonemap before pad) and
-        /// downscaled (pad before tonemap).
+        /// `run_test_case` checks the bars. Upscale tonemaps before pad; downscale pads first.
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]

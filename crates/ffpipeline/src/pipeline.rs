@@ -9,6 +9,7 @@ use crate::ArgVec;
 use crate::audio_codec::AudioCodec;
 use crate::audio_decoder::AudioDecoder;
 use crate::audio_filter::AudioFilter;
+use crate::color::FrameColor;
 use crate::copy_decision::{
     CopyDecision, CopyDecisions, VideoCopyContext, audio_copy_decision, video_copy_decision,
 };
@@ -266,6 +267,7 @@ pub struct FrameState {
     pub(crate) display_aspect_ratio: Option<String>,
     pub(crate) surface: FrameSurface,
     pub(crate) pixel_format: PixelFormat,
+    pub(crate) color: FrameColor,
     pub(crate) hdr_format: HdrFormat,
     pub(crate) rotation: Option<i32>,
 }
@@ -289,6 +291,12 @@ impl FrameState {
         }
 
         self.rotation = None;
+    }
+
+    /// All tonemap filters output SDR BT.709.
+    pub(crate) fn apply_tonemap(&mut self) {
+        self.hdr_format = HdrFormat::None;
+        self.color = FrameColor::bt709();
     }
 }
 
@@ -504,6 +512,7 @@ impl Pipeline {
             surface: video_decoder.output_surface(),
             pixel_format: video_decoder
                 .output_format(&PixelFormat::parse(video_stream.pix_fmt.as_str())),
+            color: FrameColor::from(&video_stream.color_params),
             hdr_format: hdr,
             rotation: video_stream.rotation,
         };
@@ -662,6 +671,7 @@ impl Pipeline {
                     } else {
                         PixelFormat::parse(&subtitle_stream.pix_fmt)
                     },
+                    color: FrameColor::from(&subtitle_stream.color_params),
                     hdr_format: HdrFormat::None,
                     rotation: None,
                 };
@@ -802,6 +812,7 @@ impl Pipeline {
                 } else {
                     PixelFormat::parse(&graphics_stream.pix_fmt)
                 },
+                color: FrameColor::from(&graphics_stream.color_params),
                 hdr_format: HdrFormat::None,
                 rotation: None,
             };

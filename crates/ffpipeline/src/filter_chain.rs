@@ -855,6 +855,7 @@ mod tests {
     use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
     use crate::capabilities::vaapi::VaapiCapabilities;
     use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
+    use crate::color::FrameColor;
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
@@ -965,6 +966,7 @@ mod tests {
             display_aspect_ratio: None,
             surface,
             pixel_format,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         }
@@ -1165,6 +1167,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
         }
@@ -1370,6 +1373,7 @@ mod tests {
             display_aspect_ratio: None,
             surface,
             pixel_format,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         }
@@ -1784,6 +1788,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         }
@@ -2105,6 +2110,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -2183,6 +2189,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -2237,6 +2244,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -2305,6 +2313,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };
@@ -2372,6 +2381,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
         };

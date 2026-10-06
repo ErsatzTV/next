@@ -9,6 +9,7 @@ pub mod audio_codec;
 pub mod audio_decoder;
 pub mod audio_filter;
 pub mod capabilities;
+pub mod color;
 pub mod copy_decision;
 pub mod error;
 pub mod ffmpeg_info;

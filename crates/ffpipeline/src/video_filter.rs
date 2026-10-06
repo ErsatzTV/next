@@ -4,6 +4,7 @@ use enum_dispatch::enum_dispatch;
 use time::OffsetDateTime;
 
 use crate::accel;
+use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
@@ -369,7 +370,7 @@ impl VideoFilterOp for ToneMapFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.output_format;
-        state.hdr_format = HdrFormat::None;
+        state.apply_tonemap();
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -899,16 +900,16 @@ impl VideoFilterOp for Dv5WorkaroundFilter {
         }
     }
 
-    fn apply_to(&self, _state: &mut FrameState) {}
+    fn apply_to(&self, state: &mut FrameState) {
+        state.color = FrameColor::hdr10();
+    }
 
     fn required_surface(&self) -> Option<FrameSurface> {
         None
     }
 
     fn as_arg(&self) -> Option<String> {
-        Some(String::from(
-            "setparams=color_trc=smpte2084:colorspace=bt2020nc:color_primaries=bt2020",
-        ))
+        FrameColor::hdr10().to_setparams()
     }
 }
 
@@ -997,6 +998,7 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
         };

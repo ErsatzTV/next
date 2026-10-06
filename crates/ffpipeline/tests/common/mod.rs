@@ -711,10 +711,8 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
     );
 }
 
-/// Scale-and-pad bars must be black whatever the source colorimetry. iHD fills `pad_vaapi`
-/// bars with zero YUV when the frame is tagged BT.2020, which decodes as green and
-/// tonemaps to dark green, so this checks every channel rather than luma alone.
-/// The top/left bar is skipped with a watermark, which can sit inside it.
+/// Checks all channels: zero YUV (green) has dark luma.
+/// Skips the top/left bar with a watermark, which can cover it.
 pub async fn assert_black_bars(
     ffmpeg: &Path,
     path: &Path,
@@ -722,7 +720,7 @@ pub async fn assert_black_bars(
     size: FrameSize,
     has_watermark: bool,
 ) {
-    // keep clear of scaler ringing and chroma bleed at the picture edge
+    // avoid scaler ringing and chroma bleed at the picture edge
     const MARGIN: f64 = 4.0;
 
     let (Some(width), Some(height)) = (source.width, source.height) else {
