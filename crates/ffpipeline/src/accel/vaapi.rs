@@ -59,7 +59,10 @@ impl HwAccel for Vaapi {
                 ScaleVaapi { size: *size }.into()
             }
             VideoFilter::Pad(PadFilter { size, .. }) => {
-                let mut pad_options = vec![KnownVideoFilter::PadVaapi];
+                let mut pad_options = vec![];
+                if self.capabilities.can_pad() {
+                    pad_options.push(KnownVideoFilter::PadVaapi);
+                }
                 if self.opencl_capabilities.can_pad() {
                     pad_options.push(KnownVideoFilter::PadOpencl);
                 }

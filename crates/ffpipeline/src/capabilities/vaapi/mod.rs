@@ -151,6 +151,11 @@ impl VaapiCapabilities {
         self.can_overlay
     }
 
+    /// Mesa does not write the pad bars (green), and VA caps can't show when it would.
+    pub fn can_pad(&self) -> bool {
+        self.vendor.starts_with("Intel iHD driver")
+    }
+
     /// Returns Some(Cqp) when the only available RC mode is CQP and we must force it.
     /// Returns None when VBR/CBR is available (driver default is fine) or nothing is known.
     pub fn rate_control_mode_for(

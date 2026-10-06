@@ -1756,11 +1756,18 @@ mod tests {
     // -- pad best_filter tests --
 
     fn vaapi_accel_with_opencl(opencl: bool) -> Vaapi {
+        vaapi_accel_with_vendor(
+            "Intel iHD driver for Intel(R) Gen Graphics - 26.2.4 ()",
+            opencl,
+        )
+    }
+
+    fn vaapi_accel_with_vendor(vendor: &str, opencl: bool) -> Vaapi {
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: Some(VaapiDriver::Ihd),
+            driver: None,
             capabilities: VaapiCapabilities {
-                vendor: String::from("test"),
+                vendor: String::from(vendor),
                 supported: HashSet::new(),
                 vpp_pixel_formats: HashSet::from([libva_sys::VA_FOURCC_NV12]),
                 can_hdr_to_sdr_tonemap: HashSet::new(),
@@ -1817,6 +1824,44 @@ mod tests {
             "expected PadVaapi when both pad_vaapi and pad_opencl available, got {:?}",
             result.as_arg()
         );
+    }
+
+    #[rstest::rstest]
+    #[case::opencl(true)]
+    #[case::software(false)]
+    fn best_filter_skips_pad_vaapi_on_mesa(#[case] opencl: bool) {
+        let vaapi = vaapi_accel_with_vendor(
+            "Mesa Gallium driver 26.0.3 for AMD Radeon Vega Mobile Gfx (radeonsi, raven, ACO)",
+            opencl,
+        );
+        let ffmpeg_info =
+            ffmpeg_info_with_filters(&[KnownVideoFilter::PadVaapi, KnownVideoFilter::PadOpencl]);
+        let state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
+
+        let input: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
+        if opencl {
+            assert!(
+                matches!(result, VideoFilter::PadOpencl(_)),
+                "expected PadOpencl on Mesa, got {:?}",
+                result.as_arg()
+            );
+        } else {
+            assert!(
+                matches!(result, VideoFilter::Pad(_)),
+                "expected software Pad on Mesa, got {:?}",
+                result.as_arg()
+            );
+        }
     }
 
     #[test]
