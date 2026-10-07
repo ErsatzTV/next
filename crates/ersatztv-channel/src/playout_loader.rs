@@ -59,15 +59,19 @@ impl PlayoutLoader {
     }
 
     async fn playout_file_for_time(&self, now: &OffsetDateTime) -> Result<String, ChannelError> {
-        let mut entries = tokio::fs::read_dir(self.channel_config.expanded_playout_folder())
+        let folder_error = |e: std::io::Error| {
+            ChannelError::ChannelConfigFailure(format!(
+                "{}: {:?}",
+                e,
+                self.channel_config.expanded_playout_folder()
+            ))
+        };
+
+        // resolve the link once; it can be swapped before the file is read
+        let folder = tokio::fs::canonicalize(self.channel_config.expanded_playout_folder())
             .await
-            .map_err(|e| {
-                ChannelError::ChannelConfigFailure(format!(
-                    "{}: {:?}",
-                    e,
-                    self.channel_config.expanded_playout_folder()
-                ))
-            })?;
+            .map_err(folder_error)?;
+        let mut entries = tokio::fs::read_dir(&folder).await.map_err(folder_error)?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path =
                 entry.path().into_os_string().into_string().map_err(|_| {
@@ -162,6 +166,51 @@ mod tests {
             Path::new("/media/item.mkv"),
         )
         .unwrap()
+    }
+
+    // swap the link the same way legacy does
+    fn link_version(link: &Path, version: &Path) {
+        #[cfg(unix)]
+        {
+            let temp_link = link.with_extension("tmp");
+            std::os::unix::fs::symlink(version.file_name().unwrap(), &temp_link).unwrap();
+            std::fs::rename(&temp_link, link).unwrap();
+        }
+
+        #[cfg(windows)]
+        {
+            if link.exists() {
+                std::fs::remove_dir(link).unwrap();
+            }
+
+            let status = std::process::Command::new("cmd.exe")
+                .args(["/c", "mklink", "/j"])
+                .arg(link)
+                .arg(version)
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+    }
+
+    #[tokio::test]
+    async fn listed_playout_file_survives_folder_swap() {
+        let root = tempfile::tempdir().unwrap();
+        let old_version = root.path().join("1000");
+        let new_version = root.path().join("2000");
+        let current = root.path().join("current");
+        tokio::fs::create_dir(&old_version).await.unwrap();
+        tokio::fs::create_dir(&new_version).await.unwrap();
+        link_version(&current, &old_version);
+
+        let t0 = OffsetDateTime::from_unix_timestamp(1_790_000_000).unwrap();
+        let loader = loader(&current, vec![item("a", t0, 10)]).await;
+        let path = loader.playout_file_for_time(&t0).await.unwrap();
+
+        link_version(&current, &new_version);
+
+        assert!(ersatztv_playout::playout::from_file(&path).await.is_ok());
     }
 
     #[tokio::test]
