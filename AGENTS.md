@@ -286,6 +286,9 @@ Integrators emit the version they were built against, so a bump requires a match
 (legacy included) before they can be deployed against this build. A breaking channel bump also breaks user-written
 overlays; the release notes must tell users to update them.
 
+A schema bump also sets the release version (see "Changelog"): a `breaking` bump makes the next release breaking,
+and a `compatible` bump makes it at least a feature release.
+
 ## Cross-repo coupling
 
 Changes to the JSON contract affect every integrator. The legacy repo (github.com/ErsatzTV/legacy) is the one the
@@ -325,6 +328,26 @@ quicktype names a C# enum after the property that uses it whenever that property
 next to its `$ref` (e.g. `AudioMode` for the shared `StreamMode`). Give such enums `#[schemars(title = "...")]` in
 `config.rs` so the generated names stay stable.
 
+## Changelog
+
+`CHANGELOG.md` follows Keep a Changelog. Add user-visible changes under `## [Unreleased]`, in one of `### Breaking`,
+`### Added`, `### Changed`, `### Fixed` or `### Removed`. Write for standalone users and integrators, in this
+project's terms (`channel.json` fields, CLI flags, schema versions), not legacy's UI terms. Internal refactors, CI and
+test-only changes don't get an entry.
+
+Releases are semver, and before 1.0 the minor version marks breaking changes (`0.B.C`, like the schema versions).
+The next version is computed, never chosen by hand (`.github/scripts/next-version.sh`):
+
+- breaking: `[Unreleased]` has `### Breaking`, or a schema `breaking` changed since the last release;
+- feature: `[Unreleased]` has `### Added`, or a schema `compatible` changed;
+- otherwise a fix.
+
+Use `### Breaking` for anything that can break a consumer of the previous release: a schema `breaking` bump, a
+removed or renamed CLI flag or subcommand, a removed or changed HTTP route or HLS output contract, or a changed
+default that silently changes output. Name the schema version and link the migration notes in
+`ErsatzTV.org/docs-next/`. A newer required ErsatzTV-ffmpeg is not breaking; release notes list the ffmpeg build
+automatically.
+
 ## Pull request conventions
 
 - PR titles are conventional commits (`feat:`, `fix:`, `refactor:`, `build:`, `docs:`, `test:`, `ci:`, `chore:`,
@@ -333,6 +356,7 @@ next to its `$ref` (e.g. `AudioMode` for the shared `StreamMode`). Give such enu
   and `cargo test --package ffpipeline --test software -- --ignored --test-threads 1`. CI builds on Windows, Linux
   (glibc + musl x64, glibc arm64) and macOS (x64 + arm64), so platform-specific code needs a stub path for the
   others.
+- User-visible changes add a `CHANGELOG.md` entry (see "Changelog").
 - In the PR description, state: which integration suites you ran and on what hardware/ffmpeg build, and any
   cross-repo follow-ups from the table above.
 - Keep comments minimal; explain non-obvious *why*, not *what*.
