@@ -5,6 +5,7 @@ on:
       - main
     paths-ignore:
       - CHANGELOG.md
+      - README.md
   # pr.yml doesn't package or build images
   pull_request:
     paths:
