@@ -50,11 +50,11 @@ cargo run --bin gen-lineup-config-schema > schema/lineup_config.json
 # Lint (CI also sets RUSTFLAGS=-Dwarnings, so warnings fail the build)
 RUSTFLAGS=-Dwarnings cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
-# Format (requires nightly)
-cargo +nightly fmt --all
+# Format
+cargo fmt --all
 
 # Format check
-cargo +nightly fmt --all -- --check
+cargo fmt --all -- --check
 
 # There are 2 styles of tests in the repository currently, unit and lightweight integration
 # Lightweight integration tests are disabled by default because they require local ffmpeg
@@ -329,7 +329,7 @@ next to its `$ref` (e.g. `AudioMode` for the shared `StreamMode`). Give such enu
 
 - PR titles are conventional commits (`feat:`, `fix:`, `refactor:`, `build:`, `docs:`, `test:`, `ci:`, `chore:`,
   optionally scoped like `feat(pipeline):`); PRs are squash-merged and the title becomes the commit message.
-- Before opening: `cargo +nightly fmt --all`, the clippy command above with `RUSTFLAGS=-Dwarnings`, `cargo test`,
+- Before opening: `cargo fmt --all`, the clippy command above with `RUSTFLAGS=-Dwarnings`, `cargo test`,
   and `cargo test --package ffpipeline --test software -- --ignored --test-threads 1`. CI builds on Windows, Linux
   (glibc + musl x64, glibc arm64) and macOS (x64 + arm64), so platform-specific code needs a stub path for the
   others.
