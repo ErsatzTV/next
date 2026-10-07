@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tag="${1:?usage: verify-draft.sh <tag>}"
+repo="${RELEASE_REPO:-${GITHUB_REPOSITORY:-ErsatzTV/next}}"
+
+expected="$(printf "ersatztv-next-$tag-%s\n" \
+  linux-arm64.tar.gz \
+  linux-musl-x64.tar.gz \
+  linux-x64.tar.gz \
+  macos-arm64.tar.gz \
+  macos-x64.tar.gz \
+  windows-x64.zip | sort)"
+
+release="$(gh release view "$tag" --repo "$repo" --json isDraft,assets)"
+
+if [[ "$(jq -r .isDraft <<< "$release")" != "true" ]]; then
+  echo "$tag is not a draft release" >&2
+  exit 1
+fi
+
+actual="$(jq -r '.assets[].name' <<< "$release" | sort)"
+if [[ "$actual" != "$expected" ]]; then
+  echo "asset mismatch for $tag (- expected, + actual):" >&2
+  diff <(echo "$expected") <(echo "$actual") | grep '^[<>]' | sed 's/^</-/; s/^>/+/' >&2 || true
+  exit 1
+fi
+
+incomplete="$(jq -r '.assets[] | select(.state != "uploaded" or .size == 0) | "\(.name) state=\(.state) size=\(.size)"' <<< "$release")"
+if [[ -n "$incomplete" ]]; then
+  echo "incomplete assets for $tag:" >&2
+  echo "$incomplete" >&2
+  exit 1
+fi
+
+echo "$tag: draft with $(wc -l <<< "$expected") expected assets, all uploaded"
