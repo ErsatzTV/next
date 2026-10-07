@@ -62,9 +62,12 @@ Finally, there are configuration examples under [examples](examples):
 
 ### Install
 
-- **Docker:** `ersatztv/next:develop` (also `ghcr.io/ersatztv/next:develop`) for `linux/amd64` and `linux/arm64`.
-- **Binaries:** download a build for Windows, Linux (x64, x64 musl, arm64) or macOS (x64, arm64) from the [latest development build](https://github.com/ErsatzTV/next-develop-builds/releases/latest).
+- **Docker:** `ersatztv/next:latest` (also `ghcr.io/ersatztv/next:latest`) for `linux/amd64` and `linux/arm64`. Use a release-line tag such as `:v0.2` to get fixes and features without breaking changes.
+- **Binaries:** download a build for Windows, Linux (x64, x64 musl, arm64) or macOS (x64, arm64) from the [latest release](https://github.com/ErsatzTV/next/releases/latest).
+- **Development builds:** binaries from `main` are in [ErsatzTV/next-develop-builds](https://github.com/ErsatzTV/next-develop-builds/releases/latest), and images are tagged `:develop`.
 - **Source:** `cargo build --release --workspace`.
+
+Releases use semantic versioning; before 1.0, `0.B.C` bumps `B` for breaking changes. Each release's notes list the config versions it reads and the ErsatzTV-ffmpeg build it was tested with. See [Releases](https://ersatztv.org/next-docs/releases) for the details and every Docker tag.
 
 ### Quick Start
 
@@ -94,15 +97,15 @@ The image runs `ersatztv /config/lineup.json`. Media paths in your playouts must
 
 ```bash
 # scaffold
-docker run --rm -v ./config:/config ersatztv/next:develop add-lineup /config/lineup.json --channels 1
+docker run --rm -v ./config:/config ersatztv/next:latest add-lineup /config/lineup.json --channels 1
 
 # generate a test playout
 docker run --rm -v ./config:/config -v /path/to/videos:/path/to/videos \
-  --entrypoint /app/ersatztv-playout-generator ersatztv/next:develop \
+  --entrypoint /app/ersatztv-playout-generator ersatztv/next:latest \
   --lineup /config/lineup.json --channel 1 --content-folder /path/to/videos
 
 # run the server
-docker run -d -p 8409:8409 -v ./config:/config -v /path/to/videos:/path/to/videos ersatztv/next:develop
+docker run -d -p 8409:8409 -v ./config:/config -v /path/to/videos:/path/to/videos ersatztv/next:latest
 ```
 
 For hardware acceleration, pass the device through: `--device /dev/dri` for VAAPI/QSV, or `--gpus all` for NVIDIA.
