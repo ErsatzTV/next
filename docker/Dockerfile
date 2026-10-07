@@ -9,7 +9,10 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable
+      | sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+WORKDIR /build
+COPY rust-toolchain.toml .
+RUN rustup toolchain install
 RUN cargo install --locked cargo-chef
 
 ARG TARGETARCH
@@ -29,7 +32,6 @@ RUN case "$TARGETARCH/$TARGETVARIANT" in \
         "$target" "$compiler" "$compiler" "$compiler" "$compiler" > /target-env
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-WORKDIR /build
 
 FROM chef AS planner
 COPY . .

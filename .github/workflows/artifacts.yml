@@ -50,19 +50,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update Rust
-        run: rustup update stable
-      - name: Update Nightly Rust
-        run: rustup update nightly
+      - name: Install Rust
+        run: rustup toolchain install
       - name: Show Toolchain
         run: rustup show active-toolchain
-      - name: Add Clippy
-        run: rustup component add clippy
-      - name: Add Rustfmt
-        run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
 
       - name: Check Formatting
-        run: cargo +nightly fmt --all -- --check
+        run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
@@ -113,8 +107,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update Rust
-        run: rustup update stable
+      - name: Install Rust
+        run: rustup toolchain install
       - name: Show Toolchain
         run: rustup show active-toolchain
 
