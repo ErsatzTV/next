@@ -1,5 +1,5 @@
-> [!WARNING]
-> **PRE-1.0:** This project is a complete rewrite of the ErsatzTV streaming engine in Rust. It ships today as an optional per-channel engine in [ErsatzTV (legacy)](https://github.com/ErsatzTV/legacy), and can also run standalone. Configuration and playout formats are versioned but may still change in breaking ways before 1.0; expect missing features and bugs.
+> [!NOTE]
+> This project is a rewrite of the ErsatzTV streaming engine in Rust. It is the default streaming engine in [ErsatzTV (legacy)](https://github.com/ErsatzTV/legacy), and can also run standalone. Configuration and playout formats are versioned, and breaking changes are called out in the [changelog](CHANGELOG.md).
 
 # ErsatzTV
 
@@ -16,7 +16,7 @@ Unlike [the legacy version](https://github.com/ErsatzTV/legacy), this version is
 
 ### Ways to use it
 
-- **With ErsatzTV (legacy):** set a channel's **Streaming Engine** to **Next**. Legacy keeps handling libraries and scheduling, and writes the playout and channel configuration that this engine consumes. No separate install is needed.
+- **With ErsatzTV (legacy):** channels use this engine by default (**Streaming Engine** set to **Next**). Legacy keeps handling libraries and scheduling, and writes the playout and channel configuration that this engine consumes. No separate install is needed.
 - **Standalone:** bring your own scheduler (or hand-written playouts) that writes JSON matching the [schemas](schema), and run the `ersatztv` server described below.
 
 ## Features
@@ -63,7 +63,7 @@ Finally, there are configuration examples under [examples](examples):
 ### Install
 
 - **Docker:** `ersatztv/next:develop` (also `ghcr.io/ersatztv/next:develop`) for `linux/amd64` and `linux/arm64`.
-- **Binaries:** download a build for Windows, Linux (x64, x64 musl, arm64) or macOS (x64, arm64) from the [develop release](https://github.com/ErsatzTV/next/releases/tag/develop).
+- **Binaries:** download a build for Windows, Linux (x64, x64 musl, arm64) or macOS (x64, arm64) from the [latest development build](https://github.com/ErsatzTV/next-develop-builds/releases/latest).
 - **Source:** `cargo build --release --workspace`.
 
 ### Quick Start
@@ -116,7 +116,7 @@ When a stream fails, the most useful report includes:
 
 ## Contributing
 
-We welcome early feedback and contributions!
+We welcome feedback and contributions!
 
 - **Matrix:** [#ersatztv-dev:matrix.org](https://matrix.to/#/#ersatztv-dev:matrix.org)
 - **Discord:** [#developer-chat](https://discord.ersatztv.org)
