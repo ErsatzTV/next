@@ -2,35 +2,41 @@ name: Build Artifacts
 on:
   workflow_call:
     inputs:
-      release_tag:
-        description: 'Release tag'
+      tag:
+        description: 'Release tag to upload assets to (may be a draft), e.g. v0.2.0 or v0.2.1-f8410286-develop'
         required: true
         type: string
-      release_version:
-        description: 'Release version number (e.g. v0.1.0)'
+      publish:
+        description: 'Sign the builds and upload them to the release; false only builds and packages them, unsigned'
         required: true
+        type: boolean
+      release_repo:
+        description: 'Repository under this owner that holds the release (e.g. next-develop-builds); defaults to this repository'
+        required: false
         type: string
-      info_version:
-        description: 'Informational version number (e.g. 0.1.0)'
-        required: true
+        default: ''
+      release_app_id:
+        description: 'GitHub App that can write releases to release_repo; required with release_repo'
+        required: false
         type: string
+        default: ''
     secrets:
       apple_developer_certificate_p12_base64:
-        required: true
+        required: false
       apple_developer_certificate_password:
-        required: true
+        required: false
       ac_username:
-        required: true
+        required: false
       ac_password:
-        required: true
-      gh_token:
-        required: true
+        required: false
       azure_client_id:
-        required: true
+        required: false
       azure_tenant_id:
-        required: true
+        required: false
       azure_subscription_id:
-        required: true
+        required: false
+      release_app_private_key:
+        required: false
 
 permissions:
   id-token: write
@@ -40,6 +46,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
+  TAG: ${{ inputs.tag }}
 
 jobs:
   lint:
@@ -141,15 +148,13 @@ jobs:
 
       - name: Build
         shell: bash
-        env:
-          ETV_VERSION: ${{ inputs.info_version }}
         run: |
-          # Define some variables for things we need
-          release_name="ersatztv-next-${{ inputs.release_version }}-${{ matrix.target }}"
-          echo "RELEASE_NAME=${release_name}" >> $GITHUB_ENV
+          release_name="ersatztv-next-${TAG}-${{ matrix.target }}"
+          echo "RELEASE_NAME=${release_name}" >> "$GITHUB_ENV"
 
-          # Build everything
-          cargo build --release --all-features --target ${{ matrix.rust_target }}
+          # semver: the target is build metadata, so a release doesn't read as a prerelease
+          export ETV_VERSION="${TAG#v}+${{ matrix.target }}"
+          cargo build --locked --release --all-features --target ${{ matrix.rust_target }}
           mkdir "$release_name"
           mv "target/${{ matrix.rust_target }}/release/ersatztv-playout-generator${{ matrix.exe_ext }}" "$release_name/"
           mv "target/${{ matrix.rust_target }}/release/ersatztv-channel${{ matrix.exe_ext }}" "$release_name/"
@@ -173,8 +178,75 @@ jobs:
           cp libvpl-src/LICENSE "$RELEASE_NAME/libvpl-LICENSE.txt"
           rm -rf libvpl-src libvpl-build
 
-      - name: Azure login
+      # sign_windows signs and package_windows archives
+      - name: Upload Windows build
         if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-x64-build
+          path: ${{ env.RELEASE_NAME }}
+          retention-days: 1
+
+      - name: Import Code-Signing Certificates
+        if: runner.os == 'macOS' && inputs.publish
+        uses: Apple-Actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.apple_developer_certificate_p12_base64 }}
+          p12-password: ${{ secrets.apple_developer_certificate_password }}
+
+      - name: Sign macOS binaries
+        if: runner.os == 'macOS' && inputs.publish
+        shell: bash
+        run: |
+          for bin in ersatztv ersatztv-channel ersatztv-playout-generator; do
+            codesign --force --verbose --timestamp --options=runtime \
+              --sign "Developer ID Application" "$RELEASE_NAME/$bin"
+          done
+
+      - name: Notarize macOS binaries
+        if: runner.os == 'macOS' && inputs.publish
+        shell: bash
+        env:
+          AC_USERNAME: ${{ secrets.ac_username }}
+          AC_PASSWORD: ${{ secrets.ac_password }}
+        run: |
+          ditto -c -k --keepParent "$RELEASE_NAME" "${RELEASE_NAME}-notarize.zip"
+          xcrun notarytool submit "${RELEASE_NAME}-notarize.zip" \
+            --apple-id "$AC_USERNAME" \
+            --password "$AC_PASSWORD" \
+            --team-id 32MB98Q32R \
+            --wait
+          rm "${RELEASE_NAME}-notarize.zip"
+
+      - name: Archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar czvf "${RELEASE_NAME}.tar.gz" "$RELEASE_NAME"
+          rm -r "$RELEASE_NAME"
+
+      - name: Upload Artifact
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.target }}
+          path: "*${{ matrix.archive_ext }}"
+
+  # own job: the signing environment only admits main and v* tags
+  sign_windows:
+    name: Sign Windows
+    runs-on: windows-latest
+    needs: build
+    if: inputs.publish
+    environment: signing
+    steps:
+      - name: Download Windows build
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-x64-build
+          path: windows-build
+
+      - name: Azure login
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.azure_client_id }}
@@ -183,74 +255,53 @@ jobs:
           enable-AzPSSession: true
 
       - name: Sign Windows executables
-        if: runner.os == 'Windows'
         uses: azure/artifact-signing-action@v1
         with:
           endpoint: https://eus.codesigning.azure.net/
           signing-account-name: ArtifactSigning
           certificate-profile-name: ErsatzTV
-          files-folder: ${{ github.workspace }}/${{ env.RELEASE_NAME }}
+          files-folder: ${{ github.workspace }}/windows-build
           files-folder-recurse: false
           files-folder-filter: ersatztv.exe,ersatztv-channel.exe,ersatztv-playout-generator.exe,libvpl.dll
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: Import Code-Signing Certificates
-        if: runner.os == 'macOS'
-        uses: Apple-Actions/import-codesign-certs@v3
+      - name: Replace Windows build with signed build
+        uses: actions/upload-artifact@v6
         with:
-          p12-file-base64: ${{ secrets.apple_developer_certificate_p12_base64 }}
-          p12-password: ${{ secrets.apple_developer_certificate_password }}
+          name: windows-x64-build
+          path: windows-build
+          retention-days: 1
+          overwrite: true
 
-      - name: Sign macOS binaries
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          release_name="${{ env.RELEASE_NAME }}"
-          for bin in ersatztv ersatztv-channel ersatztv-playout-generator; do
-            codesign --force --verbose --timestamp --options=runtime \
-              --sign "Developer ID Application" "$release_name/$bin"
-          done
-
-      - name: Notarize macOS binaries
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          AC_USERNAME: ${{ secrets.ac_username }}
-          AC_PASSWORD: ${{ secrets.ac_password }}
-        run: |
-          release_name="${{ env.RELEASE_NAME }}"
-          ditto -c -k --keepParent "$release_name" "${release_name}-notarize.zip"
-          xcrun notarytool submit "${release_name}-notarize.zip" \
-            --apple-id "$AC_USERNAME" \
-            --password "$AC_PASSWORD" \
-            --team-id 32MB98Q32R \
-            --wait
-          rm "${release_name}-notarize.zip"
+  package_windows:
+    name: Package Windows
+    runs-on: ubuntu-latest
+    needs: [build, sign_windows]
+    # sign_windows is skipped when unsigned
+    if: ${{ !failure() && !cancelled() }}
+    steps:
+      - name: Download Windows build
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-x64-build
+          path: ersatztv-next-${{ inputs.tag }}-windows-x64
 
       - name: Archive
-        shell: bash
-        run: |
-          release_name="${{ env.RELEASE_NAME }}"
-          if [ "${{ matrix.archive_ext }}" = ".zip" ]; then
-            7z a "${release_name}.zip" "${release_name}"
-          else
-            tar czvf "${release_name}.tar.gz" "$release_name"
-          fi
-
-          # Delete output directory
-          rm -r "$release_name"
+        run: 7z a "ersatztv-next-${TAG}-windows-x64.zip" "ersatztv-next-${TAG}-windows-x64"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.target }}
-          path: "*${{ matrix.archive_ext }}"
+          name: windows-x64
+          path: "*.zip"
 
   publish:
     name: Publish
-    needs: [ lint, build ]
+    needs: [lint, build, package_windows]
+    # a skipped sign_windows upstream would otherwise skip this
+    if: ${{ inputs.publish && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -273,16 +324,20 @@ jobs:
         with:
           name: ${{ matrix.target }}
 
-      - name: Delete old release assets
-        if: ${{ inputs.release_tag == 'develop' }}
-        env:
-          GH_TOKEN: ${{ secrets.gh_token }}
-        run: |
-          gh release view ${{ inputs.release_tag }} --json assets --jq '.assets[].name' --repo ${{ github.repository }} \
-            | grep '${{ matrix.target }}${{ matrix.archive_ext }}' \
-            | xargs -r -I{} gh release delete-asset ${{ inputs.release_tag }} {} --yes --repo ${{ github.repository }}
+      # github.token can't write to other repos
+      - name: Get release repository token
+        id: release-token
+        if: inputs.release_repo != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ inputs.release_app_id }}
+          private-key: ${{ secrets.release_app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ inputs.release_repo }}
 
+      # --clobber: a rerun replaces this run's own partial upload; published releases are immutable
       - name: Publish
         env:
-          GH_TOKEN: ${{ secrets.gh_token }}
-        run: gh release upload ${{ inputs.release_tag }} "*${{ matrix.archive_ext }}" --repo ${{ github.repository }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token || github.token }}
+          RELEASE_REPO: ${{ inputs.release_repo && format('{0}/{1}', github.repository_owner, inputs.release_repo) || github.repository }}
+        run: gh release upload "$TAG" "ersatztv-next-${TAG}-${{ matrix.target }}${{ matrix.archive_ext }}" --clobber --repo "$RELEASE_REPO"
