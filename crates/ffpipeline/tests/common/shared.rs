@@ -469,6 +469,23 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// The item ends with the audio, 101 ms after the video and off a frame boundary. With an
+        /// endless fade loop, overlay_vaapi kept emitting frames at the last main pts after main
+        /// EOF; the encoder dropped them all and ffmpeg never reached -t.
+        #[::tokio::test]
+        #[ignore]
+        async fn watermark_periodic_audio_longer() {
+            let mut test_case = $crate::common::shared::watermark(
+                "720p_h264_audio_longer.mkv",
+                "1920x1080".parse().unwrap(),
+                ("h264", 8),
+                $crate::common::shared::periodic_watermark(),
+            );
+            test_case.params.in_point = ::std::time::Duration::from_millis(2017);
+            test_case.params.duration = ::std::time::Duration::from_millis(2084);
+            $crate::common::shared::run($accel().await, test_case).await;
+        }
+
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]

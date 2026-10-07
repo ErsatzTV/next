@@ -545,7 +545,13 @@ impl Pipeline {
         ];
 
         filters.extend([
-            PipelineFilter::Video(LoopFilter { is_still_image }.into()),
+            PipelineFilter::Video(
+                LoopFilter {
+                    is_still_image,
+                    loops: None,
+                }
+                .into(),
+            ),
             PipelineFilter::Video(Dv5WorkaroundFilter.into()),
         ]);
 
@@ -916,9 +922,11 @@ impl Pipeline {
             // per-frame format conversion and hwupload out of the chain entirely
             if !fade_filters.is_empty() {
                 secondary_filters.push(
-                    LoopFilter {
-                        is_still_image: graphics_stream.is_still_image(),
-                    }
+                    LoopFilter::bounded(
+                        graphics_stream.is_still_image(),
+                        duration,
+                        &output_context.frame_rate,
+                    )
                     .into(),
                 );
             }
@@ -2456,5 +2464,32 @@ mod tests {
 
             assert_eq!(arg_value(&args, "-framerate"), Some(expected), "{args:?}");
         }
+    }
+
+    #[test]
+    fn still_image_graphics_loop_ends_with_item() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        let mut watermark = canvas_input(InputSource::Local(crate::input::LocalInputSource {
+            path: "watermark.png".to_owned(),
+        }));
+        watermark.kind = GraphicsKind::Media;
+        watermark.probe_result.format_name = Some("image2".to_owned());
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut watermark.probe_result.streams[0]
+        {
+            video.codec = "png".to_owned();
+            video.pix_fmt = "rgba".to_owned();
+        }
+        input.graphics_inputs.push(watermark);
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+
+        // 30 s at 30000/1001
+        assert_eq!(arg_value(&args, "-t"), Some("30000ms"), "{args:?}");
+        assert!(
+            filter_complex(&args).contains("loop=900:1,fade="),
+            "{args:?}"
+        );
     }
 }

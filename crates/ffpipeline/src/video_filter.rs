@@ -280,6 +280,19 @@ impl VideoFilterOp for PadFilter {
 #[derive(Debug, Clone)]
 pub struct LoopFilter {
     pub is_still_image: bool,
+    /// `None` loops forever
+    pub loops: Option<u32>,
+}
+
+impl LoopFilter {
+    /// Enough frames to cover `duration` at `frame_rate`.
+    pub fn bounded(is_still_image: bool, duration: Duration, frame_rate: &FrameRate) -> Self {
+        let frames = (duration.as_secs_f64() * frame_rate.parsed_frame_rate).ceil();
+        LoopFilter {
+            is_still_image,
+            loops: Some(frames.min(i32::MAX as f64) as u32),
+        }
+    }
 }
 
 impl VideoFilterOp for LoopFilter {
@@ -298,7 +311,10 @@ impl VideoFilterOp for LoopFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        Some(String::from("loop=-1:1"))
+        match self.loops {
+            Some(loops) => Some(format!("loop={loops}:1")),
+            None => Some(String::from("loop=-1:1")),
+        }
     }
 }
 
