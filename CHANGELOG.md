@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-10-07
 ### Breaking
 - Channel config version `0.1.0` replaces `"format": null` with an explicit `"mode": "copy"` in `normalization.audio` and `normalization.video`
   - Channel configs and every overlay must declare `"version": "https://ersatztv.org/channel/version/0.1.0"` or newer
@@ -15,4 +17,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - First versioned release; earlier builds report `0.1.0-<commit>`
 - Release notes list the config versions each build reads and the [ErsatzTV-ffmpeg](https://github.com/ErsatzTV/ErsatzTV-ffmpeg) build it ships with
 
-[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ErsatzTV/next/compare/v0.1.0...v0.2.0
