@@ -2,38 +2,31 @@ name: Build & Publish to Docker Hub
 on:
   workflow_call:
     inputs:
-      base_version:
-        description: 'Base version (latest or develop)'
+      tag:
+        description: 'Release tag, also the per-build docker tag (e.g. v0.2.0 or v0.2.1-f8410286-develop)'
         required: true
         type: string
-      info_version:
-        description: 'Informational version number (e.g. 0.3.7-alpha)'
+      publish:
+        description: 'Push the images and tag them; false only builds and smoke tests them'
         required: true
-        type: string
-      tag_version:
-        description: 'Docker tag version (e.g. v0.3.7)'
-        required: true
-        type: string
+        type: boolean
     secrets:
       docker_hub_username:
-        required: true
+        required: false
       docker_hub_access_token:
-        required: true
+        required: false
 jobs:
   build_images:
     name: Build ${{ matrix.name }} images
     runs-on: ${{ matrix.os }}
-    if: contains(github.event.head_commit.message, '[no build]') == false
     strategy:
       matrix:
         include:
           - name: amd64
             os: ubuntu-latest
-            suffix: '-amd64'
             platform: 'linux/amd64'
           - name: arm64
             os: ubuntu-24.04-arm
-            suffix: '-arm64'
             platform: 'linux/arm64'
     steps:
       - name: Checkout
@@ -41,16 +34,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Calculate informational version
+        id: version
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: echo "info_version=${TAG#v}+docker-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Login to DockerHub
+        if: inputs.publish
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.docker_hub_username }}
           password: ${{ secrets.docker_hub_access_token }}
 
       - name: Log in to the Container registry
+        if: inputs.publish
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -59,6 +61,7 @@ jobs:
 
       - name: Build and push by digest
         id: build
+        if: inputs.publish
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -72,22 +75,44 @@ jobs:
             type=gha,scope=next-test-${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=next-${{ matrix.name }}
           build-args: |
-            INFO_VERSION=${{ inputs.info_version }}-docker${{ matrix.suffix }}
+            INFO_VERSION=${{ steps.version.outputs.info_version }}
           outputs: |
             type=image,name=ersatztv/next,name-canonical=true,push-by-digest=true
             type=image,name=ghcr.io/ersatztv/next,name-canonical=true,push-by-digest=true
 
+      # unpublished images can't be pulled by digest, so the smoke test runs them from the local daemon
+      - name: Build for smoke test
+        if: ${{ !inputs.publish }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          target: runtime
+          load: true
+          tags: ersatztv/next:ci
+          provenance: false
+          platforms: ${{ matrix.platform }}
+          cache-from: |
+            type=gha,scope=next-${{ matrix.name }}
+            type=gha,scope=next-test-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=next-${{ matrix.name }}
+          build-args: |
+            INFO_VERSION=${{ steps.version.outputs.info_version }}
+
       - name: Save Digest to Artifact
+        if: inputs.publish
         run: echo ${{ steps.build.outputs.digest }} > digest-${{ matrix.name }}.txt
 
       - name: Upload Digest Artifact
+        if: inputs.publish
         uses: actions/upload-artifact@v6
         with:
-          name: digest-${{ matrix.name }}
+          name: next-digest-${{ matrix.name }}
           path: digest-${{ matrix.name }}.txt
 
       - name: Build and push test image by digest
         id: test-build
+        if: inputs.publish
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -104,27 +129,49 @@ jobs:
             type=image,name=ersatztv/next-test,name-canonical=true,push-by-digest=true
             type=image,name=ghcr.io/ersatztv/next-test,name-canonical=true,push-by-digest=true
 
+      - name: Build test image for smoke test
+        if: ${{ !inputs.publish }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          target: test-runtime
+          load: true
+          tags: ersatztv/next-test:ci
+          provenance: false
+          platforms: ${{ matrix.platform }}
+          cache-from: |
+            type=gha,scope=next-test-${{ matrix.name }}
+            type=gha,scope=next-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=next-test-${{ matrix.name }}
+
       - name: Save Digest to Artifact
+        if: inputs.publish
         run: echo ${{ steps.test-build.outputs.digest }} > digest-${{ matrix.name }}.txt
 
       - name: Upload Digest Artifact
+        if: inputs.publish
         uses: actions/upload-artifact@v6
         with:
-          name: test-digest-${{ matrix.name }}
+          name: next-test-digest-${{ matrix.name }}
           path: digest-${{ matrix.name }}.txt
 
       - name: Smoke test images
         timeout-minutes: 5
         env:
           PLATFORM: ${{ matrix.platform }}
-          APP_IMAGE: ghcr.io/ersatztv/next@${{ steps.build.outputs.digest }}
-          TEST_IMAGE: ghcr.io/ersatztv/next-test@${{ steps.test-build.outputs.digest }}
+          APP_IMAGE: ${{ inputs.publish && format('ghcr.io/ersatztv/next@{0}', steps.build.outputs.digest) || 'ersatztv/next:ci' }}
+          TEST_IMAGE: ${{ inputs.publish && format('ghcr.io/ersatztv/next-test@{0}', steps.test-build.outputs.digest) || 'ersatztv/next-test:ci' }}
         run: sh docker/smoke-test.sh "$PLATFORM" "$APP_IMAGE" "$TEST_IMAGE"
 
   merge_manifests:
-    name: Merge Manifests
+    name: Merge ${{ matrix.image }} manifests
     runs-on: ubuntu-latest
     needs: build_images
+    if: inputs.publish
+    strategy:
+      matrix:
+        image: [next, next-test]
     steps:
       - name: Login to DockerHub
         uses: docker/login-action@v4
@@ -142,79 +189,32 @@ jobs:
       - name: Download All Digest Artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: digest-*
+          pattern: ${{ matrix.image }}-digest-*
           merge-multiple: true
           path: digests/
 
-      - name: Read Digests From Artifacts
-        id: digests
-        run: |
-          AMD64_HASH=$(cat digests/digest-amd64.txt)
-          ARM64_HASH=$(cat digests/digest-arm64.txt)
-
-          DOCKER_HUB_DIGESTS="ersatztv/next@${AMD64_HASH} ersatztv/next@${ARM64_HASH}"
-          GHCR_DIGESTS="ghcr.io/ersatztv/next@${AMD64_HASH} ghcr.io/ersatztv/next@${ARM64_HASH}"
-
-          echo "docker_hub_digests=${DOCKER_HUB_DIGESTS}" >> "$GITHUB_OUTPUT"
-          echo "ghcr_digests=${GHCR_DIGESTS}" >> "$GITHUB_OUTPUT"
-
       - name: Create and Push Manifests
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ inputs.tag }}
         run: |
-          docker manifest create ersatztv/next:${{ inputs.base_version }} ${{ steps.digests.outputs.docker_hub_digests }}
-          docker manifest push ersatztv/next:${{ inputs.base_version }}
-          docker manifest create ersatztv/next:${{ inputs.tag_version }} ${{ steps.digests.outputs.docker_hub_digests }}
-          docker manifest push ersatztv/next:${{ inputs.tag_version }}
+          if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            tags=(latest "$TAG")
+            # floating vX.Y follows compatible updates; next-test is only pulled by exact tag
+            [[ "$IMAGE" == next ]] && tags+=("v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}")
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{8}-develop$ ]]; then
+            tags=(develop "$TAG")
+          else
+            echo "unrecognized tag '$TAG'" >&2
+            exit 1
+          fi
 
-          docker manifest create ghcr.io/ersatztv/next:${{ inputs.base_version }} ${{ steps.digests.outputs.ghcr_digests }}
-          docker manifest push ghcr.io/ersatztv/next:${{ inputs.base_version }}
-          docker manifest create ghcr.io/ersatztv/next:${{ inputs.tag_version }} ${{ steps.digests.outputs.ghcr_digests }}
-          docker manifest push ghcr.io/ersatztv/next:${{ inputs.tag_version }}
-
-  merge_test_manifests:
-    name: Merge Test Manifests
-    runs-on: ubuntu-latest
-    needs: build_images
-    steps:
-      - name: Login to DockerHub
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.docker_hub_username }}
-          password: ${{ secrets.docker_hub_access_token }}
-
-      - name: Log in to the Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download All Digest Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: test-digest-*
-          merge-multiple: true
-          path: digests/
-
-      - name: Read Digests From Artifacts
-        id: digests
-        run: |
-          AMD64_HASH=$(cat digests/digest-amd64.txt)
-          ARM64_HASH=$(cat digests/digest-arm64.txt)
-
-          DOCKER_HUB_DIGESTS="ersatztv/next-test@${AMD64_HASH} ersatztv/next-test@${ARM64_HASH}"
-          GHCR_DIGESTS="ghcr.io/ersatztv/next-test@${AMD64_HASH} ghcr.io/ersatztv/next-test@${ARM64_HASH}"
-
-          echo "docker_hub_digests=${DOCKER_HUB_DIGESTS}" >> "$GITHUB_OUTPUT"
-          echo "ghcr_digests=${GHCR_DIGESTS}" >> "$GITHUB_OUTPUT"
-
-      - name: Create and Push Manifests
-        run: |
-          docker manifest create ersatztv/next-test:${{ inputs.base_version }} ${{ steps.digests.outputs.docker_hub_digests }}
-          docker manifest push ersatztv/next-test:${{ inputs.base_version }}
-          docker manifest create ersatztv/next-test:${{ inputs.tag_version }} ${{ steps.digests.outputs.docker_hub_digests }}
-          docker manifest push ersatztv/next-test:${{ inputs.tag_version }}
-
-          docker manifest create ghcr.io/ersatztv/next-test:${{ inputs.base_version }} ${{ steps.digests.outputs.ghcr_digests }}
-          docker manifest push ghcr.io/ersatztv/next-test:${{ inputs.base_version }}
-          docker manifest create ghcr.io/ersatztv/next-test:${{ inputs.tag_version }} ${{ steps.digests.outputs.ghcr_digests }}
-          docker manifest push ghcr.io/ersatztv/next-test:${{ inputs.tag_version }}
+          amd64="$(cat digests/digest-amd64.txt)"
+          arm64="$(cat digests/digest-arm64.txt)"
+          for repo in "ersatztv/$IMAGE" "ghcr.io/ersatztv/$IMAGE"; do
+            for tag in "${tags[@]}"; do
+              docker manifest create "$repo:$tag" "$repo@$amd64" "$repo@$arm64"
+              docker manifest push "$repo:$tag"
+            done
+          done
