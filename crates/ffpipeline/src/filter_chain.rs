@@ -999,6 +999,7 @@ mod tests {
             .into(),
             LoopFilter {
                 is_still_image: true,
+                loops: None,
             }
             .into(),
         ];

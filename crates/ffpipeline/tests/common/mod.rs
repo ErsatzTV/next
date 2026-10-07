@@ -170,10 +170,15 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         None => None,
     };
     let has_watermark = watermark.is_some();
-    let duration = Duration::from_secs(1);
+    let duration = test_case.params.duration;
+    let in_point = test_case.params.in_point;
     let mut input = build_input(&source, probe, duration, watermark);
     if let Some(audio_source) = &test_case.audio_source {
         input.audio_input = build_audio_input(test_env, audio_source, duration).await;
+    }
+    for item in [&mut input.video_input, &mut input.audio_input] {
+        item.in_point += in_point;
+        item.out_point += in_point;
     }
     if let Some(subtitle_fixture) = test_case.subtitle_fixture {
         let path = fixture_path(subtitle_fixture);
@@ -1018,6 +1023,8 @@ pub struct TestOutputParams {
     pub watermark: Option<TestWatermark>,
     /// Hidden from `FfmpegInfo` for this test only, to force a fallback path.
     pub disabled_filters: Vec<&'static str>,
+    pub in_point: Duration,
+    pub duration: Duration,
 }
 
 impl Default for TestOutputParams {
@@ -1040,6 +1047,8 @@ impl Default for TestOutputParams {
             filter_options: VideoFilterOptions::default(),
             watermark: None,
             disabled_filters: Vec::new(),
+            in_point: Duration::ZERO,
+            duration: Duration::from_secs(1),
         }
     }
 }
