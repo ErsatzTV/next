@@ -1195,6 +1195,12 @@ pub fn assert_video(
             "unexpected video bit depth (pix_fmt {})",
             video.pix_fmt
         );
+        // libx264 picks 4:4:4 for rgb input
+        assert!(
+            pix_fmt_is_420(&video.pix_fmt),
+            "unexpected video chroma subsampling (pix_fmt {})",
+            video.pix_fmt
+        );
     }
     assert_eq!(video.width, Some(width), "unexpected video width");
     assert_eq!(video.height, Some(height), "unexpected video height");
@@ -1222,6 +1228,13 @@ fn pix_fmt_bit_depth(pix_fmt: &str) -> u8 {
         "yuv420p10le" | "p010le" | "yuv422p10le" | "yuv444p10le" => 10,
         _ => panic!("unknown bit depth for output pix_fmt {pix_fmt}"),
     }
+}
+
+fn pix_fmt_is_420(pix_fmt: &str) -> bool {
+    matches!(
+        pix_fmt,
+        "yuv420p" | "yuvj420p" | "nv12" | "yuv420p10le" | "p010le"
+    )
 }
 
 /// Compares frame rates as exact rationals so 30000/1001 != 30 and 60/2 == 30/1

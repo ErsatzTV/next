@@ -105,7 +105,7 @@ impl VideoFilterOp for HwUploadFilter {
         state.surface = self.target_surface;
         state.pixel_format = match &state.pixel_format {
             PixelFormat::Yuv420p10le => PixelFormat::P010le,
-            PixelFormat::Yuv420p => PixelFormat::Nv12,
+            PixelFormat::Yuv420p | PixelFormat::Unknown => PixelFormat::Nv12,
             PixelFormat::Bgra | PixelFormat::Rgba if state.surface == FrameSurface::Cuda => {
                 PixelFormat::Yuva420p
             }
