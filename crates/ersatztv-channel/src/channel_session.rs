@@ -84,6 +84,12 @@ struct TimingResult {
     is_complete: bool,
 }
 
+enum FfmpegExit {
+    Exited(std::io::Result<std::process::ExitStatus>),
+    IdleTimeout,
+    Stalled,
+}
+
 /// The next chunk starts here. A new search from the schedule position could skip a GOP,
 /// because the item was shifted back.
 struct CopyResume {
@@ -313,13 +319,14 @@ impl ChannelSession {
                 let realtime = transcoded_buffer >= time::Duration::seconds(30);
                 self.transcode(realtime, troubleshoot).await?;
             } else {
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-                    _ = tn.notified() => {
-                        return Err(ChannelError::IdleTimeout(
-                            self.channel_config.number().to_owned()
-                        )                        );
-                    }
+                let idle = tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(5)) => false,
+                    () = tn.notified() => true,
+                };
+                if idle {
+                    return Err(ChannelError::IdleTimeout(
+                        self.channel_config.number().to_owned(),
+                    ));
                 }
             }
         }
@@ -857,16 +864,26 @@ impl ChannelSession {
 
         log::debug!("waiting for ffmpeg to terminate...");
 
-        tokio::select! {
-            status = ffmpeg_child.wait() => {
+        let exit = tokio::select! {
+            status = ffmpeg_child.wait() => FfmpegExit::Exited(status),
+            () = self.timeout_notify.notified() => FfmpegExit::IdleTimeout,
+            () = wait_for_stall(&self.playlist_manager) => FfmpegExit::Stalled,
+        };
+
+        match exit {
+            FfmpegExit::Exited(status) => {
                 let status = status.map_err(|e| ChannelError::StreamFailure(e.to_string()))?;
                 let _ = reader_handle.await;
                 if !status.success() {
-                    self.write_dossier(                        current_item,
-                        &video_probe_result,                        &audio_probe_result,
+                    self.write_dossier(
+                        current_item,
+                        &video_probe_result,
+                        &audio_probe_result,
                         subtitle_probe_result.as_ref(),
                         &ring,
-                        outcome(&format!("ffmpeg exited with code {status}"))).await;
+                        outcome(&format!("ffmpeg exited with code {status}")),
+                    )
+                    .await;
                     return Err(ChannelError::FfmpegFailed {
                         status: status
                             .code()
@@ -874,34 +891,42 @@ impl ChannelSession {
                         stderr_tail: Self::stderr_tail(&ring),
                     });
                 } else if troubleshoot {
-                    self.write_dossier(current_item, &video_probe_result,
-                        &audio_probe_result, subtitle_probe_result.as_ref(),
-                        &ring, outcome("ffmpeg exited successfully")).await;
+                    self.write_dossier(
+                        current_item,
+                        &video_probe_result,
+                        &audio_probe_result,
+                        subtitle_probe_result.as_ref(),
+                        &ring,
+                        outcome("ffmpeg exited successfully"),
+                    )
+                    .await;
                 } else {
                     self.cleanup_old_report().await;
                 }
             }
-            _ = self.timeout_notify.notified() => {
+            FfmpegExit::IdleTimeout => {
                 ffmpeg_child.kill().await.ok();
                 let _ = reader_handle.await;
                 self.cleanup_old_report().await;
-                return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
+                return Err(ChannelError::IdleTimeout(
+                    self.channel_config.number().to_owned(),
+                ));
             }
-            _ = async {
-                    loop {
-                        let playlist_manager = self.playlist_manager.lock().await;
-                        if OffsetDateTime::now_utc() - *playlist_manager.last_progress() > STALL_THRESHOLD {
-                            break;
-                        }
-                        drop(playlist_manager);
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                    }
-                } => {
+            FfmpegExit::Stalled => {
                 ffmpeg_child.kill().await.ok();
                 let _ = reader_handle.await;
-                self.write_dossier(current_item, &video_probe_result, &audio_probe_result,
-                    subtitle_probe_result.as_ref(), &ring, outcome("ffmpeg stalled")).await;
-                return Err(ChannelError::Stalled(self.channel_config.number().to_owned()));
+                self.write_dossier(
+                    current_item,
+                    &video_probe_result,
+                    &audio_probe_result,
+                    subtitle_probe_result.as_ref(),
+                    &ring,
+                    outcome("ffmpeg stalled"),
+                )
+                .await;
+                return Err(ChannelError::Stalled(
+                    self.channel_config.number().to_owned(),
+                ));
             }
         }
 
@@ -1618,6 +1643,16 @@ impl ChannelSession {
         if let Err(err) = dossier.write().await {
             log::error!("failed to save dossier: {err}");
         }
+    }
+}
+
+async fn wait_for_stall(playlist_manager: &Mutex<PlaylistManager>) {
+    loop {
+        let last_progress = *playlist_manager.lock().await.last_progress();
+        if OffsetDateTime::now_utc() - last_progress > STALL_THRESHOLD {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 

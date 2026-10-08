@@ -177,13 +177,14 @@ async fn run() -> Result<(), LineupError> {
             let drain_deadline = async {
                 state.shutdown.cancelled().await;
                 tokio::time::sleep(SHUTDOWN_DEADLINE).await;
+                log::warn!(
+                    "connections still open {SHUTDOWN_DEADLINE:?} after shutdown; closing them"
+                );
             };
 
             tokio::select! {
                 result = serve => result?,
-                _ = drain_deadline => {
-                    log::warn!("connections still open {SHUTDOWN_DEADLINE:?} after shutdown; closing them");
-                }
+                () = drain_deadline => {}
             }
 
             state.tracker.close();
