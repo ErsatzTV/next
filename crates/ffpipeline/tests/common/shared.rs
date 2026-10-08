@@ -456,6 +456,26 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// opacity converts yuva420p to rgb, so the overlay input needs another conversion
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn watermark_yuva(
+            #[values("1080p_h264.ts", "480p_h264_anamorphic.ts")] src: &'static str,
+            #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::watermark(
+                    src,
+                    "1920x1080".parse().unwrap(),
+                    vf,
+                    $crate::common::shared::yuva_watermark(),
+                ),
+            )
+            .await;
+        }
+
         /// Exercises fades over a still image, which need the looped (repeated) frames to carry timestamps.
         #[::rstest::rstest]
         #[::tokio::test]
@@ -783,6 +803,14 @@ pub fn animated_watermark() -> TestWatermark {
 pub fn no_alpha_watermark() -> TestWatermark {
     TestWatermark {
         fixture_name: "watermark.jpg",
+        opacity_percent: Some(50.0),
+        ..TestWatermark::default()
+    }
+}
+
+pub fn yuva_watermark() -> TestWatermark {
+    TestWatermark {
+        fixture_name: "watermark.webp",
         opacity_percent: Some(50.0),
         ..TestWatermark::default()
     }

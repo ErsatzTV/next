@@ -2463,6 +2463,14 @@ mod tests {
     }
 
     fn resolve_rgba_upload_to_cuda(encoder_pixel_format: PixelFormat) -> Vec<String> {
+        resolve_upload_to_cuda(Vec::new(), PixelFormat::Rgba, encoder_pixel_format)
+    }
+
+    fn resolve_upload_to_cuda(
+        filters: Vec<PipelineFilter>,
+        pixel_format: PixelFormat,
+        encoder_pixel_format: PixelFormat,
+    ) -> Vec<String> {
         use crate::accel::cuda::Cuda;
         use crate::capabilities::nvidia::NvidiaCapabilities;
 
@@ -2475,12 +2483,14 @@ mod tests {
             None,
         ));
 
-        let mut chain = FilterChain::new(Vec::new());
+        let initial_state = sdr_state(FrameSurface::System, pixel_format);
+        let mut chain = FilterChain::new(filters);
+        chain.evaluate(&initial_state, &FfmpegInfo::default());
         chain.resolve(
             &FfmpegInfo::default(),
             &Some(accel),
             &VideoFilterOptions::default(),
-            &sdr_state(FrameSurface::System, PixelFormat::Rgba),
+            &initial_state,
             &FrameSurface::Cuda,
             &Some(encoder_pixel_format),
         );
@@ -2508,6 +2518,21 @@ mod tests {
         assert_eq!(
             resolve_rgba_upload_to_cuda(PixelFormat::Yuva420p),
             vec!["format=yuva420p", "hwupload_cuda"]
+        );
+    }
+
+    #[test]
+    fn resolve_converts_after_opacity_before_cuda_upload() {
+        let opacity = PipelineFilter::Video(
+            crate::video_filter::ColorChannelMixerFilter { alpha: 0.5 }.into(),
+        );
+        assert_eq!(
+            resolve_upload_to_cuda(vec![opacity], PixelFormat::Yuva420p, PixelFormat::Yuva420p),
+            vec![
+                "colorchannelmixer=aa=0.5",
+                "format=yuva420p",
+                "hwupload_cuda"
+            ]
         );
     }
 }
