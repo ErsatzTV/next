@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Always encode 4:2:0 output, which many clients require
   - Still images and song backgrounds were previously encoded as 4:4:4 by software encoders
 - Fix CUDA streams failing with a watermark in `yuva420p` (e.g. lossy WebP with transparency) and opacity below 100%
+- Fix CUDA streams with a watermark failing when encoding with software (e.g. `mpeg2video`)
 
 ## [0.2.0] - 2026-10-07
 ### Breaking

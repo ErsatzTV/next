@@ -508,8 +508,9 @@ impl VideoFilterOp for DeinterlaceCuda {
 pub struct CudaOverlay;
 
 impl OverlayKindOp for CudaOverlay {
+    // overlay_cuda outputs the main input format
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = PixelFormat::Nv12;
+        state.pixel_format = PixelFormat::Yuv420p;
         state.surface = FrameSurface::Cuda;
     }
 
