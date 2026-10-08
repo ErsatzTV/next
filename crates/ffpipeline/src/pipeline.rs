@@ -177,6 +177,8 @@ pub enum PixelFormat {
     Nv15,
     P010le,
     P016,
+    /// never a conversion target
+    Unknown,
 }
 
 gen_subset!(HwPixelFormat, PixelFormat, Nv12, Nv15, P010le);
@@ -194,8 +196,8 @@ impl PixelFormat {
             "nv15" => PixelFormat::Nv15,
             "p010le" => PixelFormat::P010le,
             _ => {
-                log::warn!("assuming unknown pixel format {} is yuv420p", pix_fmt);
-                PixelFormat::Yuv420p
+                log::debug!("unknown pixel format {}", pix_fmt);
+                PixelFormat::Unknown
             }
         }
     }
@@ -206,7 +208,8 @@ impl PixelFormat {
             | PixelFormat::Rgba
             | PixelFormat::Yuv420p
             | PixelFormat::Yuva420p
-            | PixelFormat::Nv12 => 8,
+            | PixelFormat::Nv12
+            | PixelFormat::Unknown => 8,
             PixelFormat::Yuv420p10le
             | PixelFormat::Yuva420p10le
             | PixelFormat::P010le
@@ -237,6 +240,7 @@ impl PixelFormat {
             PixelFormat::Nv15 => "nv15",
             PixelFormat::P010le => "p010le",
             PixelFormat::P016 => "p016",
+            PixelFormat::Unknown => "unknown",
         }
     }
 }

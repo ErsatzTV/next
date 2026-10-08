@@ -137,11 +137,18 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// formats `PixelFormat` does not model
+        #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
-        async fn copy_still_image() {
-            $crate::common::shared::run($accel().await, $crate::common::shared::copy_still_image())
-                .await;
+        async fn copy_still_image(
+            #[values("background.png", "background_rgb24.png")] src: &'static str,
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::copy_still_image(src),
+            )
+            .await;
         }
 
         #[::tokio::test]
@@ -614,8 +621,8 @@ pub fn copy_text_subtitle() -> TestCase {
     test_case
 }
 
-pub fn copy_still_image() -> TestCase {
-    let mut test_case = copy("background.png", SIZE_1080P);
+pub fn copy_still_image(src: &'static str) -> TestCase {
+    let mut test_case = copy(src, SIZE_1080P);
     test_case.audio_source = Some(TestAudioSource::Fixture("720p_h264.ts"));
     test_case.expected_copy.video = blocked(vec![
         CopyBlocker::CodecNotAllowed(String::from("png")),

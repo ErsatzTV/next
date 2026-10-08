@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Fixed
+- Always encode 4:2:0 output, which many clients require
+  - Still images and song backgrounds were previously encoded as 4:4:4 by software encoders
 
 ## [0.2.0] - 2026-10-07
 ### Breaking
