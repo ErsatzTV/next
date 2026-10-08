@@ -659,8 +659,11 @@ impl VideoFilterOp for ColorChannelMixerFilter {
         }
     }
 
-    fn apply_to(&self, _state: &mut FrameState) {
-        // no change to state
+    // colorchannelmixer only accepts rgb, so ffmpeg converts other input to rgba
+    fn apply_to(&self, state: &mut FrameState) {
+        if !matches!(state.pixel_format, PixelFormat::Bgra | PixelFormat::Rgba) {
+            state.pixel_format = PixelFormat::Rgba;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
