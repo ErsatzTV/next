@@ -72,6 +72,7 @@ impl HwAccel for Vulkan {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Vulkan,
+                also_accepts: &[],
             }),
             EncodeFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_vulkan",
@@ -79,6 +80,7 @@ impl HwAccel for Vulkan {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Vulkan,
+                also_accepts: &[],
             }),
             EncodeFormat::Mpeg2Video => None,
         }

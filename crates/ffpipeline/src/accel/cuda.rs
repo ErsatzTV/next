@@ -155,6 +155,7 @@ impl HwAccel for Cuda {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Cuda,
+                also_accepts: &[PixelFormat::Yuv420p],
             }),
             EncodeFormat::Hevc => {
                 let options = if self
@@ -172,6 +173,7 @@ impl HwAccel for Cuda {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                     preferred_surface: FrameSurface::Cuda,
+                    also_accepts: &[PixelFormat::Yuv420p],
                 })
             }
             EncodeFormat::Mpeg2Video => None,

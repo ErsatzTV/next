@@ -233,6 +233,7 @@ impl HwAccel for Vaapi {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                     preferred_surface: FrameSurface::Vaapi,
+                    also_accepts: &[],
                 })
             }
             EncodeFormat::Hevc => {
@@ -247,6 +248,7 @@ impl HwAccel for Vaapi {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                     preferred_surface: FrameSurface::Vaapi,
+                    also_accepts: &[],
                 })
             }
             EncodeFormat::Mpeg2Video => {
@@ -261,6 +263,7 @@ impl HwAccel for Vaapi {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: None,
                     preferred_surface: FrameSurface::Vaapi,
+                    also_accepts: &[],
                 })
             }
         }

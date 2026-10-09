@@ -89,6 +89,7 @@ impl HwAccel for VideoToolbox {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
+                also_accepts: &[],
             }),
             EncodeFormat::Hevc if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_videotoolbox",
@@ -100,6 +101,7 @@ impl HwAccel for VideoToolbox {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::VideoToolbox,
+                also_accepts: &[],
             }),
             _ => None,
         }

@@ -33,6 +33,8 @@ pub struct VideoCodec {
     pub(crate) preferred_pixel_format_8bit: Option<PixelFormat>,
     pub(crate) preferred_pixel_format_10bit: Option<PixelFormat>,
     pub(crate) preferred_surface: FrameSurface,
+    /// on `preferred_surface`, passed to the encoder without conversion
+    pub(crate) also_accepts: &'static [PixelFormat],
 }
 
 impl VideoCodec {
@@ -47,6 +49,7 @@ impl VideoCodec {
             preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
             preferred_pixel_format_10bit: Some(PixelFormat::Yuv420p10le),
             preferred_surface: FrameSurface::System,
+            also_accepts: &[],
         }
     }
 
@@ -57,6 +60,7 @@ impl VideoCodec {
             preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
             preferred_pixel_format_10bit: Some(PixelFormat::Yuv420p10le),
             preferred_surface: FrameSurface::System,
+            also_accepts: &[],
         }
     }
 
@@ -67,6 +71,7 @@ impl VideoCodec {
             preferred_pixel_format_8bit: Some(PixelFormat::Yuv420p),
             preferred_pixel_format_10bit: None,
             preferred_surface: FrameSurface::System,
+            also_accepts: &[],
         }
     }
 
@@ -88,6 +93,18 @@ impl VideoEncoder {
         match self {
             VideoEncoder::Copy => FrameSurface::System,
             VideoEncoder::Encode(codec) => codec.preferred_surface,
+        }
+    }
+
+    pub(crate) fn also_accepts(&self, bit_depth: u8) -> Vec<PixelFormat> {
+        match self {
+            VideoEncoder::Copy => Vec::new(),
+            VideoEncoder::Encode(codec) => codec
+                .also_accepts
+                .iter()
+                .copied()
+                .filter(|pf| pf.bit_depth() == bit_depth)
+                .collect(),
         }
     }
 

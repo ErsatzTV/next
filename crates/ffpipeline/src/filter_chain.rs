@@ -9,6 +9,15 @@ use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
 };
 
+/// what the encoder takes as input
+#[derive(Debug, Clone)]
+pub(crate) struct EncoderTarget {
+    pub(crate) surface: FrameSurface,
+    pub(crate) pixel_format: Option<PixelFormat>,
+    /// on `surface`, passed to the encoder without conversion
+    pub(crate) also_accepts: Vec<PixelFormat>,
+}
+
 #[derive(Debug, Clone)]
 pub enum PipelineFilter {
     Audio(AudioFilter),
@@ -109,9 +118,10 @@ impl FilterChain {
         accel: &Option<HardwareAccel>,
         filter_options: &VideoFilterOptions,
         initial_state: &FrameState,
-        encoder_surface: &FrameSurface,
-        encoder_pixel_format: &Option<PixelFormat>,
+        encoder: &EncoderTarget,
     ) {
+        let encoder_surface = &encoder.surface;
+        let encoder_pixel_format = &encoder.pixel_format;
         let mut resolved = Vec::new();
         let mut current_state = initial_state.clone();
         let mut surfaces = SurfaceSet::new();
@@ -271,8 +281,11 @@ impl FilterChain {
                         sec_accel,
                         filter_options,
                         &best.secondary_initial_state,
-                        &sec_req.surface,
-                        &Some(sec_req.pixel_format),
+                        &EncoderTarget {
+                            surface: sec_req.surface,
+                            pixel_format: Some(sec_req.pixel_format),
+                            also_accepts: Vec::new(),
+                        },
                     );
                     best.secondary = sec
                         .filters
@@ -315,6 +328,7 @@ impl FilterChain {
 
         if let Some(pixel_format) = encoder_pixel_format
             && current_state.pixel_format != *pixel_format
+            && !encoder.also_accepts.contains(&current_state.pixel_format)
         {
             Self::convert_pixel_format(
                 ffmpeg_info,
@@ -1035,8 +1049,11 @@ mod tests {
             &accel,
             &VideoFilterOptions::default(),
             &main,
-            &main.surface,
-            &Some(main.pixel_format),
+            &EncoderTarget {
+                surface: main.surface,
+                pixel_format: Some(main.pixel_format),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[Some(String::from("1:0"))]);
 
@@ -1197,8 +1214,11 @@ mod tests {
             &Some(vaapi_accel()),
             &VideoFilterOptions::default(),
             &hdr_vaapi_state(),
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let args: Vec<_> = chain
@@ -1236,8 +1256,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1305,8 +1328,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[]);
 
@@ -1389,8 +1415,11 @@ mod tests {
             &Some(qsv_accel_with_rgb4()),
             &VideoFilterOptions::default(),
             initial_state,
-            &FrameSurface::Qsv,
-            &Some(PixelFormat::Bgra),
+            &EncoderTarget {
+                surface: FrameSurface::Qsv,
+                pixel_format: Some(PixelFormat::Bgra),
+                also_accepts: Vec::new(),
+            },
         );
         chain.filters
     }
@@ -1448,8 +1477,11 @@ mod tests {
             &Some(accel),
             &VideoFilterOptions::default(),
             &sdr_1080p_state(FrameSurface::System, PixelFormat::Yuv420p10le),
-            &FrameSurface::VideoToolbox,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::VideoToolbox,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         assert!(
@@ -1489,8 +1521,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let has_hwmap = chain
@@ -1688,8 +1723,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1736,8 +1774,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[]);
 
@@ -1962,8 +2003,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2035,8 +2079,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2086,8 +2133,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[]);
 
@@ -2170,8 +2220,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2248,8 +2301,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2303,8 +2359,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &None, // no encoder pixel format hint
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: None,
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2372,8 +2431,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &None, // no encoder pixel format hint
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: None,
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2440,8 +2502,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -2493,8 +2558,11 @@ mod tests {
             &Some(accel),
             &VideoFilterOptions::default(),
             &initial_state,
-            &FrameSurface::Cuda,
-            &Some(encoder_pixel_format),
+            &EncoderTarget {
+                surface: FrameSurface::Cuda,
+                pixel_format: Some(encoder_pixel_format),
+                also_accepts: Vec::new(),
+            },
         );
 
         chain
@@ -2523,8 +2591,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_downloads_cuda_overlay_output_for_software_encoder() {
+    fn resolve_cuda_overlay(
+        encoder_surface: FrameSurface,
+        encoder_pixel_format: PixelFormat,
+        encoder_also_accepts: &[PixelFormat],
+    ) -> Vec<String> {
         use crate::accel::cuda::Cuda;
         use crate::capabilities::nvidia::NvidiaCapabilities;
 
@@ -2550,21 +2621,48 @@ mod tests {
             &Some(accel),
             &VideoFilterOptions::default(),
             &initial_state,
-            &FrameSurface::System,
-            &Some(PixelFormat::Yuv420p),
+            &EncoderTarget {
+                surface: encoder_surface,
+                pixel_format: Some(encoder_pixel_format),
+                also_accepts: encoder_also_accepts.to_vec(),
+            },
         );
 
-        let args: Vec<String> = chain
+        chain
             .filters
             .iter()
             .filter_map(|f| match f {
                 PipelineFilter::Video(v) => v.as_arg(),
                 _ => None,
             })
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn resolve_downloads_cuda_overlay_output_for_software_encoder() {
         assert_eq!(
-            args,
+            resolve_cuda_overlay(FrameSurface::System, PixelFormat::Yuv420p, &[]),
             vec!["scale_cuda=format=yuv420p", "hwdownload,format=yuv420p"]
+        );
+    }
+
+    #[test]
+    fn resolve_passes_cuda_overlay_output_to_accepting_encoder() {
+        assert_eq!(
+            resolve_cuda_overlay(
+                FrameSurface::Cuda,
+                PixelFormat::Nv12,
+                &[PixelFormat::Yuv420p]
+            ),
+            vec!["scale_cuda=format=yuv420p"]
+        );
+    }
+
+    #[test]
+    fn resolve_converts_cuda_overlay_output_for_nv12_encoder() {
+        assert_eq!(
+            resolve_cuda_overlay(FrameSurface::Cuda, PixelFormat::Nv12, &[]),
+            vec!["scale_cuda=format=yuv420p", "scale_cuda=format=nv12"]
         );
     }
 
