@@ -395,6 +395,8 @@ impl FilterChain {
                 current_state.surface,
                 current_state.pixel_format.bit_depth(),
             ) {
+                // overlay_cuda leaves yuv420p; hwdownload can't convert
+                _ if current_state.pixel_format == PixelFormat::Yuv420p => PixelFormat::Yuv420p,
                 (FrameSurface::Rkmpp, 10) => PixelFormat::Nv15,
                 (_, 10) => PixelFormat::P010le,
                 _ => PixelFormat::Nv12,
@@ -2518,6 +2520,51 @@ mod tests {
         assert_eq!(
             resolve_rgba_upload_to_cuda(PixelFormat::Yuva420p),
             vec!["format=yuva420p", "hwupload_cuda"]
+        );
+    }
+
+    #[test]
+    fn resolve_downloads_cuda_overlay_output_for_software_encoder() {
+        use crate::accel::cuda::Cuda;
+        use crate::capabilities::nvidia::NvidiaCapabilities;
+
+        let accel = HardwareAccel::Cuda(Cuda::new(
+            NvidiaCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                device_uuid: None,
+            },
+            None,
+        ));
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::OverlayCuda]);
+        let initial_state = sdr_state(FrameSurface::Cuda, PixelFormat::Nv12);
+        let mut chain = FilterChain::new(vec![PipelineFilter::Overlay(OverlayFilter {
+            kind: SoftwareOverlay::default().into(),
+            secondary: Vec::new(),
+            secondary_initial_state: sdr_state(FrameSurface::System, PixelFormat::Rgba),
+            secondary_source: OverlaySource::Graphics(0),
+            location: None,
+        })]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &VideoFilterOptions::default(),
+            &initial_state,
+            &FrameSurface::System,
+            &Some(PixelFormat::Yuv420p),
+        );
+
+        let args: Vec<String> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            args,
+            vec!["scale_cuda=format=yuv420p", "hwdownload,format=yuv420p"]
         );
     }
 

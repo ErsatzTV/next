@@ -388,6 +388,7 @@ macro_rules! shared_tests {
         /// A 1080p source has a coded height of 1088, so 1920x1080 output catches overlays
         /// that blend into the padded surface and leak it to the encoder, e.g. overlay_cuda
         /// (trac #11674), via the height assertion in `assert_video`.
+        /// cuda has no mpeg2video encoder, so overlay_cuda output is downloaded.
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
@@ -402,7 +403,7 @@ macro_rules! shared_tests {
             )]
             src: &'static str,
             #[values("1920x1080", "1280x720")] res: ::ffpipeline::frame_size::FrameSize,
-            #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+            #[values(("h264", 8), ("hevc", 8), ("mpeg2video", 8))] vf: (&'static str, u8),
         ) {
             $crate::common::shared::run(
                 $accel().await,
