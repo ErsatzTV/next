@@ -61,6 +61,7 @@ impl HwAccel for Rkmpp {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
+                also_accepts: &[],
             }),
             (EncodeFormat::Hevc, 8) if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_rkmpp",
@@ -68,6 +69,7 @@ impl HwAccel for Rkmpp {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
+                also_accepts: &[],
             }),
             _ => None,
         }

@@ -15,7 +15,7 @@ use crate::copy_decision::{
 };
 use crate::error::FFPipelineError;
 use crate::ffmpeg_info::FfmpegInfo;
-use crate::filter_chain::{FilterChain, PipelineFilter};
+use crate::filter_chain::{EncoderTarget, FilterChain, PipelineFilter};
 use crate::frame_rate::FrameRate;
 use crate::frame_size::{FrameSize, parse_aspect_ratio};
 use crate::global_option::{GlobalOption, LogLevel};
@@ -130,8 +130,7 @@ pub(crate) struct OutputContext {
     pub(crate) audio_channels: Option<u32>,
     pub(crate) video_encoder: VideoEncoder,
     pub(crate) pts_offset: Option<PtsOffset>,
-    pub(crate) preferred_surface: FrameSurface,
-    pub(crate) preferred_pixel_format: Option<PixelFormat>,
+    pub(crate) encoder_target: EncoderTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display)]
@@ -535,8 +534,11 @@ impl Pipeline {
             frame_rate: output_frame_rate
                 .clone()
                 .unwrap_or_else(|| video_stream.frame_rate.to_owned()),
-            preferred_surface: video_encoder.preferred_surface(),
-            preferred_pixel_format: video_encoder.preferred_pixel_format(video_transcode.bit_depth),
+            encoder_target: EncoderTarget {
+                surface: video_encoder.preferred_surface(),
+                pixel_format: video_encoder.preferred_pixel_format(video_transcode.bit_depth),
+                also_accepts: video_encoder.also_accepts(video_transcode.bit_depth),
+            },
         };
 
         let mut filters = vec![
@@ -1117,8 +1119,7 @@ impl Pipeline {
             &self.accel,
             &self.filter_options,
             &self.initial_state,
-            &self.output_context.preferred_surface,
-            &self.output_context.preferred_pixel_format,
+            &self.output_context.encoder_target,
         );
 
         // prepend decoder filters;
@@ -1151,7 +1152,7 @@ impl Pipeline {
         if let Some(accel) = &self.accel {
             let mut surfaces = self.filter_chain.surfaces().clone();
             surfaces.insert(self.initial_state.surface);
-            surfaces.insert(self.output_context.preferred_surface);
+            surfaces.insert(self.output_context.encoder_target.surface);
             if surfaces.iter().any(|s| *s != FrameSurface::System) {
                 let args = accel.init_hw_device(&surfaces);
                 self.global_options.push(GlobalOption::InitHwDevice(args));
