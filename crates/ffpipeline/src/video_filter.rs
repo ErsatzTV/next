@@ -183,8 +183,8 @@ impl VideoFilterOp for HwDownloadFilter {
 /// transcode.
 pub const DEFAULT_SCALE_FLAGS: &str = "bicubic";
 
-fn scale_flags(flags: &Option<String>) -> &str {
-    flags.as_deref().unwrap_or(DEFAULT_SCALE_FLAGS)
+fn scale_flags(flags: Option<&str>) -> &str {
+    flags.unwrap_or(DEFAULT_SCALE_FLAGS)
 }
 
 #[derive(Debug, Clone)]
@@ -247,7 +247,7 @@ impl VideoFilterOp for ScaleFilter {
                 "scale={}:{}:flags={},setsar=1",
                 size.width,
                 size.height,
-                scale_flags(&self.flags)
+                scale_flags(self.flags.as_deref())
             )
         })
     }
@@ -655,7 +655,7 @@ impl VideoFilterOp for SubtitleImageScaleFilter {
             "scale={}:{}:flags={}:force_original_aspect_ratio=decrease,setsar=1",
             self.size.width,
             self.size.height,
-            scale_flags(&self.flags),
+            scale_flags(self.flags.as_deref()),
         ))
     }
 }

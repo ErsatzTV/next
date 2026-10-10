@@ -103,7 +103,7 @@ pub struct LibplaceboOptions {
     pub tonemapping: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct ScaleOptions {
     pub flags: Option<String>,
 }

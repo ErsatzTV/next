@@ -198,6 +198,23 @@ macro_rules! shared_tests {
             $crate::common::shared::run($accel().await, $crate::common::shared::copy_dv5()).await;
         }
 
+        #[::rstest::rstest]
+        #[case::transcode(0, false)]
+        #[case::transcode_seek(500, false)]
+        #[case::copy(0, true)]
+        #[::tokio::test]
+        #[ignore]
+        async fn video_only(#[case] in_point_ms: u64, #[case] copy_video: bool) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::video_only(
+                    ::std::time::Duration::from_millis(in_point_ms),
+                    copy_video,
+                ),
+            )
+            .await;
+        }
+
         #[::tokio::test]
         #[ignore]
         async fn loudness_normalization() {
@@ -565,6 +582,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         expected_audio_codec: af.to_string(),
         expected_copy: CopyDecisions::default(),
         burned_point: None,
+        check_av_alignment: false,
     }
 }
 
@@ -579,12 +597,18 @@ fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
         expected_audio_codec: String::from("aac"),
         expected_copy: CopyDecisions::default(),
         burned_point: None,
+        check_av_alignment: false,
     }
 }
 
 const SIZE_1080P: FrameSize = FrameSize {
     width: 1920,
     height: 1080,
+};
+
+const SIZE_480P: FrameSize = FrameSize {
+    width: 640,
+    height: 480,
 };
 
 const SIZE_720P: FrameSize = FrameSize {
@@ -717,6 +741,23 @@ pub fn copy_codec_allowed() -> TestCase {
 pub fn copy_dv5() -> TestCase {
     let mut test_case = copy("1080p_hevc_10_dv5.mp4", SIZE_1080P);
     test_case.expected_copy.video = blocked(vec![CopyBlocker::DolbyVision5]);
+    test_case
+}
+
+pub fn video_only(in_point: Duration, copy_video: bool) -> TestCase {
+    let mut test_case = if copy_video {
+        copy("480p_h264_video_only.mkv", SIZE_480P)
+    } else {
+        source_sized("480p_h264_video_only.mkv", SIZE_480P)
+    };
+    if copy_video {
+        test_case.expected_copy.audio = blocked(vec![
+            CopyBlocker::GeneratedSource,
+            CopyBlocker::CodecNotAllowed(String::from("pcm_s16le")),
+        ]);
+    }
+    test_case.params.in_point = in_point;
+    test_case.check_av_alignment = true;
     test_case
 }
 

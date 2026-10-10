@@ -79,46 +79,7 @@ impl InputSettings {
     }
 
     pub fn select_audio_stream(&self) -> Result<&ProbeResultAudioStream, FFPipelineError> {
-        let mut all_audio_streams: Vec<&ProbeResultAudioStream> = self
-            .audio_input
-            .probe_result
-            .streams
-            .iter()
-            .filter_map(|s| match s {
-                ProbeResultStream::Audio(audio_stream) => Some(audio_stream),
-                _ => None,
-            })
-            .collect();
-
-        if let Some(audio_index) = self.audio_input.stream_index {
-            let matched_stream = all_audio_streams
-                .iter()
-                .find(|a| a.stream_index == audio_index);
-
-            match matched_stream {
-                Some(audio_stream) => {
-                    return Ok(audio_stream);
-                }
-                None => {
-                    log::warn!(
-                        "unable to locate requested audio stream with index {}",
-                        audio_index
-                    );
-                }
-            }
-        }
-
-        match all_audio_streams.len() {
-            0 => Err(FFPipelineError::AudioInputIsRequired),
-            1 => Ok(all_audio_streams[0]),
-            _ => {
-                log::warn!(
-                    "content contains more than one audio stream; selecting stream with greatest number of channels"
-                );
-                all_audio_streams.sort_by_key(|a| std::cmp::Reverse(a.channels));
-                Ok(all_audio_streams[0])
-            }
-        }
+        self.audio_input.select_audio_stream()
     }
 
     pub fn select_subtitle_stream(&self) -> Option<&ProbeResultVideoStream> {
@@ -439,6 +400,82 @@ pub struct ProbedInput {
     pub in_point: Duration,
     pub out_point: Duration,
     pub stream_index: Option<u32>,
+}
+
+impl ProbedInput {
+    pub fn select_audio_stream(&self) -> Result<&ProbeResultAudioStream, FFPipelineError> {
+        let mut all_audio_streams: Vec<&ProbeResultAudioStream> = self
+            .probe_result
+            .streams
+            .iter()
+            .filter_map(|s| match s {
+                ProbeResultStream::Audio(audio_stream) => Some(audio_stream),
+                _ => None,
+            })
+            .collect();
+
+        if let Some(audio_index) = self.stream_index {
+            let matched_stream = all_audio_streams
+                .iter()
+                .find(|a| a.stream_index == audio_index);
+
+            match matched_stream {
+                Some(audio_stream) => {
+                    return Ok(audio_stream);
+                }
+                None => {
+                    log::warn!(
+                        "unable to locate requested audio stream with index {}",
+                        audio_index
+                    );
+                }
+            }
+        }
+
+        match all_audio_streams.len() {
+            0 => Err(FFPipelineError::AudioInputIsRequired),
+            1 => Ok(all_audio_streams[0]),
+            _ => {
+                log::warn!(
+                    "content contains more than one audio stream; selecting stream with greatest number of channels"
+                );
+                all_audio_streams.sort_by_key(|a| std::cmp::Reverse(a.channels));
+                Ok(all_audio_streams[0])
+            }
+        }
+    }
+
+    /// lavfi can't seek, so the in and out points only set the duration.
+    pub fn silence_if_missing(&self) -> Option<ProbedInput> {
+        if self
+            .probe_result
+            .streams
+            .iter()
+            .any(|s| matches!(s, ProbeResultStream::Audio(_)))
+        {
+            return None;
+        }
+
+        let params = String::from("anullsrc=channel_layout=stereo:sample_rate=48000");
+        Some(ProbedInput {
+            input_source: InputSource::Lavfi(LavfiInputSource {
+                params: params.clone(),
+            }),
+            probe_result: ProbeResult {
+                path: params,
+                streams: vec![ProbeResultStream::Audio(ProbeResultAudioStream {
+                    stream_index: 0,
+                    codec: String::from("pcm_s16le"),
+                    channels: 2,
+                })],
+                duration: None,
+                format_name: Some(String::from("lavfi")),
+            },
+            in_point: self.in_point,
+            out_point: self.out_point,
+            stream_index: None,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]

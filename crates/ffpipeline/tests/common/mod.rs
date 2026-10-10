@@ -52,6 +52,7 @@ pub struct TestCase {
     pub expected_copy: CopyDecisions,
     /// Output pixel that a burned-in subtitle must make white
     pub burned_point: Option<(u32, u32)>,
+    pub check_av_alignment: bool,
 }
 
 #[allow(dead_code)]
@@ -232,6 +233,9 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
     if let Some((x, y)) = test_case.burned_point {
         assert_burned_in(&test_env.ffmpeg, &segment, x, y).await;
+    }
+    if test_case.check_av_alignment {
+        assert_av_aligned(&test_env.ffprobe, &segment).await;
     }
     let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
     assert_video(
@@ -1278,6 +1282,52 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
         })
         .expect("no audio stream found in output");
     assert_eq!(audio.codec, codec, "unexpected audio codec");
+}
+
+/// one 30 fps video frame plus one AAC frame
+const AV_ALIGNMENT_TOLERANCE: f64 = 0.06;
+
+#[allow(dead_code)]
+pub async fn assert_av_aligned(ffprobe: &Path, path: &Path) {
+    let output = ersatztv_core::process::command(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "packet=codec_type,pts_time,duration_time",
+        ])
+        .args(["-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to run ffprobe");
+    let packets = String::from_utf8_lossy(&output.stdout);
+
+    let mut ranges: std::collections::HashMap<String, (f64, f64)> = Default::default();
+    for line in packets.lines() {
+        // ffprobe adds an empty side data field
+        let fields: Vec<&str> = line.split(',').collect();
+        let [codec_type, pts, duration, ..] = fields[..] else {
+            continue;
+        };
+        let (Ok(pts), Ok(duration)) = (pts.parse::<f64>(), duration.parse::<f64>()) else {
+            continue;
+        };
+        let range = ranges
+            .entry(codec_type.to_owned())
+            .or_insert((f64::MAX, f64::MIN));
+        range.0 = range.0.min(pts);
+        range.1 = range.1.max(pts + duration);
+    }
+
+    let video = ranges.get("video").expect("no video packets");
+    let audio = ranges.get("audio").expect("no audio packets");
+    // a copy cut by -t can end the video before the audio
+    assert!(
+        (video.0 - audio.0).abs() < AV_ALIGNMENT_TOLERANCE
+            && audio.1 > video.1 - AV_ALIGNMENT_TOLERANCE,
+        "audio {audio:?} and video {video:?} are not aligned"
+    );
 }
 
 /// The output assertions cannot tell hardware output from a software fallback, so the
