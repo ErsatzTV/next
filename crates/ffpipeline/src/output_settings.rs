@@ -70,6 +70,7 @@ pub struct VideoFilterOptions {
     pub deinterlace_qsv: DeinterlaceQsvOptions,
     pub deinterlace_vaapi: DeinterlaceVaapiOptions,
     pub libplacebo: LibplaceboOptions,
+    pub scale: ScaleOptions,
     pub tonemap: TonemapOptions,
     pub tonemap_opencl: TonemapOpenclOptions,
     pub w3fdif: W3fdifOptions,
@@ -100,6 +101,11 @@ pub struct BwdifCudaOptions {
 #[derive(Debug, Default)]
 pub struct LibplaceboOptions {
     pub tonemapping: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ScaleOptions {
+    pub flags: Option<String>,
 }
 
 #[derive(Debug, Default)]

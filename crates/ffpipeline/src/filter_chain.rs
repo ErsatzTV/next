@@ -1011,6 +1011,7 @@ mod tests {
                 }),
                 scaling_mode: ScalingMode::ScaleAndPad,
                 input_is_anamorphic: false,
+                flags: None,
             }
             .into(),
             LoopFilter {
@@ -1117,6 +1118,7 @@ mod tests {
             }),
             scaling_mode: ScalingMode::ScaleAndPad,
             input_is_anamorphic: false,
+            flags: None,
         };
 
         let sec = secondary_chain(
@@ -2173,6 +2175,7 @@ mod tests {
             size: None,
             scaling_mode: ScalingMode::Stretch,
             input_is_anamorphic: false,
+            flags: None,
         }
         .into();
         assert!(upload.as_arg().is_none());
