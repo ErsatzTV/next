@@ -374,10 +374,18 @@ pub struct Pipeline {
 impl Pipeline {
     fn full(
         ffmpeg_info: &FfmpegInfo,
-        input_settings: InputSettings,
+        mut input_settings: InputSettings,
         output_settings: OutputSettings,
     ) -> Result<Pipeline, FFPipelineError> {
         let mut final_output_settings = output_settings;
+
+        if let Some(silence) = input_settings.audio_input.silence_if_missing() {
+            log::info!(
+                "source {} has no audio stream; using silence",
+                input_settings.audio_input.probe_result.path
+            );
+            input_settings.audio_input = silence;
+        }
 
         if let Some(accel) = &final_output_settings.accel
             && accel
@@ -416,6 +424,7 @@ impl Pipeline {
             &input_settings,
             &final_output_settings,
             video_stream,
+            &input_settings.audio_input,
             audio_stream,
             subtitle_burn.as_ref(),
         );
@@ -1465,6 +1474,7 @@ fn copy_decisions(
     input_settings: &InputSettings,
     output_settings: &OutputSettings,
     video_stream: &ProbeResultVideoStream,
+    audio_input: &ProbedInput,
     audio_stream: &ProbeResultAudioStream,
     subtitle_burn: Option<&SubtitleBurn>,
 ) -> CopyDecisions {
@@ -1488,7 +1498,7 @@ fn copy_decisions(
             .audio
             .copy
             .as_ref()
-            .map(|policy| audio_copy_decision(policy, &input_settings.audio_input, audio_stream)),
+            .map(|policy| audio_copy_decision(policy, audio_input, audio_stream)),
     }
 }
 
@@ -1498,12 +1508,16 @@ pub fn predict_copy_decisions(
     output_settings: &OutputSettings,
 ) -> Result<CopyDecisions, FFPipelineError> {
     let video_stream = input_settings.select_video_stream()?;
-    let audio_stream = input_settings.select_audio_stream()?;
+    // must match `Pipeline::full`
+    let silence = input_settings.audio_input.silence_if_missing();
+    let audio_input = silence.as_ref().unwrap_or(&input_settings.audio_input);
+    let audio_stream = audio_input.select_audio_stream()?;
     let subtitle_burn = subtitle_burn(input_settings, output_settings, video_stream);
     Ok(copy_decisions(
         input_settings,
         output_settings,
         video_stream,
+        audio_input,
         audio_stream,
         subtitle_burn.as_ref(),
     ))
@@ -1812,6 +1826,65 @@ mod tests {
                 ("main.mkv".to_owned(), Some("12345ms".to_owned())),
                 ("song.flac".to_owned(), None),
             ]
+        );
+    }
+
+    fn video_only_input(seek: Duration) -> InputSettings {
+        let mut input = multichannel_ac3_input("video_only.mkv");
+        for probed in [&mut input.audio_input, &mut input.video_input] {
+            probed
+                .probe_result
+                .streams
+                .retain(|s| !matches!(s, crate::probe::ProbeResultStream::Audio(_)));
+            probed.in_point = seek;
+        }
+        input
+    }
+
+    #[test]
+    fn video_only_source_uses_silence() {
+        let pipeline = Pipeline::full(
+            &FfmpegInfo::default(),
+            video_only_input(Duration::from_millis(12_345)),
+            stereo_output(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            input_seeks(&pipeline.args()),
+            vec![
+                ("video_only.mkv".to_owned(), Some("12345ms".to_owned())),
+                (
+                    "anullsrc=channel_layout=stereo:sample_rate=48000".to_owned(),
+                    None
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn video_only_source_ignores_missing_audio_stream_index() {
+        let mut input = video_only_input(Duration::ZERO);
+        input.audio_input.stream_index = Some(1);
+
+        assert!(Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).is_ok());
+    }
+
+    #[test]
+    fn video_only_source_predicts_audio_transcode() {
+        let mut output = stereo_output();
+        output.audio.copy = Some(crate::output_settings::CopyPolicy::default());
+
+        let decisions = predict_copy_decisions(&video_only_input(Duration::ZERO), &output).unwrap();
+
+        assert!(
+            matches!(
+                &decisions.audio,
+                Some(CopyDecision::Transcode(blockers))
+                    if blockers.contains(&crate::copy_decision::CopyBlocker::GeneratedSource)
+            ),
+            "{:?}",
+            decisions.audio
         );
     }
 

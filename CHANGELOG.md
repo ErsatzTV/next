@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix CUDA streams with a watermark failing when encoding with software (e.g. `mpeg2video`)
 - Fix VideoToolbox `h264` streams failing on content with embedded (A53) closed captions
 - Reject `normalization.video.filters` options that contain filter graph syntax when the channel config loads, instead of failing every item
+- Play silence for sources without an audio stream, instead of the fallback for the whole item
+  - Applies to every source kind, and to a probe hint with no audio streams
 
 ## [0.2.0] - 2026-10-07
 ### Breaking
