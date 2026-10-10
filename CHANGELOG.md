@@ -6,12 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Added
+- Channel config version `0.1.2` adds `normalization.video.filters.scale.flags` to choose the software scaling algorithm (e.g. `bicubic`, `lanczos`, `fast_bilinear`)
+  - Applies to the main picture, graphics and image subtitles wherever software scaling runs
+
+### Changed
+- Software scaling now defaults to `bicubic` instead of `fast_bilinear`, which reduces aliasing when downscaling
+  - Set `normalization.video.filters.scale.flags` to `fast_bilinear` to keep the previous output
+
 ### Fixed
 - Always encode 4:2:0 output, which many clients require
   - Still images and song backgrounds were previously encoded as 4:4:4 by software encoders
 - Fix CUDA streams failing with a watermark in `yuva420p` (e.g. lossy WebP with transparency) and opacity below 100%
 - Fix CUDA streams with a watermark failing when encoding with software (e.g. `mpeg2video`)
 - Fix VideoToolbox `h264` streams failing on content with embedded (A53) closed captions
+- Reject `normalization.video.filters` options that contain filter graph syntax when the channel config loads, instead of failing every item
 
 ## [0.2.0] - 2026-10-07
 ### Breaking

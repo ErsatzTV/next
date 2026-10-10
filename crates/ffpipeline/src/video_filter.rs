@@ -179,11 +179,20 @@ impl VideoFilterOp for HwDownloadFilter {
     }
 }
 
+/// Not `fast_bilinear`: it aliases when it downscales. `bicubic` adds less than 1% to a software
+/// transcode.
+pub const DEFAULT_SCALE_FLAGS: &str = "bicubic";
+
+fn scale_flags(flags: &Option<String>) -> &str {
+    flags.as_deref().unwrap_or(DEFAULT_SCALE_FLAGS)
+}
+
 #[derive(Debug, Clone)]
 pub struct ScaleFilter {
     pub size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,
     pub input_is_anamorphic: bool,
+    pub flags: Option<String>,
 }
 
 impl VideoFilterOp for ScaleFilter {
@@ -212,6 +221,7 @@ impl VideoFilterOp for ScaleFilter {
                 size: Some(size),
                 scaling_mode: self.scaling_mode,
                 input_is_anamorphic: state.is_anamorphic,
+                flags: self.flags.clone(),
             }
             .into(),
         )
@@ -234,8 +244,10 @@ impl VideoFilterOp for ScaleFilter {
         // force_original_aspect_ratio must not be used because it ignores sar
         self.size.map(|size| {
             format!(
-                "scale={}:{}:flags=fast_bilinear,setsar=1",
-                size.width, size.height
+                "scale={}:{}:flags={},setsar=1",
+                size.width,
+                size.height,
+                scale_flags(&self.flags)
             )
         })
     }
@@ -618,6 +630,7 @@ impl VideoFilterOp for SubtitlesFilter {
 #[derive(Debug, Clone)]
 pub struct SubtitleImageScaleFilter {
     pub size: FrameSize,
+    pub flags: Option<String>,
 }
 
 impl VideoFilterOp for SubtitleImageScaleFilter {
@@ -639,8 +652,10 @@ impl VideoFilterOp for SubtitleImageScaleFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!(
-            "scale={}:{}:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1",
-            self.size.width, self.size.height,
+            "scale={}:{}:flags={}:force_original_aspect_ratio=decrease,setsar=1",
+            self.size.width,
+            self.size.height,
+            scale_flags(&self.flags),
         ))
     }
 }
@@ -964,6 +979,94 @@ mod tests {
     use time::{Date, Month, Time, UtcOffset};
 
     use super::*;
+
+    fn scale_filter(flags: Option<&str>) -> VideoFilter {
+        ScaleFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+            input_is_anamorphic: false,
+            flags: flags.map(str::to_owned),
+        }
+        .into()
+    }
+
+    fn subtitle_image_scale_filter(flags: Option<&str>) -> VideoFilter {
+        SubtitleImageScaleFilter {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            flags: flags.map(str::to_owned),
+        }
+        .into()
+    }
+
+    #[test]
+    fn scale_as_arg_defaults_to_bicubic() {
+        assert_eq!(
+            scale_filter(None).as_arg().as_deref(),
+            Some("scale=1920:1080:flags=bicubic,setsar=1")
+        );
+    }
+
+    #[test]
+    fn scale_as_arg_uses_flags() {
+        assert_eq!(
+            scale_filter(Some("lanczos+accurate_rnd"))
+                .as_arg()
+                .as_deref(),
+            Some("scale=1920:1080:flags=lanczos+accurate_rnd,setsar=1")
+        );
+    }
+
+    #[test]
+    fn scale_evaluate_keeps_flags() {
+        let state = FrameState {
+            size: FrameSize {
+                width: 640,
+                height: 480,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        };
+        let evaluated = scale_filter(Some("spline"))
+            .evaluate(&state, &FfmpegInfo::default())
+            .unwrap();
+        assert!(
+            evaluated.as_arg().unwrap().contains("flags=spline,"),
+            "{evaluated:?}"
+        );
+    }
+
+    #[test]
+    fn subtitle_image_scale_as_arg_defaults_to_bicubic() {
+        assert_eq!(
+            subtitle_image_scale_filter(None).as_arg().as_deref(),
+            Some("scale=1920:1080:flags=bicubic:force_original_aspect_ratio=decrease,setsar=1")
+        );
+    }
+
+    #[test]
+    fn subtitle_image_scale_as_arg_uses_flags() {
+        assert_eq!(
+            subtitle_image_scale_filter(Some("fast_bilinear"))
+                .as_arg()
+                .as_deref(),
+            Some(
+                "scale=1920:1080:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1"
+            )
+        );
+    }
 
     #[test]
     fn hw_map_as_arg_produces_derive_device() {

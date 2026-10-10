@@ -1,5 +1,5 @@
 {
-  "$id": "https://ersatztv.org/channel/version/0.1.1",
+  "$id": "https://ersatztv.org/channel/version/0.1.2",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ChannelConfig",
   "type": "object",
@@ -154,7 +154,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -166,7 +168,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -178,7 +182,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -190,7 +196,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -265,7 +273,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -311,6 +321,21 @@
       "required": [
         "folder"
       ]
+    },
+    "ScaleOptions": {
+      "type": "object",
+      "properties": {
+        "flags": {
+          "description": "Flags for the software `scale` filter, e.g. `bicubic`, `lanczos`, `fast_bilinear`.\nDefault is `bicubic`. Also applies to graphics, image subtitles, and hardware accels that\nuse the software scaler.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
+        }
+      },
+      "additionalProperties": false
     },
     "ScalingMode": {
       "type": "string",
@@ -366,7 +391,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -378,7 +405,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -442,6 +471,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LibplaceboOptions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScaleOptions"
             },
             {
               "type": "null"
@@ -584,6 +624,7 @@
             "deinterlace_qsv": null,
             "deinterlace_vaapi": null,
             "libplacebo": null,
+            "scale": null,
             "tonemap": null,
             "tonemap_opencl": null,
             "w3fdif": null,
@@ -657,7 +698,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -669,7 +712,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false
@@ -681,7 +726,9 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null,
+          "pattern": "^[a-z0-9_.+-]+$"
         }
       },
       "additionalProperties": false

@@ -13,6 +13,25 @@ shared_tests!(accel);
 
 #[tokio::test]
 #[ignore]
+async fn scale_flags() {
+    let env = test_env().await.unwrap();
+    let mut test_case = shared::transcode(
+        "480p_h264.ts",
+        "1920x1080".parse().unwrap(),
+        ("h264", 8),
+        ffpipeline::pipeline::AudioFormat::Aac,
+    );
+    test_case.params.filter_options.scale.flags = Some(String::from("lanczos"));
+    let args = run_test_case(env, test_case).await;
+    let filter = args.join(" ");
+    assert!(
+        filter.contains("scale=1440:1080:flags=lanczos,"),
+        "{filter}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn copy_input_start() {
     common::copy_seek::run_input_start_test().await;
 }

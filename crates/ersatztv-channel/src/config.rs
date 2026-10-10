@@ -12,7 +12,7 @@ use crate::error::ChannelError;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 1,
-    compatible: 1,
+    compatible: 2,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
@@ -232,6 +232,7 @@ pub struct VideoFilterOptionsConfig {
     pub deinterlace_qsv: Option<DeinterlaceQsvOptions>,
     pub deinterlace_vaapi: Option<DeinterlaceVaapiOptions>,
     pub libplacebo: Option<LibplaceboOptions>,
+    pub scale: Option<ScaleOptions>,
     pub tonemap: Option<TonemapOptions>,
     pub tonemap_opencl: Option<TonemapOpenclOptions>,
     pub w3fdif: Option<W3fdifOptions>,
@@ -242,60 +243,91 @@ pub struct VideoFilterOptionsConfig {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BwdifOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BwdifCudaOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeinterlaceQsvOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeinterlaceVaapiOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LibplaceboOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub tonemapping: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ScaleOptions {
+    /// Flags for the software `scale` filter, e.g. `bicubic`, `lanczos`, `fast_bilinear`.
+    /// Default is `bicubic`. Also applies to graphics, image subtitles, and hardware accels that
+    /// use the software scaler.
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
+    pub flags: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TonemapOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub tonemap: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TonemapOpenclOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub tonemap: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct W3fdifOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct YadifOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct YadifCudaOptions {
+    #[serde(default, deserialize_with = "deserialize_filter_option")]
+    #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
 }
 
@@ -316,6 +348,9 @@ impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilter
             },
             libplacebo: ffpipeline::output_settings::LibplaceboOptions {
                 tonemapping: value.libplacebo.and_then(|o| o.tonemapping),
+            },
+            scale: ffpipeline::output_settings::ScaleOptions {
+                flags: value.scale.and_then(|o| o.flags),
             },
             tonemap: ffpipeline::output_settings::TonemapOptions {
                 tonemap: value.tonemap.and_then(|o| o.tonemap),
@@ -753,6 +788,23 @@ fn deserialize_frame_rate<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Stri
     }
 }
 
+/// The filter graph does not escape these values. A bad value must fail at load, not on every item.
+fn deserialize_filter_option<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    match Option::<String>::deserialize(d)? {
+        Some(v)
+            if v.is_empty()
+                || !v.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || "_.+-".contains(c)
+                }) =>
+        {
+            Err(serde::de::Error::custom(format!(
+                "filter option \"{v}\" may only contain a-z, 0-9, _ . + and -"
+            )))
+        }
+        v => Ok(v),
+    }
+}
+
 fn deserialize_optional_path<'de, D: Deserializer<'de>>(d: D) -> Result<Option<PathBuf>, D::Error> {
     Ok(Option::<PathBuf>::deserialize(d)?.filter(|p| !p.as_os_str().is_empty()))
 }
@@ -961,5 +1013,64 @@ mod tests {
             message.contains("frame_rate \"29.97\" must be N or N/D"),
             "{message}"
         );
+    }
+
+    #[tokio::test]
+    async fn scale_flags_load() {
+        let mut base = base();
+        base["normalization"]["video"]["filters"]["scale"]["flags"] =
+            json!("bicubic+accurate_rnd+full_chroma_int");
+
+        let config = load(&[base]).await.unwrap();
+        let options = ffpipeline::output_settings::VideoFilterOptions::from(
+            config.normalization.video.filters,
+        );
+
+        assert_eq!(
+            options.scale.flags.as_deref(),
+            Some("bicubic+accurate_rnd+full_chroma_int")
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_options_accept_libplacebo_names() {
+        for tonemapping in ["bt.2390", "st2094-40"] {
+            let mut base = base();
+            base["normalization"]["video"]["filters"]["libplacebo"]["tonemapping"] =
+                json!(tonemapping);
+
+            load(&[base]).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn filter_options_reject_graph_syntax() {
+        for (filter, option) in [
+            ("scale", "flags"),
+            ("yadif", "mode"),
+            ("tonemap", "tonemap"),
+            ("libplacebo", "tonemapping"),
+        ] {
+            let mut base = base();
+            base["normalization"]["video"]["filters"][filter][option] =
+                json!("bicubic:out_range=pc");
+
+            let message = config_error(load(&[base]).await);
+
+            assert!(
+                message.contains("filter option \"bicubic:out_range=pc\" may only contain"),
+                "{filter}.{option}: {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_filter_option_is_rejected() {
+        let mut base = base();
+        base["normalization"]["video"]["filters"]["scale"]["flags"] = json!("");
+
+        let message = config_error(load(&[base]).await);
+
+        assert!(message.contains("may only contain"), "{message}");
     }
 }

@@ -606,6 +606,7 @@ impl Pipeline {
                     size: video_transcode.size,
                     scaling_mode: video_transcode.scaling_mode,
                     input_is_anamorphic: initial_state.is_anamorphic,
+                    flags: video_transcode.filter_options.scale.flags.clone(),
                 }
                 .into(),
             ),
@@ -690,7 +691,13 @@ impl Pipeline {
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
                     kind: SoftwareOverlay::default().into(),
-                    secondary: vec![SubtitleImageScaleFilter { size }.into()],
+                    secondary: vec![
+                        SubtitleImageScaleFilter {
+                            size,
+                            flags: video_transcode.filter_options.scale.flags.clone(),
+                        }
+                        .into(),
+                    ],
                     secondary_initial_state,
                     secondary_source: OverlaySource::Subtitle,
                     location: None,
@@ -902,6 +909,7 @@ impl Pipeline {
                                 size: Some(*video_size),
                                 scaling_mode: ScalingMode::Stretch,
                                 input_is_anamorphic: false,
+                                flags: video_transcode.filter_options.scale.flags.clone(),
                             }
                             .into(),
                         );
@@ -918,6 +926,7 @@ impl Pipeline {
                             size: Some(scaled_size),
                             scaling_mode: ScalingMode::ScaleAndPad,
                             input_is_anamorphic: false,
+                            flags: video_transcode.filter_options.scale.flags.clone(),
                         }
                         .into(),
                     ]
@@ -1718,6 +1727,7 @@ mod tests {
         input.subtitle_input = Some(subtitle);
         let mut output = stereo_output();
         output.video.transcode.size = None;
+        output.video.transcode.filter_options.scale.flags = Some("lanczos".to_owned());
         output.video.copy = Some(crate::output_settings::CopyPolicy::default());
         let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, output).unwrap();
         pipeline.optimize();
@@ -1730,7 +1740,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(";");
         assert!(
-            filter.contains("scale=480:720:flags=fast_bilinear:force_original_aspect_ratio"),
+            filter.contains("scale=480:720:flags=lanczos:force_original_aspect_ratio"),
             "{filter}"
         );
         assert_eq!(
