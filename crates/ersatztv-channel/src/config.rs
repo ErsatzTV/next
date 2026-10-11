@@ -136,7 +136,7 @@ pub enum StreamMode {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct AudioNormalizationConfig {
-    /// `copy`: copy items with a source codec in `copy_formats`. Transcode all other items.
+    /// Whether to transcode every item or copy items whose codec allows it.
     #[serde(default)]
     pub mode: StreamMode,
     /// Source codecs to copy when `mode` is `copy`. Default: aac, ac3, eac3, mp3.
@@ -236,9 +236,9 @@ impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSe
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct VideoNormalizationConfig {
-    /// `copy`: copy items with a source codec in `copy_formats`. Transcode all other items, and
-    /// items with graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI
-    /// sources.
+    /// Whether to transcode every item or copy items whose codec allows it. In `copy` mode, items
+    /// with graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI sources are
+    /// always transcoded.
     #[serde(default)]
     pub mode: StreamMode,
     /// Source codecs to copy when `mode` is `copy`. Default: h264, hevc.
