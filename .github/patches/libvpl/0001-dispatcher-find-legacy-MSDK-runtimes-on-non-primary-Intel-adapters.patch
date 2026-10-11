@@ -1,0 +1,98 @@
+From 449d7d6c6ebb52afc110a983a3f4aff575c09532 Mon Sep 17 00:00:00 2001
+From: Jason Dove <1695733+jasongdove@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 10:55:51 -0500
+Subject: [PATCH] dispatcher: find legacy MSDK runtimes on non-primary Intel
+ adapters
+
+Two problems keep the dispatcher from using a legacy Media SDK runtime
+(e.g. API 1.20 on Haswell) through MFXLoad on Windows:
+
+- GetRegkeyDir() only initializes the library iterator for adapter 0,
+  and the MediaSDK Dispatch registry entries are keyed by PCI device
+  ID. When the Intel GPU is not DXGI adapter 0 (a discrete GPU from
+  another vendor is also installed), the entry is never matched and no
+  legacy runtime is found. Check every adapter instead.
+
+- Runtimes that do not report a device ID via MFXVideoCORE_QueryPlatform
+  leave m_deviceID at 0, so mfxDeviceDescription.DeviceID and
+  mfxExtendedDeviceId.DeviceID are 0. Applications that filter on
+  mfxExtendedDeviceId.DeviceID (FFmpeg does for D3D11) then reject the
+  implementation. Fall back to the PCI device ID of the DXGI adapter
+  the session was created on.
+
+intel/libvpl#187 proposes a similar fix for the first problem only.
+---
+ libvpl/src/mfx_dispatcher_vpl_msdk.cpp      | 13 +++++++++++
+ libvpl/src/windows/mfx_library_iterator.cpp | 25 +++++++++++++++------
+ 2 files changed, 31 insertions(+), 7 deletions(-)
+
+diff --git a/libvpl/src/mfx_dispatcher_vpl_msdk.cpp b/libvpl/src/mfx_dispatcher_vpl_msdk.cpp
+index 770014b..5493be5 100644
+--- a/libvpl/src/mfx_dispatcher_vpl_msdk.cpp
++++ b/libvpl/src/mfx_dispatcher_vpl_msdk.cpp
+@@ -404,6 +404,19 @@ mfxStatus LoaderCtxMSDK::QueryMSDKCaps(STRING_TYPE libNameFull,
+     if (m_deviceID == 0)
+         m_deviceID = m_loaderDeviceID;
+ 
++#if defined(_WIN32) || defined(_WIN64)
++    // old runtimes (e.g. API 1.20 on Haswell) report no deviceID at all, so
++    //   fall back to the PCI device ID of the DXGI adapter this session is on
++    if (m_deviceID == 0) {
++        mfxIMPL implTest = MFX_IMPL_VIA_D3D11;
++        mfxU32 vendorID = 0, pciDeviceID = 0;
++        if (MFX::SelectImplementationType(adapterID, &implTest, &vendorID, &pciDeviceID) ==
++                MFX_ERR_NONE &&
++            vendorID == 0x8086)
++            m_deviceID = (mfxU16)pciDeviceID;
++    }
++#endif
++
+     // store DeviceID as "DevID" (hex) / "AdapterIdx" (dec) to match GPU RT
+     Dev->Version.Version = MFX_DEVICEDESCRIPTION_VERSION;
+     snprintf(Dev->DeviceID, sizeof(Dev->DeviceID), "%x/%d", m_deviceID, m_id.VendorImplID);
+diff --git a/libvpl/src/windows/mfx_library_iterator.cpp b/libvpl/src/windows/mfx_library_iterator.cpp
+index fa9fc73..4b64928 100644
+--- a/libvpl/src/windows/mfx_library_iterator.cpp
++++ b/libvpl/src/windows/mfx_library_iterator.cpp
+@@ -615,20 +615,31 @@ mfxStatus MFXLibraryIterator::GetDriverStoreDir(std::wstring &driverStoreDir,
+     return MFX_ERR_NONE;
+ }
+ 
++#define MAX_REGKEY_ADAPTERS 8
++
+ mfxStatus MFXLibraryIterator::GetRegkeyDir(std::wstring &regDir, size_t length, int storageID) {
+     mfxStatus sts = MFX_ERR_UNSUPPORTED;
+     MFX::MFXLibraryIterator libIterator;
+     wchar_t wRegDir[MFX_MAX_DLL_PATH];
+ 
+     regDir.clear();
+-    sts = libIterator.Init(MFX_LIB_HARDWARE, MFX_IMPL_VIA_D3D11, 0, storageID);
+-    if (sts)
+-        return MFX_ERR_UNSUPPORTED;
+ 
+-    eMfxImplType implType = MFX_LIB_HARDWARE;
+-    mfxVersion ver        = { 0, 1 };
+-    sts =
+-        libIterator.SelectDLLVersion(wRegDir, sizeof(wRegDir) / sizeof(wRegDir[0]), &implType, ver);
++    // registry entries are keyed by PCI device ID, so check every adapter
++    //   (the Intel GPU is not necessarily adapter 0 in a multi-GPU system)
++    for (mfxU32 adapterNum = 0; adapterNum < MAX_REGKEY_ADAPTERS; adapterNum++) {
++        sts = libIterator.Init(MFX_LIB_HARDWARE, MFX_IMPL_VIA_D3D11, adapterNum, storageID);
++        if (sts)
++            continue;
++
++        eMfxImplType implType = MFX_LIB_HARDWARE;
++        mfxVersion ver        = { 0, 1 };
++        sts = libIterator.SelectDLLVersion(wRegDir,
++                                           sizeof(wRegDir) / sizeof(wRegDir[0]),
++                                           &implType,
++                                           ver);
++        if (sts == MFX_ERR_NONE)
++            break;
++    }
+     if (sts)
+         return MFX_ERR_UNSUPPORTED;
+ 
+-- 
+2.52.0.windows.1
+

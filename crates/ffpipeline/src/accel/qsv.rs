@@ -7,10 +7,18 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    EncodeFormat, FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat, SurfaceSet,
+    VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
-use crate::video_filter::{DeinterlaceFilter, ScaleFilter, VideoFilter, VideoFilterOp};
+use crate::video_filter::{
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, TransposeDir, TransposeFilter,
+    VideoFilter, VideoFilterOp,
+};
+
+const VPP_QSV_PAD_OPTION: &str = "pad_w";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Qsv {
@@ -27,25 +35,52 @@ impl HwAccel for Qsv {
     ) -> VideoFilter {
         match video_filter {
             VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
+                size: Some(size), ..
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
                 && !current_state.pixel_format.has_alpha() =>
             {
-                ScaleQsv {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                }
-                .into()
+                VppQsv::scale(*size).into()
             }
             VideoFilter::Deinterlace(DeinterlaceFilter { .. })
-                if ffmpeg_info.has_video_filter(&KnownVideoFilter::DeinterlaceQsv) =>
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv) =>
             {
-                DeinterlaceQsv {
-                    mode: filter_options.deinterlace_qsv.mode.clone(),
-                }
-                .into()
+                VppQsv::deinterlace(filter_options.deinterlace_qsv.mode.as_deref()).into()
+            }
+            // only patched ErsatzTV builds have vpp_qsv pad options.
+            // pad uses a composite, and runtimes support only some composite format
+            // pairs (legacy Media SDK rejects p010 output)
+            VideoFilter::Pad(PadFilter {
+                size: Some(size), ..
+            }) if ffmpeg_info
+                .has_video_filter_option(&KnownVideoFilter::VppQsv, VPP_QSV_PAD_OPTION)
+                && self
+                    .capabilities
+                    .can_pad(&current_state.pixel_format, &current_state.pixel_format) =>
+            {
+                let outputs = [PixelFormat::Nv12, PixelFormat::P010le]
+                    .into_iter()
+                    .filter(|output| {
+                        self.capabilities
+                            .can_pad(&current_state.pixel_format, output)
+                    })
+                    .collect();
+                VppQsv::pad(*size, outputs).into()
+            }
+            VideoFilter::ToneMap(ToneMapFilter {
+                output_format: format,
+                ..
+            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                && self.capabilities.can_tonemap()
+                && current_state.hdr_format == HdrFormat::Hdr10 =>
+            {
+                VppQsv::tonemap(self.output_format(format)).into()
+            }
+            VideoFilter::Transpose(TransposeFilter { dir: Some(dir) })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::VppQsv)
+                    && self.capabilities.can_rotate(&current_state.pixel_format)
+                    && !current_state.is_interlaced =>
+            {
+                VppQsv::transpose(*dir).into()
             }
             _ => video_filter.clone(),
         }
@@ -70,40 +105,32 @@ impl HwAccel for Qsv {
     }
 
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        let format = match codec {
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            "mpeg2video" => Some(VideoFormat::Mpeg2Video),
-            _ => None,
-        };
-
-        if let Some(format) = format {
-            self.capabilities
-                .can_decode(&format, pixel_format.bit_depth())
-        } else {
-            false
-        }
+        codec
+            .parse::<VideoFormat>()
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_qsv",
                 options: args!["-low_power", "0", "-look_ahead", "0", "-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
+                also_accepts: &[],
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
+            EncodeFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_qsv",
                 options: args![
                     "-low_power",
@@ -118,8 +145,16 @@ impl HwAccel for Qsv {
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Qsv,
+                also_accepts: &[],
             }),
-            _ => None,
+            EncodeFormat::Mpeg2Video => Some(VideoCodec {
+                codec_name: "mpeg2_qsv",
+                options: args!["-low_power", "0"],
+                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                preferred_pixel_format_10bit: None,
+                preferred_surface: FrameSurface::Qsv,
+                also_accepts: &[],
+            }),
         }
     }
 
@@ -127,12 +162,7 @@ impl HwAccel for Qsv {
         if pixel_format.has_alpha() {
             None
         } else {
-            Some(
-                FormatQsv {
-                    format: *pixel_format,
-                }
-                .into(),
-            )
+            Some(VppQsv::format(*pixel_format).into())
         }
     }
 
@@ -165,108 +195,16 @@ impl HwAccel for Qsv {
     }
 
     fn accepts_upload_format(&self, pixel_format: &PixelFormat) -> bool {
-        self.capabilities.vpp_supports_format(pixel_format)
+        self.capabilities.can_upload(pixel_format)
     }
 
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
-        self.capabilities.vpp_supports_format(pixel_format)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ScaleQsv {
-    pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
-}
-
-impl VideoFilterOp for ScaleQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        if let Some(size) = &self.size {
-            state.size = *size;
-            state.surface = FrameSurface::Qsv;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
-        }
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "vpp_qsv=w=iw*sar:h=ih,vpp_qsv=w={}:h={},setsar=1",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!(
-                    "vpp_qsv=w={}:h={},setsar=1",
-                    size.width, size.height
-                ))
-            }
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FormatQsv {
-    pub(crate) format: PixelFormat,
-}
-
-impl VideoFilterOp for FormatQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = self.format;
-        state.surface = FrameSurface::Qsv;
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        Some(format!("vpp_qsv=format={}", self.format.as_arg()))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DeinterlaceQsv {
-    pub mode: Option<String>,
-}
-
-impl VideoFilterOp for DeinterlaceQsv {
-    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
-        None
-    }
-
-    fn apply_to(&self, state: &mut FrameState) {
-        state.is_interlaced = false;
-        state.surface = FrameSurface::Qsv;
-    }
-
-    fn required_surface(&self) -> Option<FrameSurface> {
-        Some(FrameSurface::Qsv)
-    }
-
-    fn as_arg(&self) -> Option<String> {
-        let mode = self.mode.as_deref().unwrap_or("2");
-        Some(format!("deinterlace_qsv=mode={mode}"))
+        !to.has_alpha() && self.capabilities.can_convert(from, to)
     }
 }
 
@@ -301,5 +239,599 @@ impl OverlayKindOp for QsvOverlay {
         } else {
             Some(String::from("overlay_qsv=x=(W-w)/2:y=(H-h)/2"))
         }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VppQsv {
+    pub(crate) deinterlace: Option<String>,
+    pub(crate) tonemap: bool,
+    pub(crate) size: Option<FrameSize>,
+    pub(crate) pad: Option<FrameSize>,
+    pub(crate) format: Option<PixelFormat>,
+    pub(crate) transpose: Option<TransposeDir>,
+    /// composite outputs supported for the pad's input format
+    pub(crate) pad_outputs: Vec<PixelFormat>,
+}
+
+impl VppQsv {
+    pub(crate) fn scale(size: FrameSize) -> VppQsv {
+        VppQsv {
+            size: Some(size),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn pad(size: FrameSize, outputs: Vec<PixelFormat>) -> VppQsv {
+        VppQsv {
+            pad: Some(size),
+            pad_outputs: outputs,
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn format(format: PixelFormat) -> VppQsv {
+        VppQsv {
+            format: Some(format),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn deinterlace(mode: Option<&str>) -> VppQsv {
+        VppQsv {
+            deinterlace: Some(String::from(mode.unwrap_or("2"))),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn tonemap(output_format: HwPixelFormat) -> VppQsv {
+        VppQsv {
+            tonemap: true,
+            format: Some(output_format.into()),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn transpose(dir: TransposeDir) -> VppQsv {
+        VppQsv {
+            transpose: Some(dir),
+            ..VppQsv::default()
+        }
+    }
+
+    pub(crate) fn fuse(&self, next: &VppQsv) -> Option<VppQsv> {
+        // vpp_qsv evaluates w/h in the stored orientation and swaps them after a quarter turn,
+        // so a fused scale would need a pre-rotation target size
+        if (self.deinterlace.is_some() && next.deinterlace.is_some())
+            || (self.size.is_some() && next.size.is_some())
+            || (self.pad.is_some() && (next.pad.is_some() || next.size.is_some()))
+            || (self.transpose.is_some() && next.size.is_some())
+        {
+            return None;
+        }
+
+        // pad_outputs is valid only for the pad's checked input format. a format change
+        // before the pad changes that input, and one after it must be in pad_outputs
+        if (next.pad.is_some() && self.format.is_some())
+            || (self.pad.is_some()
+                && next
+                    .format
+                    .is_some_and(|format| !self.pad_outputs.contains(&format)))
+        {
+            return None;
+        }
+
+        let fused = VppQsv {
+            deinterlace: self.deinterlace.clone().or(next.deinterlace.clone()),
+            tonemap: self.tonemap || next.tonemap,
+            size: self.size.or(next.size),
+            pad: self.pad.or(next.pad),
+            // later format conversion wins
+            format: next.format.or(self.format),
+            transpose: self.transpose.or(next.transpose),
+            pad_outputs: if self.pad.is_some() {
+                self.pad_outputs.clone()
+            } else {
+                next.pad_outputs.clone()
+            },
+        };
+
+        // composition cannot perform tonemapping or deinterlacing
+        if fused.pad.is_some()
+            && (fused.tonemap || fused.deinterlace.is_some() || fused.transpose.is_some())
+        {
+            return None;
+        }
+
+        Some(fused)
+    }
+}
+
+impl VideoFilterOp for VppQsv {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.surface = FrameSurface::Qsv;
+
+        if self.deinterlace.is_some() {
+            state.is_interlaced = false;
+        }
+
+        if self.tonemap {
+            state.apply_tonemap();
+        }
+
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::Qsv;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
+
+        if let Some(pad) = &self.pad {
+            state.size = *pad;
+        }
+
+        if let Some(format) = &self.format {
+            state.pixel_format = *format;
+        }
+
+        if self.transpose.is_some() {
+            state.apply_rotation();
+        }
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Qsv)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        let mut options: Vec<String> = Vec::new();
+
+        if let Some(mode) = &self.deinterlace {
+            options.push(format!("deinterlace={mode}"));
+        }
+
+        if self.tonemap {
+            options.push(String::from("tonemap=1"));
+        }
+
+        if let Some(size) = &self.size {
+            options.push(format!("w={}:h={}", size.width, size.height));
+        }
+
+        if let Some(pad) = &self.pad {
+            options.push(format!(
+                "pad_w={}:pad_h={}:pad_x=-1:pad_y=-1:pad_color=black",
+                pad.width, pad.height
+            ));
+        }
+
+        if let Some(format) = &self.format {
+            options.push(format!("format={}", format.as_arg()));
+        }
+
+        if let Some(transpose) = &self.transpose {
+            options.push(format!("transpose={}", *transpose as u32));
+        }
+
+        if options.is_empty() {
+            None
+        } else {
+            let mut arg = format!("vpp_qsv={}", options.join(":"));
+            if self.size.is_some() {
+                arg.push_str(",setsar=1");
+            }
+
+            Some(arg)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+    use crate::capabilities::qsv::QsvFourCC;
+    use crate::color::FrameColor;
+    use crate::output_settings::ScalingMode;
+    use crate::pipeline::HdrFormat;
+
+    fn make_qsv() -> Qsv {
+        Qsv {
+            capabilities: QsvCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                upload_formats: HashSet::new(),
+                convert_pairs: HashSet::new(),
+                vpp_filters: HashSet::new(),
+                rotation_formats: HashSet::new(),
+                // from a legacy Media SDK runtime (Gen9, API 1.35)
+                composite_pairs: HashSet::from([
+                    (
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    ),
+                    (
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_P010),
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    ),
+                ]),
+                runtime_api: None,
+            },
+        }
+    }
+
+    fn nv12_pad(size: FrameSize) -> VppQsv {
+        VppQsv::pad(size, vec![PixelFormat::Nv12])
+    }
+
+    fn make_ffmpeg_info(with_pad_option: bool) -> FfmpegInfo {
+        let mut video_filters = HashSet::new();
+        video_filters.insert(KnownVideoFilter::VppQsv.to_string());
+
+        let mut video_filter_options = HashMap::new();
+        let mut options = HashSet::from([String::from("deinterlace"), String::from("denoise")]);
+        if with_pad_option {
+            options.extend([
+                String::from("pad_w"),
+                String::from("pad_h"),
+                String::from("pad_x"),
+                String::from("pad_y"),
+                String::from("pad_color"),
+            ]);
+        }
+        video_filter_options.insert(KnownVideoFilter::VppQsv.to_string(), options);
+
+        FfmpegInfo {
+            video_filters,
+            video_filter_options,
+            ..Default::default()
+        }
+    }
+
+    fn make_frame_state() -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1440,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::Qsv,
+            pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    fn pad_1920x1080() -> VideoFilter {
+        VideoFilter::Pad(PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+        })
+    }
+
+    #[test]
+    fn transpose_requires_runtime_format_support() {
+        use crate::capabilities::qsv::QsvFourCC;
+        for api in [
+            None,
+            Some((1, 16)),
+            Some((1, 17)),
+            Some((1, 35)),
+            Some((2, 17)),
+        ] {
+            for supported in [false, true] {
+                for pixel_format in [PixelFormat::Nv12, PixelFormat::P010le] {
+                    let mut qsv = make_qsv();
+                    qsv.capabilities.runtime_api = api;
+                    if supported {
+                        qsv.capabilities
+                            .rotation_formats
+                            .insert(QsvFourCC(libvpl_sys::MFX_FOURCC_NV12));
+                    }
+                    let filter = TransposeFilter {
+                        dir: Some(TransposeDir::Clock),
+                    }
+                    .into();
+                    let state = FrameState {
+                        pixel_format,
+                        ..make_frame_state()
+                    };
+                    let result = qsv.best_filter(
+                        &filter,
+                        &make_ffmpeg_info(false),
+                        &state,
+                        &VideoFilterOptions::default(),
+                    );
+                    assert_eq!(
+                        matches!(result, VideoFilter::VppQsv(_)),
+                        supported
+                            && pixel_format == PixelFormat::Nv12
+                            && api.is_some_and(|v| v >= (1, 17))
+                    );
+                    let result = qsv.best_filter(
+                        &filter,
+                        &FfmpegInfo::default(),
+                        &state,
+                        &VideoFilterOptions::default(),
+                    );
+                    assert!(matches!(result, VideoFilter::Transpose(_)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn best_filter_selects_pad_qsv_when_vpp_qsv_has_pad_option() {
+        let qsv = make_qsv();
+        let ffmpeg_info = make_ffmpeg_info(true);
+        let state = make_frame_state();
+        let filter_options = VideoFilterOptions::default();
+
+        let result = qsv.best_filter(&pad_1920x1080(), &ffmpeg_info, &state, &filter_options);
+
+        match result {
+            VideoFilter::VppQsv(VppQsv {
+                pad: Some(size),
+                pad_outputs,
+                ..
+            }) => {
+                assert_eq!(size.width, 1920);
+                assert_eq!(size.height, 1080);
+                assert_eq!(pad_outputs, vec![PixelFormat::Nv12]);
+            }
+            other => panic!("expected PadQsv, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn best_filter_falls_back_to_software_pad_when_runtime_cannot_composite_format() {
+        let qsv = make_qsv();
+        let state = FrameState {
+            pixel_format: PixelFormat::P010le,
+            ..make_frame_state()
+        };
+
+        // legacy runtimes cannot composite p010 to p010
+        let result = qsv.best_filter(
+            &pad_1920x1080(),
+            &make_ffmpeg_info(true),
+            &state,
+            &VideoFilterOptions::default(),
+        );
+
+        assert!(
+            matches!(result, VideoFilter::Pad(_)),
+            "expected software Pad fallback, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn fuse_keeps_unsupported_output_format_out_of_the_pad() {
+        let pad = nv12_pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+
+        assert!(pad.fuse(&VppQsv::format(PixelFormat::P010le)).is_none());
+        assert_eq!(
+            pad.fuse(&VppQsv::format(PixelFormat::Nv12))
+                .and_then(|fused| fused.as_arg()),
+            Some(String::from(
+                "vpp_qsv=pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black:format=nv12"
+            ))
+        );
+
+        let p010_capable = VppQsv::pad(
+            FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            vec![PixelFormat::Nv12, PixelFormat::P010le],
+        );
+        assert!(
+            p010_capable
+                .fuse(&VppQsv::format(PixelFormat::P010le))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn fuse_keeps_format_change_ahead_of_the_pad_in_its_own_pass() {
+        let pad = nv12_pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+        let scale = VppQsv::scale(FrameSize {
+            width: 1440,
+            height: 1080,
+        });
+
+        // best_filter did not check the format filter's input format
+        let format_then_scale = VppQsv::format(PixelFormat::Nv12).fuse(&scale).unwrap();
+        assert!(format_then_scale.fuse(&pad).is_none());
+        assert!(VppQsv::format(PixelFormat::Nv12).fuse(&pad).is_none());
+
+        // scale does not change the format, so the pad input is still the checked one
+        assert!(scale.fuse(&pad).is_some());
+    }
+
+    #[test]
+    fn best_filter_falls_back_to_software_pad_without_pad_option() {
+        let qsv = make_qsv();
+        let ffmpeg_info = make_ffmpeg_info(false);
+        let state = make_frame_state();
+        let filter_options = VideoFilterOptions::default();
+
+        let result = qsv.best_filter(&pad_1920x1080(), &ffmpeg_info, &state, &filter_options);
+
+        assert!(
+            matches!(result, VideoFilter::Pad(_)),
+            "expected software Pad fallback, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn pad_qsv_arg_and_state() {
+        let pad = nv12_pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+
+        assert_eq!(
+            pad.as_arg().as_deref(),
+            Some("vpp_qsv=pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black")
+        );
+
+        let mut state = make_frame_state();
+        pad.apply_to(&mut state);
+        assert_eq!(state.size.width, 1920);
+        assert_eq!(state.size.height, 1080);
+        assert_eq!(state.surface, FrameSurface::Qsv);
+    }
+
+    #[test]
+    fn scale_qsv_fused_pad_emits_single_instance() {
+        let scale = VppQsv::scale(FrameSize {
+            width: 1440,
+            height: 1080,
+        });
+
+        let pad = nv12_pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+
+        let fused = scale.fuse(&pad).unwrap();
+
+        assert_eq!(
+            fused.as_arg().as_deref(),
+            Some(
+                "vpp_qsv=w=1440:h=1080:pad_w=1920:pad_h=1080:pad_x=-1:pad_y=-1:pad_color=black,setsar=1"
+            )
+        );
+
+        let mut state = make_frame_state();
+        state.is_anamorphic = true;
+        fused.apply_to(&mut state);
+        assert_eq!(state.size.width, 1920);
+        assert_eq!(state.size.height, 1080);
+        assert!(!state.is_anamorphic);
+        assert_eq!(state.sample_aspect_ratio.as_deref(), Some("1:1"));
+    }
+
+    #[test]
+    fn fused_deinterlace_scale_keeps_deinterlace_option() {
+        let fused = VppQsv::deinterlace(None)
+            .fuse(&VppQsv::scale(FrameSize {
+                width: 1440,
+                height: 1080,
+            }))
+            .unwrap();
+        assert_eq!(
+            fused.as_arg().as_deref(),
+            Some("vpp_qsv=deinterlace=2:w=1440:h=1080,setsar=1")
+        );
+    }
+
+    #[test]
+    fn pad_keeps_deinterlace_and_tonemap_in_separate_passes() {
+        let pad = nv12_pad(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+        for incompatible in [
+            VppQsv::deinterlace(None),
+            VppQsv {
+                tonemap: true,
+                ..VppQsv::default()
+            },
+        ] {
+            assert!(pad.fuse(&incompatible).is_none());
+            assert!(incompatible.fuse(&pad).is_none());
+            let scaled = incompatible
+                .fuse(&VppQsv::scale(FrameSize {
+                    width: 1440,
+                    height: 1080,
+                }))
+                .unwrap();
+            assert!(scaled.fuse(&pad).is_none());
+        }
+    }
+
+    #[test]
+    fn alpha_formats_upload_but_do_not_convert_on_the_qsv_surface() {
+        let nv12 = QsvFourCC(libvpl_sys::MFX_FOURCC_NV12);
+        let rgb4 = QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4);
+        let mut qsv = make_qsv();
+        qsv.capabilities.upload_formats = HashSet::from([nv12, rgb4]);
+        qsv.capabilities.convert_pairs =
+            HashSet::from([(nv12, nv12), (nv12, rgb4), (rgb4, nv12), (rgb4, rgb4)]);
+        let ffmpeg_info = FfmpegInfo::default();
+
+        assert!(qsv.accepts_upload_format(&PixelFormat::Bgra));
+        assert!(qsv.format_filter(&PixelFormat::Bgra).is_none());
+        assert!(!qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::Bgra
+        ));
+        assert!(qsv.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::Nv12, &PixelFormat::Nv12));
+    }
+
+    #[test]
+    fn conversion_follows_the_direction_of_the_pair() {
+        // haswell: p010 -> nv12 works, but every vpp operation with p010 output fails
+        let nv12 = QsvFourCC(libvpl_sys::MFX_FOURCC_NV12);
+        let p010 = QsvFourCC(libvpl_sys::MFX_FOURCC_P010);
+        let mut qsv = make_qsv();
+        qsv.capabilities.convert_pairs = HashSet::from([(nv12, nv12), (p010, nv12)]);
+        let ffmpeg_info = FfmpegInfo::default();
+
+        assert!(qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::P010le,
+            &PixelFormat::Nv12
+        ));
+        assert!(qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Yuv420p10le,
+            &PixelFormat::Nv12
+        ));
+        assert!(!qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::Nv12,
+            &PixelFormat::P010le
+        ));
+        assert!(!qsv.can_convert_pixel_format(
+            &ffmpeg_info,
+            &PixelFormat::P010le,
+            &PixelFormat::P010le
+        ));
+    }
+
+    #[test]
+    fn scale_qsv_arg() {
+        let scale = VppQsv::scale(FrameSize {
+            width: 1440,
+            height: 1080,
+        });
+
+        assert_eq!(
+            scale.as_arg().as_deref(),
+            Some("vpp_qsv=w=1440:h=1080,setsar=1")
+        );
     }
 }

@@ -1,3 +1,4 @@
+use ersatztv_core::SchemaVersionError;
 use ersatztv_playout::error::PlayoutError;
 use ffpipeline::error::FFPipelineError;
 use thiserror::Error;
@@ -7,6 +8,12 @@ use time::OffsetDateTime;
 pub enum ChannelError {
     #[error("unable to load channel config: {0}")]
     ChannelConfigFailure(String),
+
+    #[error("unable to load channel config {config}: {error}")]
+    ChannelConfigSchemaVersion {
+        config: String,
+        error: SchemaVersionError,
+    },
 
     #[error("unable to load channel config (io): {0}")]
     ChannelConfigIoFailure(#[from] std::io::Error),
@@ -54,6 +61,12 @@ pub enum ChannelError {
     #[error("stream failed: {0}")]
     StreamFailure(String),
 
+    #[error("ffmpeg exited with {status}{}", format_stderr_tail(stderr_tail))]
+    FfmpegFailed {
+        status: String,
+        stderr_tail: Vec<String>,
+    },
+
     #[error("failed to scan for last pts")]
     PtsScannerFailure,
 
@@ -62,6 +75,12 @@ pub enum ChannelError {
 
     #[error("channel {0} terminated after ffmpeg stall")]
     Stalled(String),
+
+    #[error("item {item_id} source ended at {reached}")]
+    SourceEnded {
+        item_id: String,
+        reached: OffsetDateTime,
+    },
 
     #[error("failed to capture ffmpeg stderr")]
     CaptureFFmpegStderrFailure,
@@ -83,4 +102,12 @@ pub enum ChannelError {
 
     #[error("probe hint failure")]
     ProbeHintFailure,
+}
+
+fn format_stderr_tail(stderr_tail: &[String]) -> String {
+    if stderr_tail.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", stderr_tail.join("\n"))
+    }
 }

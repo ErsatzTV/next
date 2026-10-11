@@ -10,11 +10,23 @@ use crate::pipeline::VideoFormat;
 ))]
 pub(crate) mod probe;
 
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+pub use probe::best_device_luid;
+
 #[cfg(not(all(
     any(target_os = "linux", target_os = "windows"),
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
 pub(crate) mod stub;
+
+#[cfg(not(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+pub use stub::best_device_luid;
 
 /// Same textual form `nvidia-smi -L` prints, so the two can be compared by eye
 pub fn format_uuid(uuid: [u8; 16]) -> String {

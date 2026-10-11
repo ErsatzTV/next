@@ -7,11 +7,11 @@ use crate::frame_size::FrameSize;
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::OverlayFilter;
 use crate::pipeline::{
-    EnvironmentVariable, FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet,
-    VideoFormat,
+    EncodeFormat, EnvironmentVariable, FrameState, FrameSurface, HwPixelFormat, PixelFormat,
+    SurfaceSet,
 };
 use crate::probe::ProbeResultVideoStream;
-use crate::video_codec::VideoCodec;
+use crate::video_codec::{MetadataBsf, VideoCodec};
 use crate::video_filter::VideoFilter;
 use crate::{ArgVec, accel};
 
@@ -41,19 +41,31 @@ pub trait HwAccel {
             _ => false,
         }
     }
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+    /// support can depend on more than codec, profile and pixel format (e.g. interlacing)
+    fn can_decode_stream(&self, video_stream: &ProbeResultVideoStream) -> bool {
+        self.can_decode(
+            &video_stream.codec,
+            &video_stream.profile,
+            &PixelFormat::parse(&video_stream.pix_fmt),
+        )
+    }
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
         match bit_depth {
-            10 => matches!(format, VideoFormat::Hevc),
-            8 => matches!(format, VideoFormat::H264 | VideoFormat::Hevc),
+            10 => matches!(format, EncodeFormat::Hevc),
+            8 => matches!(format, EncodeFormat::H264 | EncodeFormat::Hevc),
             _ => false,
         }
     }
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         video_size: Option<FrameSize>,
     ) -> Option<VideoCodec>;
+    /// `bt709` is only applied when the pipeline tonemaps
+    fn metadata_bsf(&self, _codec: &VideoCodec) -> Option<MetadataBsf> {
+        None
+    }
     fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
@@ -82,11 +94,13 @@ pub trait HwAccel {
         true
     }
 
-    /// Can the accel's format filter (scale_vaapi, vpp_qsv, etc.) use this pixel format
+    /// Returns true if the format filter of the accel (scale_vaapi, vpp_qsv, etc.) can
+    /// change frames on the accel surface from pixel format `from` to pixel format `to`.
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        _pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        _to: &PixelFormat,
     ) -> bool {
         true
     }

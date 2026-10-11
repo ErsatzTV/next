@@ -6,7 +6,9 @@ use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
-use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    EncodeFormat, FrameState, FrameSurface, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{ScaleFilter, ToneMapFilter, VideoFilter, VideoFilterOp};
@@ -25,18 +27,11 @@ impl HwAccel for Vulkan {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
-                && current_state.pixel_format.bit_depth() == 8 =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
+                    && current_state.pixel_format.bit_depth() == 8 =>
             {
-                ScaleVulkan {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                }
-                .into()
+                ScaleVulkan { size: *size }.into()
             }
             VideoFilter::ToneMap(ToneMapFilter {
                 output_format: format,
@@ -54,48 +49,40 @@ impl HwAccel for Vulkan {
     }
 
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        let format = match codec {
-            "av1" => Some(VideoFormat::Av1),
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            _ => None,
-        };
-        format.is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+        codec
+            .parse::<VideoFormat>()
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_vulkan",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Vulkan,
+                also_accepts: &[],
             }),
-            VideoFormat::Hevc => Some(VideoCodec {
+            EncodeFormat::Hevc => Some(VideoCodec {
                 codec_name: "hevc_vulkan",
                 options: args!["-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Vulkan,
+                also_accepts: &[],
             }),
-            VideoFormat::Av1 => Some(VideoCodec {
-                codec_name: "av1_vulkan",
-                options: Vec::new(),
-                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
-                preferred_surface: FrameSurface::Vulkan,
-            }),
-            _ => None,
+            EncodeFormat::Mpeg2Video => None,
         }
     }
 
@@ -176,7 +163,7 @@ impl VideoFilterOp for LibplaceboVulkan {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.format;
-        state.hdr_format = HdrFormat::None;
+        state.apply_tonemap();
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -195,7 +182,6 @@ impl VideoFilterOp for LibplaceboVulkan {
 #[derive(Debug, Clone)]
 pub struct ScaleVulkan {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
 }
 
 impl VideoFilterOp for ScaleVulkan {
@@ -218,20 +204,8 @@ impl VideoFilterOp for ScaleVulkan {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_vulkan=iw*sar:ih,setsar=1,scale_vulkan={}:{}",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!(
-                    "scale_vulkan={}:{},setsar=1",
-                    size.width, size.height
-                ))
-            }
-        } else {
-            None
-        }
+        self.size
+            .as_ref()
+            .map(|size| format!("scale_vulkan={}:{},setsar=1", size.width, size.height))
     }
 }

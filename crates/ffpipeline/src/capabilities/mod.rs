@@ -1,3 +1,4 @@
+pub mod amf;
 pub mod nvidia;
 pub mod opencl;
 pub mod qsv;

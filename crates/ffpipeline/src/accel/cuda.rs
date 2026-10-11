@@ -9,11 +9,13 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::{BwdifCudaOptions, VideoFilterOptions, YadifCudaOptions};
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
-use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat};
+use crate::pipeline::{
+    EncodeFormat, FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet, VideoFormat,
+};
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, ForceOriginalAspectRatio, PadFilter, ScaleFilter, ToneMapFilter,
+    DeinterlaceFilter, PadFilter, ScaleFilter, ToneMapFilter, TransposeDir, TransposeFilter,
     VideoFilter, VideoFilterOp,
 };
 
@@ -34,18 +36,9 @@ impl Cuda {
         }
     }
 
-    fn vulkan_decode_format(codec: &str) -> Option<VideoFormat> {
-        match codec {
-            "av1" => Some(VideoFormat::Av1),
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            _ => None,
-        }
-    }
-
     fn can_vulkan_decode(&self, video_stream: &ProbeResultVideoStream) -> bool {
         self.vulkan_capabilities.as_ref().is_some_and(|vk| {
-            Self::vulkan_decode_format(&video_stream.codec).is_some_and(|f| {
+            video_stream.codec.parse::<VideoFormat>().is_ok_and(|f| {
                 vk.can_decode(&f, PixelFormat::parse(&video_stream.pix_fmt).bit_depth())
             })
         })
@@ -61,19 +54,13 @@ impl HwAccel for Cuda {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                force_original_aspect_ratio,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
-                && !current_state.pixel_format.has_alpha() =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleCuda)
+                    && !current_state.pixel_format.has_alpha() =>
             {
                 ScaleCuda {
                     format: None,
                     size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
                 }
                 .into()
             }
@@ -96,6 +83,8 @@ impl HwAccel for Cuda {
                         PixelFormat::Yuv420p10le => PixelFormat::P010le,
                         _ => PixelFormat::Nv12,
                     },
+                    input_size: current_state.size,
+                    size: None,
                 }
                 .into()
             }
@@ -114,6 +103,11 @@ impl HwAccel for Cuda {
                 }
 
                 video_filter.clone()
+            }
+            VideoFilter::Transpose(TransposeFilter { dir: Some(dir), .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeCuda) =>
+            {
+                TransposeCuda { dir: *dir }.into()
             }
             _ => video_filter.clone(),
         }
@@ -138,39 +132,36 @@ impl HwAccel for Cuda {
     }
 
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        let format = match codec {
-            "av1" => Some(VideoFormat::Av1),
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            "mpeg2video" => Some(VideoFormat::Mpeg2Video),
-            "vc1" => Some(VideoFormat::Vc1),
-            "vp8" => Some(VideoFormat::Vp8),
-            "vp9" => Some(VideoFormat::Vp9),
-            _ => None,
-        };
-        format.is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+        codec
+            .parse::<VideoFormat>()
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         _bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match format {
-            VideoFormat::H264 => Some(VideoCodec {
+            EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_nvenc",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Cuda,
+                also_accepts: &[PixelFormat::Yuv420p],
             }),
-            VideoFormat::Hevc => {
-                let options = if self.capabilities.b_frame_ref_mode(format) {
+            EncodeFormat::Hevc => {
+                let options = if self
+                    .capabilities
+                    .b_frame_ref_mode(&VideoFormat::from(*format))
+                {
                     args!["-tag:v", "hvc1", "-b_ref_mode", "1"]
                 } else {
                     args!["-tag:v", "hvc1", "-b_ref_mode", "0"]
@@ -182,9 +173,10 @@ impl HwAccel for Cuda {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                     preferred_surface: FrameSurface::Cuda,
+                    also_accepts: &[PixelFormat::Yuv420p],
                 })
             }
-            _ => None,
+            EncodeFormat::Mpeg2Video => None,
         }
     }
 
@@ -197,13 +189,25 @@ impl HwAccel for Cuda {
         )
     }
 
+    // alpha uploads land as yuva420p, which scale_cuda rejects as input
+    fn can_convert_pixel_format(
+        &self,
+        _ffmpeg_info: &FfmpegInfo,
+        from: &PixelFormat,
+        _to: &PixelFormat,
+    ) -> bool {
+        !from.has_alpha()
+    }
+
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
         if surfaces.contains(&FrameSurface::Vulkan) {
             args![
                 "-init_hw_device",
                 "cuda=nv",
                 "-init_hw_device",
-                "vulkan=vk@nv"
+                "vulkan=vk@nv",
+                "-filter_hw_device",
+                "vk"
             ]
         } else {
             args!["-init_hw_device", "cuda"]
@@ -266,8 +270,6 @@ impl HwAccel for Cuda {
 pub struct ScaleCuda {
     pub(crate) format: Option<PixelFormat>,
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
-    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleCuda {
@@ -295,27 +297,15 @@ impl VideoFilterOp for ScaleCuda {
 
     fn as_arg(&self) -> Option<String> {
         if let Some(size) = &self.size {
-            let aspect_ratio = self
-                .force_original_aspect_ratio
-                .as_ref()
-                .map_or(String::new(), |f| f.as_arg());
-
             let format = self
                 .format
                 .as_ref()
                 .map_or(String::new(), |f| format!(":format={}", f.as_arg()));
 
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_cuda=iw*sar:ih,scale_cuda={}:{}{}{},setsar=1",
-                    size.width, size.height, aspect_ratio, format
-                ))
-            } else {
-                Some(format!(
-                    "scale_cuda={}:{}{}{},setsar=1",
-                    size.width, size.height, aspect_ratio, format
-                ))
-            }
+            Some(format!(
+                "scale_cuda={}:{}{},setsar=1",
+                size.width, size.height, format
+            ))
         } else {
             None
         }
@@ -405,6 +395,9 @@ pub struct LibplaceboCuda {
     /// algorithm to use for tonemapping
     pub(crate) algorithm: Option<String>,
     pub(crate) format: PixelFormat,
+    /// frame size entering the filter, used to decide whether fusing a scale is worthwhile
+    pub(crate) input_size: FrameSize,
+    pub(crate) size: Option<FrameSize>,
 }
 
 impl VideoFilterOp for LibplaceboCuda {
@@ -414,8 +407,16 @@ impl VideoFilterOp for LibplaceboCuda {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.format;
-        state.hdr_format = HdrFormat::None;
+        state.apply_tonemap();
         state.surface = FrameSurface::Cuda;
+
+        if let Some(size) = &self.size {
+            state.size = *size;
+            state.surface = FrameSurface::Cuda;
+            state.is_anamorphic = false;
+            state.sample_aspect_ratio = Some(String::from("1:1"));
+            state.display_aspect_ratio = None;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -433,11 +434,18 @@ impl VideoFilterOp for LibplaceboCuda {
             _ => "",
         };
 
+        let (size, setsar) = match &self.size {
+            Some(size) => (format!(":w={}:h={}", size.width, size.height), ",setsar=1"),
+            None => (String::new(), ""),
+        };
+
         Some(format!(
-            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={},hwupload_cuda{}",
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}{},hwupload_cuda{}{}",
             self.algorithm.as_deref().unwrap_or("linear"),
             vulkan_format.as_arg(),
-            cuda_format
+            size,
+            cuda_format,
+            setsar
         ))
     }
 }
@@ -487,11 +495,11 @@ impl VideoFilterOp for DeinterlaceCuda {
     fn as_arg(&self) -> Option<String> {
         match &self.filter {
             CudaDeinterlaceFilter::Bwdif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("bwdif_cuda={mode}"))
             }
             CudaDeinterlaceFilter::Yadif(options) => {
-                let mode = options.mode.as_deref().unwrap_or("1");
+                let mode = options.mode.as_deref().unwrap_or("0");
                 Some(format!("yadif_cuda={mode}"))
             }
         }
@@ -502,8 +510,9 @@ impl VideoFilterOp for DeinterlaceCuda {
 pub struct CudaOverlay;
 
 impl OverlayKindOp for CudaOverlay {
+    // overlay_cuda outputs the main input format
     fn apply_to(&self, state: &mut FrameState) {
-        state.pixel_format = PixelFormat::Nv12;
+        state.pixel_format = PixelFormat::Yuv420p;
         state.surface = FrameSurface::Cuda;
     }
 
@@ -529,5 +538,28 @@ impl OverlayKindOp for CudaOverlay {
         } else {
             Some(String::from("overlay_cuda=x=(W-w)/2:y=(H-h)/2"))
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TransposeCuda {
+    pub(crate) dir: TransposeDir,
+}
+
+impl VideoFilterOp for TransposeCuda {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.apply_rotation();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Cuda)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("transpose_cuda={}", self.dir as u32))
     }
 }

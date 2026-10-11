@@ -66,6 +66,7 @@ pub async fn add_lineup(lineup_path: &Path, channels: u32, force: bool) -> Resul
     }
 
     let lineup = LineupConfig {
+        version: Some(config::SCHEMA.uri()),
         server: ServerConfig {
             bind_address: String::from("0.0.0.0"),
             port: 8409,

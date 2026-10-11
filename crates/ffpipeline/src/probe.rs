@@ -5,9 +5,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use enum_dispatch::enum_dispatch;
+use ersatztv_core::process;
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
-use tokio::process::Command;
 
 use crate::ArgVec;
 use crate::error::FFPipelineError;
@@ -30,6 +30,10 @@ static SUBTITLE_IMAGE_CODECS: &[&str] = &[
 static STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "bmp", "tiff"];
 
 static DOLBY_VISION_SIDE_DATA: &str = "DOVI configuration record";
+static HDR10_SIDE_DATA: &[&str] = &["Mastering display metadata", "Content light level metadata"];
+static PQ_TRANSFER: &str = "smpte2084";
+
+const FRAME_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ProbeResultColorParams {
@@ -37,13 +41,18 @@ pub struct ProbeResultColorParams {
     pub color_space: Option<String>,
     pub color_transfer: Option<String>,
     pub color_primaries: Option<String>,
+    pub has_hdr10_metadata: bool,
 }
 
 impl ProbeResultColorParams {
     pub fn is_hdr(&self) -> bool {
         self.color_transfer
             .as_ref()
-            .is_some_and(|ct| ct == "arib-std-b67" || ct == "smpte2084")
+            .is_some_and(|ct| ct == "arib-std-b67" || ct == PQ_TRANSFER)
+    }
+
+    pub fn is_pq(&self) -> bool {
+        self.color_transfer.as_deref() == Some(PQ_TRANSFER)
     }
 }
 
@@ -70,9 +79,18 @@ pub struct ProbeResultVideoStream {
     pub pix_fmt: String,
     pub color_params: ProbeResultColorParams,
     pub field_order: Option<String>,
+    pub rotation: Option<i32>,
 }
 
 impl ProbeResultVideoStream {
+    pub fn rotation_degrees(&self) -> i32 {
+        self.rotation.unwrap_or(0)
+    }
+
+    pub fn is_quarter_turn(&self) -> bool {
+        matches!(self.rotation_degrees(), 90 | 270)
+    }
+
     pub fn is_interlaced(&self) -> bool {
         self.field_order
             .as_ref()
@@ -239,6 +257,54 @@ struct ProbeOutputStream {
 struct StreamSideData {
     side_data_type: String,
     dv_profile: Option<u32>,
+    rotation: Option<f64>,
+}
+
+/// ffprobe reports the display matrix as a signed angle (e.g. -90); normalize to 0..360
+fn normalize_rotation(degrees: f64) -> i32 {
+    ((degrees.round() as i32 % 360) + 360) % 360
+}
+
+fn rotation_from_side_data(side_data_list: &[StreamSideData]) -> i32 {
+    side_data_list
+        .iter()
+        .find_map(|sd| sd.rotation)
+        .map_or(0, normalize_rotation)
+}
+
+#[derive(Deserialize)]
+struct RotationSideData {
+    rotation: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct RotationProbeStream {
+    #[serde(default)]
+    side_data_list: Vec<RotationSideData>,
+}
+
+#[derive(Deserialize)]
+struct RotationProbeOutput {
+    #[serde(default)]
+    streams: Vec<RotationProbeStream>,
+}
+
+fn has_hdr10_side_data(side_data_list: &[StreamSideData]) -> bool {
+    side_data_list
+        .iter()
+        .any(|sd| HDR10_SIDE_DATA.contains(&sd.side_data_type.as_str()))
+}
+
+#[derive(Deserialize)]
+struct ProbeOutputFrame {
+    #[serde(default)]
+    side_data_list: Vec<StreamSideData>,
+}
+
+#[derive(Deserialize)]
+struct FrameProbeOutput {
+    #[serde(default)]
+    frames: Vec<ProbeOutputFrame>,
 }
 
 #[derive(Deserialize)]
@@ -268,25 +334,19 @@ pub trait Probeable {
 
 impl Probeable for LocalInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
-        let mut args = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-        ];
-        args.extend(self.args_for_input());
         let expanded_path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
-        args.extend(args!["-i", expanded_path.clone()]);
-
-        probe_with_args(probe_deps.ffprobe_path, &expanded_path, &args).await
+        probe_with_args(
+            probe_deps.ffprobe_path,
+            &expanded_path,
+            &self.args_for_input(),
+        )
+        .await
     }
 }
 
 impl Probeable for LavfiInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
-        let mut ffmpeg = Command::new(probe_deps.ffmpeg_path)
+        let mut ffmpeg = process::command(probe_deps.ffmpeg_path)
             .args([
                 "-f",
                 "lavfi",
@@ -310,7 +370,7 @@ impl Probeable for LavfiInputSource {
             .try_into()
             .map_err(|_| FFPipelineError::ProbeFailed)?;
 
-        let output = Command::new(probe_deps.ffprobe_path)
+        let output = process::command(probe_deps.ffprobe_path)
             .args([
                 "-hide_banner",
                 "-print_format",
@@ -344,45 +404,34 @@ impl Probeable for LavfiInputSource {
 impl Probeable for HttpInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
         let path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
-        let mut args: ArgVec = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-        ];
-        args.extend(self.args_for_input());
-        args.extend(args!["-i", path.clone()]);
-
-        probe_with_args(probe_deps.ffprobe_path, &path, &args).await
+        probe_with_args(probe_deps.ffprobe_path, &path, &self.args_for_input()).await
     }
 }
 
 impl Probeable for RtspInputSource {
     async fn probe(&self, probe_deps: &ProbeDeps<'_>) -> Result<ProbeResult, FFPipelineError> {
         let path = self.input_path().ok_or(FFPipelineError::ProbeFailed)?;
-        let mut args: ArgVec = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            "-show_chapters",
-        ];
-        args.extend(self.args_for_input());
-        args.extend(args!["-i", path.clone()]);
-
-        probe_with_args(probe_deps.ffprobe_path, &path, &args).await
+        probe_with_args(probe_deps.ffprobe_path, &path, &self.args_for_input()).await
     }
 }
 
 async fn probe_with_args(
     ffprobe_path: &Path,
     path: &str,
-    args: &ArgVec,
+    input_args: &ArgVec,
 ) -> Result<ProbeResult, FFPipelineError> {
-    let output = Command::new(ffprobe_path)
+    let mut args: ArgVec = args![
+        "-hide_banner",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        "-show_chapters",
+    ];
+    args.extend(input_args.iter().cloned());
+    args.extend(args!["-i", path.to_owned()]);
+
+    let output = process::command(ffprobe_path)
         .args(args.iter().map(Cow::as_ref))
         .output()
         .await
@@ -397,7 +446,9 @@ async fn probe_with_args(
         return Err(FFPipelineError::ProbeFailed);
     }
 
-    parse_ffprobe_stdout(path.to_owned(), output.stdout)
+    let mut result = parse_ffprobe_stdout(path.to_owned(), output.stdout)?;
+    probe_hdr10_metadata(ffprobe_path, path, input_args, &mut result).await;
+    Ok(result)
 }
 
 fn parse_ffprobe_stdout(path: String, stdout: Vec<u8>) -> Result<ProbeResult, FFPipelineError> {
@@ -467,13 +518,141 @@ fn output_to_result(output_stream: &ProbeOutputStream) -> Option<ProbeResultStre
                 color_space: output_stream.color_space.clone(),
                 color_transfer: output_stream.color_transfer.clone(),
                 color_primaries: output_stream.color_primaries.clone(),
+                has_hdr10_metadata: has_hdr10_side_data(&output_stream.side_data_list),
             },
             field_order: output_stream.field_order.clone(),
+            rotation: Some(rotation_from_side_data(&output_stream.side_data_list)),
             frame_rate: FrameRate::parse(&output_stream.r_frame_rate.clone()?),
             sample_aspect_ratio: output_stream.sample_aspect_ratio.to_owned(),
             display_aspect_ratio: output_stream.display_aspect_ratio.to_owned(),
         }))),
         _ => None,
+    }
+}
+
+pub async fn probe_rotation(
+    probe_deps: &ProbeDeps<'_>,
+    source: &LocalInputSource,
+    stream_index: u32,
+) -> Option<i32> {
+    let path = source.input_path()?;
+    let mut args: ArgVec = args![
+        "-hide_banner",
+        "-print_format",
+        "json",
+        "-select_streams",
+        stream_index.to_string(),
+        "-show_entries",
+        "stream_side_data=rotation",
+    ];
+    args.extend(source.args_for_input().iter().cloned());
+    args.extend(args!["-i", path]);
+
+    let output = tokio::time::timeout(
+        FRAME_PROBE_TIMEOUT,
+        process::command(probe_deps.ffprobe_path)
+            .args(args.iter().map(Cow::as_ref))
+            .output(),
+    )
+    .await;
+
+    let Ok(Ok(output)) = output else {
+        log::warn!("ffprobe rotation probe timed out or failed on stream {stream_index}");
+        return None;
+    };
+
+    if !output.status.success() {
+        log::warn!(
+            "error executing ffprobe rotation probe: {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
+
+    match serde_json::from_slice::<RotationProbeOutput>(&output.stdout) {
+        Ok(probe) => Some(
+            probe
+                .streams
+                .iter()
+                .flat_map(|s| s.side_data_list.iter())
+                .find_map(|sd| sd.rotation)
+                .map_or(0, normalize_rotation),
+        ),
+        Err(err) => {
+            log::warn!("failed to parse ffprobe rotation probe: {err}");
+            None
+        }
+    }
+}
+
+async fn probe_hdr10_metadata(
+    ffprobe_path: &Path,
+    path: &str,
+    input_args: &ArgVec,
+    result: &mut ProbeResult,
+) {
+    for stream in result.streams.iter_mut() {
+        let ProbeResultStream::Video(video) = stream else {
+            continue;
+        };
+
+        if video.codec_type != CodecType::Video
+            || !video.color_params.is_pq()
+            || video.color_params.has_hdr10_metadata
+        {
+            continue;
+        }
+
+        let mut args: ArgVec = args![
+            "-hide_banner",
+            "-print_format",
+            "json",
+            "-select_streams",
+            video.stream_index.to_string(),
+            "-read_intervals",
+            "%+#1",
+            "-show_frames",
+            "-show_entries",
+            "frame=side_data_list",
+        ];
+        args.extend(input_args.iter().cloned());
+        args.extend(args!["-i", path.to_owned()]);
+
+        let output = tokio::time::timeout(
+            FRAME_PROBE_TIMEOUT,
+            process::command(ffprobe_path)
+                .args(args.iter().map(Cow::as_ref))
+                .output(),
+        )
+        .await;
+
+        let Ok(Ok(output)) = output else {
+            log::warn!(
+                "ffprobe frame probe for HDR10 metadata timed out or failed on stream {}",
+                video.stream_index
+            );
+            continue;
+        };
+
+        if !output.status.success() {
+            log::warn!(
+                "error executing ffprobe frame probe: {}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            continue;
+        }
+
+        match serde_json::from_slice::<FrameProbeOutput>(&output.stdout) {
+            Ok(frames) => {
+                video.color_params.has_hdr10_metadata = frames
+                    .frames
+                    .iter()
+                    .any(|f| has_hdr10_side_data(&f.side_data_list));
+            }
+            Err(err) => log::warn!("failed to parse ffprobe frame probe: {err}"),
+        }
     }
 }
 
@@ -503,6 +682,7 @@ mod tests {
             pix_fmt: String::from("yuv420p"),
             color_params: ProbeResultColorParams::default(),
             field_order: None,
+            rotation: Some(0),
         }
     }
 
@@ -546,5 +726,57 @@ mod tests {
     fn is_anamorphic_without_size() {
         let stream = video_stream(None, None, Some("0:0"), Some("16:9"));
         assert!(!stream.is_anamorphic());
+    }
+
+    #[rstest]
+    #[case(0.0, 0)]
+    #[case(90.0, 90)]
+    #[case(-90.0, 270)]
+    #[case(180.0, 180)]
+    #[case(-180.0, 180)]
+    #[case(270.0, 270)]
+    #[case(-270.0, 90)]
+    #[case(450.0, 90)]
+    #[case(89.9, 90)]
+    fn rotation_is_normalized(#[case] degrees: f64, #[case] expected: i32) {
+        assert_eq!(normalize_rotation(degrees), expected);
+    }
+
+    fn probed_video(stdout: &str) -> ProbeResultVideoStream {
+        let result = parse_ffprobe_stdout(String::from("test.mp4"), stdout.as_bytes().to_vec())
+            .expect("probe output should parse");
+        match result.streams.first() {
+            Some(ProbeResultStream::Video(v)) => *v.clone(),
+            _ => panic!("no video stream"),
+        }
+    }
+
+    #[test]
+    fn rotation_comes_from_display_matrix_side_data() {
+        let stream = probed_video(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,
+            "height":1080,"r_frame_rate":"30/1","side_data_list":[{"side_data_type":"Display Matrix",
+            "displaymatrix":"","rotation":-90}]}],"format":{}}"#,
+        );
+        assert_eq!(stream.rotation, Some(270));
+        assert!(stream.is_quarter_turn());
+    }
+
+    #[test]
+    fn rotation_is_zero_without_display_matrix() {
+        let stream = probed_video(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,
+            "height":1080,"r_frame_rate":"30/1"}],"format":{}}"#,
+        );
+        assert_eq!(stream.rotation, Some(0));
+        assert!(!stream.is_quarter_turn());
+    }
+
+    #[test]
+    fn rotation_unknown_when_hint_omits_it() {
+        let mut stream = video_stream(Some(1920), Some(1080), Some("1:1"), Some("16:9"));
+        stream.rotation = None;
+        assert_eq!(stream.rotation_degrees(), 0);
+        assert!(!stream.is_quarter_turn());
     }
 }

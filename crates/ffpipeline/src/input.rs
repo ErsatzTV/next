@@ -5,8 +5,10 @@ use simple_expand_tilde::expand_tilde;
 use time::OffsetDateTime;
 
 use crate::ArgVec;
+use crate::copy_decision::CopyBlocker;
 use crate::error::FFPipelineError;
 use crate::frame_size::FrameSize;
+use crate::keyframe_seek::CopySeek;
 use crate::overlay_filter::FramePoint;
 use crate::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
@@ -21,6 +23,11 @@ pub struct InputSettings {
     pub video_input: ProbedInput,
     pub subtitle_input: Option<ProbedInput>,
     pub graphics_inputs: Vec<GraphicsInput>,
+    pub channel_number: Option<String>,
+    /// Only for copied video. The audio must be in the same input, because the seek moves both.
+    pub video_copy_seek: Option<CopySeek>,
+    /// Blockers that need a dry run, so only the caller can find them
+    pub video_copy_blockers: Vec<CopyBlocker>,
 }
 
 impl InputSettings {
@@ -72,46 +79,7 @@ impl InputSettings {
     }
 
     pub fn select_audio_stream(&self) -> Result<&ProbeResultAudioStream, FFPipelineError> {
-        let mut all_audio_streams: Vec<&ProbeResultAudioStream> = self
-            .audio_input
-            .probe_result
-            .streams
-            .iter()
-            .filter_map(|s| match s {
-                ProbeResultStream::Audio(audio_stream) => Some(audio_stream),
-                _ => None,
-            })
-            .collect();
-
-        if let Some(audio_index) = self.audio_input.stream_index {
-            let matched_stream = all_audio_streams
-                .iter()
-                .find(|a| a.stream_index == audio_index);
-
-            match matched_stream {
-                Some(audio_stream) => {
-                    return Ok(audio_stream);
-                }
-                None => {
-                    log::warn!(
-                        "unable to locate requested audio stream with index {}",
-                        audio_index
-                    );
-                }
-            }
-        }
-
-        match all_audio_streams.len() {
-            0 => Err(FFPipelineError::AudioInputIsRequired),
-            1 => Ok(all_audio_streams[0]),
-            _ => {
-                log::warn!(
-                    "content contains more than one audio stream; selecting stream with greatest number of channels"
-                );
-                all_audio_streams.sort_by_key(|a| std::cmp::Reverse(a.channels));
-                Ok(all_audio_streams[0])
-            }
-        }
+        self.audio_input.select_audio_stream()
     }
 
     pub fn select_subtitle_stream(&self) -> Option<&ProbeResultVideoStream> {
@@ -253,47 +221,8 @@ pub struct HttpInputSource {
     pub options: HttpInputOptions,
 }
 
-#[derive(Debug, Clone)]
-pub struct RtspInputSource {
-    pub uri: String,
-    pub options: RtspInputOptions,
-}
-
-#[derive(Debug, Clone)]
-#[enum_dispatch(Probeable)]
-#[enum_dispatch(FfmpegInputArgs)]
-pub enum InputSource {
-    Local(LocalInputSource),
-    Lavfi(LavfiInputSource),
-    Http(HttpInputSource),
-    Rtsp(RtspInputSource),
-}
-
-#[enum_dispatch]
-pub trait FfmpegInputArgs {
-    fn args_for_input(&self) -> ArgVec;
-    fn input_path(&self) -> Option<String>;
-}
-
-impl FfmpegInputArgs for LocalInputSource {
-    fn args_for_input(&self) -> ArgVec {
-        vec![]
-    }
-    fn input_path(&self) -> Option<String> {
-        self.expand_path()
-    }
-}
-
-impl FfmpegInputArgs for LavfiInputSource {
-    fn args_for_input(&self) -> ArgVec {
-        args!["-f", "lavfi"]
-    }
-    fn input_path(&self) -> Option<String> {
-        Some(self.params.clone())
-    }
-}
-impl FfmpegInputArgs for HttpInputSource {
-    fn args_for_input(&self) -> ArgVec {
+impl HttpInputSource {
+    fn base_args(&self) -> ArgVec {
         let mut args: ArgVec = Vec::new();
 
         if self.options.reconnect {
@@ -322,6 +251,72 @@ impl FfmpegInputArgs for HttpInputSource {
             args.extend(args!["-user_agent", ua.clone()]);
         }
 
+        args.extend(args![
+            "-protocol_whitelist",
+            "file,http,https,tcp,tls,crypto",
+        ]);
+
+        args
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RtspInputSource {
+    pub uri: String,
+    pub options: RtspInputOptions,
+}
+
+#[derive(Debug, Clone)]
+#[enum_dispatch(Probeable)]
+#[enum_dispatch(FfmpegInputArgs)]
+pub enum InputSource {
+    Local(LocalInputSource),
+    Lavfi(LavfiInputSource),
+    Http(HttpInputSource),
+    Rtsp(RtspInputSource),
+}
+
+pub struct FfmpegInputRequestContext {
+    pub channel_number: Option<String>,
+    pub playout_offset: Duration,
+    pub duration: Duration,
+    pub frame_rate: String,
+}
+
+#[enum_dispatch]
+pub trait FfmpegInputArgs {
+    fn args_for_input(&self) -> ArgVec;
+    fn args_for_input_with_context(&self, context: &FfmpegInputRequestContext) -> ArgVec;
+    fn input_path(&self) -> Option<String>;
+}
+
+impl FfmpegInputArgs for LocalInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        vec![]
+    }
+    fn args_for_input_with_context(&self, _context: &FfmpegInputRequestContext) -> ArgVec {
+        self.args_for_input()
+    }
+    fn input_path(&self) -> Option<String> {
+        self.expand_path()
+    }
+}
+
+impl FfmpegInputArgs for LavfiInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        args!["-f", "lavfi"]
+    }
+    fn args_for_input_with_context(&self, _context: &FfmpegInputRequestContext) -> ArgVec {
+        self.args_for_input()
+    }
+    fn input_path(&self) -> Option<String> {
+        Some(self.params.clone())
+    }
+}
+impl FfmpegInputArgs for HttpInputSource {
+    fn args_for_input(&self) -> ArgVec {
+        let mut args: ArgVec = self.base_args();
+
         if !self.options.headers.is_empty() {
             // FFmpeg expects headers separated by \r\n, with trailing \r\n
             let combined: String = self
@@ -333,10 +328,38 @@ impl FfmpegInputArgs for HttpInputSource {
             args.extend(args!["-headers", combined]);
         }
 
-        args.extend(args![
-            "-protocol_whitelist",
-            "file,http,https,tcp,tls,crypto",
-        ]);
+        args
+    }
+
+    fn args_for_input_with_context(&self, context: &FfmpegInputRequestContext) -> ArgVec {
+        let mut args: ArgVec = self.base_args();
+
+        let mut merged_headers: Vec<String> = self.options.headers.clone();
+
+        if let Some(channel_number) = context.channel_number.as_deref() {
+            merged_headers.push(format!("x-etv-channel:{}", channel_number))
+        }
+
+        merged_headers.push(format!(
+            "x-etv-offset-ms:{}",
+            context.playout_offset.as_millis()
+        ));
+
+        merged_headers.push(format!(
+            "x-etv-duration-ms:{}",
+            context.duration.as_millis()
+        ));
+
+        merged_headers.push(format!("x-etv-frame-rate:{}", context.frame_rate));
+
+        if !merged_headers.is_empty() {
+            // FFmpeg expects headers separated by \r\n, with trailing \r\n
+            let combined: String = merged_headers
+                .iter()
+                .map(|h| format!("{}\r\n", h))
+                .collect();
+            args.extend(args!["-headers", combined]);
+        }
 
         args
     }
@@ -362,6 +385,10 @@ impl FfmpegInputArgs for RtspInputSource {
         args
     }
 
+    fn args_for_input_with_context(&self, _context: &FfmpegInputRequestContext) -> ArgVec {
+        self.args_for_input()
+    }
+
     fn input_path(&self) -> Option<String> {
         Some(self.uri.clone())
     }
@@ -373,6 +400,82 @@ pub struct ProbedInput {
     pub in_point: Duration,
     pub out_point: Duration,
     pub stream_index: Option<u32>,
+}
+
+impl ProbedInput {
+    pub fn select_audio_stream(&self) -> Result<&ProbeResultAudioStream, FFPipelineError> {
+        let mut all_audio_streams: Vec<&ProbeResultAudioStream> = self
+            .probe_result
+            .streams
+            .iter()
+            .filter_map(|s| match s {
+                ProbeResultStream::Audio(audio_stream) => Some(audio_stream),
+                _ => None,
+            })
+            .collect();
+
+        if let Some(audio_index) = self.stream_index {
+            let matched_stream = all_audio_streams
+                .iter()
+                .find(|a| a.stream_index == audio_index);
+
+            match matched_stream {
+                Some(audio_stream) => {
+                    return Ok(audio_stream);
+                }
+                None => {
+                    log::warn!(
+                        "unable to locate requested audio stream with index {}",
+                        audio_index
+                    );
+                }
+            }
+        }
+
+        match all_audio_streams.len() {
+            0 => Err(FFPipelineError::AudioInputIsRequired),
+            1 => Ok(all_audio_streams[0]),
+            _ => {
+                log::warn!(
+                    "content contains more than one audio stream; selecting stream with greatest number of channels"
+                );
+                all_audio_streams.sort_by_key(|a| std::cmp::Reverse(a.channels));
+                Ok(all_audio_streams[0])
+            }
+        }
+    }
+
+    /// lavfi can't seek, so the in and out points only set the duration.
+    pub fn silence_if_missing(&self) -> Option<ProbedInput> {
+        if self
+            .probe_result
+            .streams
+            .iter()
+            .any(|s| matches!(s, ProbeResultStream::Audio(_)))
+        {
+            return None;
+        }
+
+        let params = String::from("anullsrc=channel_layout=stereo:sample_rate=48000");
+        Some(ProbedInput {
+            input_source: InputSource::Lavfi(LavfiInputSource {
+                params: params.clone(),
+            }),
+            probe_result: ProbeResult {
+                path: params,
+                streams: vec![ProbeResultStream::Audio(ProbeResultAudioStream {
+                    stream_index: 0,
+                    codec: String::from("pcm_s16le"),
+                    channels: 2,
+                })],
+                duration: None,
+                format_name: Some(String::from("lavfi")),
+            },
+            in_point: self.in_point,
+            out_point: self.out_point,
+            stream_index: None,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -387,7 +490,15 @@ pub struct GraphicsInput {
     pub horizontal_margin_percent: Option<f32>,
     pub vertical_margin_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
+    pub kind: GraphicsKind,
+    pub in_point: Duration,
     pub timing: Option<GraphicsTiming>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GraphicsKind {
+    Media,
+    Canvas,
 }
 
 #[derive(Debug, Clone)]

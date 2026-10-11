@@ -1,15 +1,21 @@
 mod channel_session;
 mod dossier;
+mod dynamic_retry;
+mod fallback;
 mod local_proxy;
+mod logging;
 mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::ChannelError;
+use ersatztv_core::SHUTDOWN_DEADLINE;
+use ersatztv_core::process::{kill_descendants_on_exit, parent_exit, shutdown_signal};
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
@@ -38,36 +44,97 @@ enum Commands {
         number: String,
         #[arg(short, long)]
         troubleshoot: bool,
+        /// Keep running if the parent process exits
+        #[arg(long)]
+        detached: bool,
     },
 }
 
-#[tokio::main]
-pub async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+pub fn main() -> ExitCode {
+    // first, so a parent that dies during startup is still seen
+    let parent_exit = parent_exit();
 
-    if let Err(err) = run().await {
-        match err {
-            // the idle timeout is a routine reap (the heartbeat went stale
-            // because no client is watching), not a failure; supervisors
-            // read a non-zero exit as a crash, so it must exit clean
-            ChannelError::IdleTimeout(_) => log::info!("{err}"),
-            _ => {
-                log::error!("{err}");
-                std::process::exit(1);
-            }
-        };
+    // clap may exit here; nothing is spawned yet
+    let args = Args::parse();
+
+    logging::init();
+    let span = match &args.command {
+        Commands::Run { number, .. } => tracing::info_span!("channel", number = %number),
+        Commands::Debug { .. } => tracing::Span::none(),
+    };
+    // tasks spawned from here need .in_current_span() to keep the channel number
+    let _span = span.enter();
+
+    kill_descendants_on_exit();
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            log::error!("failed to start runtime: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let watch_parent = matches!(
+        args.command,
+        Commands::Run {
+            detached: false,
+            ..
+        }
+    );
+
+    let result = runtime.block_on(run_until_shutdown(args, watch_parent, parent_exit));
+
+    // process::exit skips drops, so kill_on_drop children would outlive us
+    runtime.shutdown_timeout(SHUTDOWN_DEADLINE);
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        // no viewers is not a failure; supervisors treat non-zero as a crash
+        Err(err @ ChannelError::IdleTimeout(_)) => {
+            log::info!("{err}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            log::error!("{err}");
+            ExitCode::FAILURE
+        }
     }
 }
 
-async fn run() -> Result<(), ChannelError> {
-    let args = Args::parse();
+async fn run_until_shutdown(
+    args: Args,
+    watch_parent: bool,
+    parent_exit: impl Future<Output = ()>,
+) -> Result<(), ChannelError> {
+    // tokio never restores the default signal action, so a second SIGTERM can't kill us;
+    // shutdown_timeout is the backstop
+    tokio::select! {
+        result = run(args) => result,
+        signal = shutdown_signal() => {
+            // dropping run() killed ffmpeg
+            log::info!("received {signal}; shutting down");
+            Ok(())
+        }
+        // a killed parent can't stop us, and .heartbeat goes stale
+        _ = parent_exit, if watch_parent => {
+            log::warn!("parent process exited; shutting down");
+            Ok(())
+        }
+    }
+}
 
+async fn run(args: Args) -> Result<(), ChannelError> {
     match args.command {
         Commands::Run {
             config_paths,
             output_folder,
             number,
             troubleshoot,
+            ..
         } => {
             let channel_config =
                 ChannelConfig::from_sources(&config_paths, &output_folder, &number).await?;

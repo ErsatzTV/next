@@ -5,11 +5,12 @@ use crate::audio_codec::AudioCodec;
 use crate::frame_rate::FrameRate;
 use crate::output_format::OutputFormat;
 use crate::pipeline::{Hz, Kbps, OutputContext, PtsOffset};
-use crate::video_codec::VideoCodec;
+use crate::video_codec::{MetadataBsf, VideoEncoder};
 
 pub enum OutputOption {
     Format(OutputFormat),
-    VideoCodec(VideoCodec),
+    VideoCodec(VideoEncoder),
+    VideoMetadata(MetadataBsf),
     VideoBitrate(Option<Kbps>),
     VideoBuffer(Option<Kbps>),
     VideoTrackTimeScale(u64),
@@ -19,6 +20,11 @@ pub enum OutputOption {
     AudioChannels(Option<u32>),
     AudioSampleRate(Option<Hz>),
     Duration(Duration),
+    /// `-shortest`, optionally capping how much it buffers while streams catch up
+    Shortest(Option<Duration>),
+    /// Output `-ss`: drops packets by dts
+    Seek(Duration),
+    H264CopyParameterSets,
     TsOffset(Option<PtsOffset>),
     CudaNoAutoScale,
     NoDemuxDecodeDelay,
@@ -32,6 +38,7 @@ impl OutputOption {
         match self {
             OutputOption::Format(format) => format.as_arg(output_context),
             OutputOption::VideoCodec(codec) => codec.as_arg(),
+            OutputOption::VideoMetadata(bsf) => bsf.as_arg(),
             OutputOption::VideoBitrate(Some(bitrate_kbps)) => {
                 args![
                     "-b:v",
@@ -72,6 +79,20 @@ impl OutputOption {
             OutputOption::AudioSampleRate(None) => Vec::new(),
             OutputOption::Duration(duration) => {
                 args!["-t", format!("{}ms", duration.as_millis())]
+            }
+            OutputOption::Shortest(None) => args!["-shortest"],
+            OutputOption::Shortest(Some(buffer)) => {
+                args![
+                    "-shortest",
+                    "-shortest_buf_duration",
+                    format!("{:.3}", buffer.as_secs_f64()),
+                ]
+            }
+            OutputOption::Seek(position) => {
+                args!["-ss", format!("{:.6}", position.as_secs_f64())]
+            }
+            OutputOption::H264CopyParameterSets => {
+                args!["-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe"]
             }
             OutputOption::TsOffset(Some(pts_offset)) if pts_offset.duration > Duration::ZERO => {
                 args![

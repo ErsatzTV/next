@@ -28,6 +28,7 @@ pub struct VaapiCapabilities {
     #[serde(serialize_with = "serialize_fourcc_set")]
     pub(crate) can_hdr_to_hdr_tonemap: HashSet<FourCC>,
     pub(crate) can_overlay: bool,
+    pub(crate) rotation_flags: u32,
     /// Bitmask of VA_RC_* per (profile, entrypoint). Absent = unknown / not queried.
     #[serde(serialize_with = "serialize_rate_control")]
     pub(crate) rate_control: HashMap<(i32, i32), u32>,
@@ -39,6 +40,16 @@ pub enum RateControlMode {
 }
 
 impl VaapiCapabilities {
+    pub fn can_rotate(&self, dir: crate::video_filter::TransposeDir) -> bool {
+        use crate::video_filter::TransposeDir;
+        let rotation = match dir {
+            TransposeDir::Clock => VA_ROTATION_90,
+            TransposeDir::CClock => VA_ROTATION_270,
+            TransposeDir::Reversal => VA_ROTATION_180,
+        };
+        self.rotation_flags & (1 << rotation) != 0
+    }
+
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
         self.as_fourcc(pixel_format)
             .is_some_and(|c| self.vpp_pixel_formats.contains(&c))
@@ -104,6 +115,7 @@ impl VaapiCapabilities {
             (VideoFormat::H264, 8) => Some(VA_PROFILE_H264_MAIN),
             (VideoFormat::Hevc, 8) => Some(VA_PROFILE_HEVC_MAIN),
             (VideoFormat::Hevc, 10) => Some(VA_PROFILE_HEVC_MAIN10),
+            (VideoFormat::Mpeg2Video, 8) => Some(VA_PROFILE_MPEG2_MAIN),
             _ => None,
         }
     }
@@ -137,6 +149,11 @@ impl VaapiCapabilities {
 
     pub fn can_overlay(&self) -> bool {
         self.can_overlay
+    }
+
+    /// Mesa does not write the pad bars (green), and VA caps can't show when it would.
+    pub fn can_pad(&self) -> bool {
+        self.vendor.starts_with("Intel iHD driver")
     }
 
     /// Returns Some(Cqp) when the only available RC mode is CQP and we must force it.

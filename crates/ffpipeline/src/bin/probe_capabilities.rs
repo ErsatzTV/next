@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use ffpipeline::capabilities::amf::{AmfCapabilities, AmfDeviceTarget};
 use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::qsv::QsvCapabilities;
@@ -18,6 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Accel {
+    Amf {
+        /// DXGI adapter index (Windows only); default is the discrete AMD adapter
+        #[arg(long)]
+        adapter: Option<u32>,
+    },
     Cuda,
     Qsv,
     Rkmpp,
@@ -74,9 +80,11 @@ fn pixel_format_name(f: &PixelFormat) -> &'static str {
         PixelFormat::Yuv420p => "yuv420p",
         PixelFormat::Yuv420p10le => "yuv420p10le",
         PixelFormat::Bgra => "bgra",
+        PixelFormat::Rgba => "rgba",
         PixelFormat::Yuva420p => "yuva420p",
         PixelFormat::Yuva420p10le => "yuva420p10le",
         PixelFormat::P016 => "p016",
+        PixelFormat::Unknown => "unknown",
     }
 }
 
@@ -84,6 +92,7 @@ fn main() {
     let cli = Cli::parse();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
     let result = match cli.accel {
+        Accel::Amf { adapter } => print_amf(adapter),
         Accel::Cuda => print_cuda(),
         Accel::Qsv => print_qsv(),
         Accel::Rkmpp => print_rkmpp(),
@@ -96,6 +105,86 @@ fn main() {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+}
+
+fn print_amf(adapter: Option<u32>) -> Result<(), String> {
+    let target = adapter.map_or(AmfDeviceTarget::Auto, AmfDeviceTarget::Adapter);
+    let caps = AmfCapabilities::probe_with(target).map_err(|e| e.to_string())?;
+    println!("=== AMF (AMD) Capabilities ===");
+    match caps.adapter() {
+        Some(adapter) => println!(
+            "  Adapter: {} ({:04x}:{:04x} {})",
+            adapter.index, adapter.vendor_id, adapter.device_id, adapter.description
+        ),
+        None => println!("  Adapter: (runtime default)"),
+    }
+    match caps.runtime_version() {
+        Some((major, minor, release, build)) => {
+            println!("  Runtime: {major}.{minor}.{release}.{build}");
+        }
+        None => println!("  Runtime: unknown"),
+    }
+    println!(
+        "  Device:  {}",
+        caps.device().map_or("(none)", |d| d.name())
+    );
+    println!();
+
+    print_decode_table(ALL_FORMATS, |f, bd| caps.can_decode(f, bd));
+
+    println!();
+    println!("Encoders:");
+    println!(
+        "  {:<12} {:<8} {:<8} {:<8} {:<12} {:<8}",
+        "Codec", "8-bit", "10-bit", "B-Frames", "Max Profile", "Max Level"
+    );
+    println!(
+        "  {:<12} {:<8} {:<8} {:<8} {:<12} {:<8}",
+        "-----", "-----", "------", "--------", "-----------", "---------"
+    );
+    for f in ALL_FORMATS {
+        if let Some(encoder) = caps.encoder(f) {
+            println!(
+                "  {:<12} {:<8} {:<8} {:<8} {:<12} {:<8}",
+                format_name(f),
+                yn(caps.can_encode(f, 8)),
+                yn(caps.can_encode(f, 10)),
+                yn(encoder.b_frames),
+                encoder
+                    .max_profile
+                    .map_or_else(|| String::from("?"), |p| p.to_string()),
+                encoder
+                    .max_level
+                    .map_or_else(|| String::from("?"), |l| l.to_string()),
+            );
+        }
+    }
+
+    println!();
+    print_vpp_table(|pf| caps.vpp_supports_format(pf));
+
+    println!();
+    println!("AMFVideoConverter (vpp_amf) Surface Formats:");
+    let input = caps.vpp_input_formats();
+    let output = caps.vpp_output_formats();
+    println!(
+        "  Input:  {}",
+        if input.is_empty() {
+            String::from("(none)")
+        } else {
+            input.join(" ")
+        }
+    );
+    println!(
+        "  Output: {}",
+        if output.is_empty() {
+            String::from("(none)")
+        } else {
+            output.join(" ")
+        }
+    );
+
+    Ok(())
 }
 
 fn print_cuda() -> Result<(), String> {
@@ -190,7 +279,52 @@ fn print_qsv() -> Result<(), String> {
     print_encode_table(ALL_FORMATS, |f, bd| caps.can_encode(f, bd));
 
     println!();
-    print_vpp_table(|pf| caps.vpp_supports_format(pf));
+    match caps.runtime_api() {
+        Some((major, minor)) => println!("Runtime API: {major}.{minor}"),
+        None => println!("Runtime API: unknown"),
+    }
+    let filters = caps.vpp_filters();
+    if filters.is_empty() {
+        println!("VPP Filters: (none reported; legacy Media SDK runtimes cannot list them)");
+    } else {
+        println!("VPP Filters: {}", filters.join(" "));
+    }
+    println!("Can Tonemap: {}", caps.can_tonemap());
+    let qsv_formats = [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra];
+    for pf in qsv_formats {
+        println!(
+            "Upload {}: {}",
+            pixel_format_name(&pf),
+            yn(caps.can_upload(&pf))
+        );
+    }
+    for input in qsv_formats {
+        for output in qsv_formats {
+            println!(
+                "Convert {} -> {}: {}",
+                pixel_format_name(&input),
+                pixel_format_name(&output),
+                yn(caps.can_convert(&input, &output))
+            );
+        }
+    }
+    for pf in qsv_formats {
+        println!(
+            "Rotation {}: {}",
+            pixel_format_name(&pf),
+            yn(caps.can_rotate(&pf))
+        );
+    }
+    for input in [PixelFormat::Nv12, PixelFormat::P010le] {
+        for output in [PixelFormat::Nv12, PixelFormat::P010le] {
+            println!(
+                "Pad {} -> {}: {}",
+                pixel_format_name(&input),
+                pixel_format_name(&output),
+                yn(caps.can_pad(&input, &output))
+            );
+        }
+    }
 
     Ok(())
 }
@@ -269,7 +403,17 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
             );
         }
     }
-    println!("  Overlay:     {}", yn(caps.can_overlay()));
+
+    println!();
+    println!("Overlay: {}", yn(caps.can_overlay()));
+    println!("Pad: {}", yn(caps.can_pad()));
+    for dir in [
+        ffpipeline::video_filter::TransposeDir::Clock,
+        ffpipeline::video_filter::TransposeDir::CClock,
+        ffpipeline::video_filter::TransposeDir::Reversal,
+    ] {
+        println!("Rotation {dir:?}: {}", yn(caps.can_rotate(dir)));
+    }
 
     println!();
     println!("Rate Control:");
@@ -297,6 +441,12 @@ fn print_videotoolbox() -> Result<(), String> {
     println!();
 
     print_decode_table(ALL_FORMATS, |f, bd| caps.can_decode(f, bd));
+    println!();
+    print_interlaced_decode_table(
+        ALL_FORMATS,
+        |f, bd| caps.can_decode(f, bd),
+        |f, bd| caps.can_decode_interlaced(f, bd),
+    );
     println!();
     print_encode_table(ALL_FORMATS, |f, bd| caps.can_encode(f, bd));
 
@@ -336,6 +486,27 @@ fn print_decode_table(formats: &[VideoFormat], can_decode: impl Fn(&VideoFormat,
         let dec10 = can_decode(f, 10);
         if dec8 || dec10 {
             println!("  {:<12} {:<8} {:<8}", format_name(f), yn(dec8), yn(dec10),);
+        }
+    }
+}
+
+/// keep unsupported rows, so missing interlaced decode shows as "-"
+fn print_interlaced_decode_table(
+    formats: &[VideoFormat],
+    can_decode: impl Fn(&VideoFormat, u8) -> bool,
+    can_decode_interlaced: impl Fn(&VideoFormat, u8) -> bool,
+) {
+    println!("Interlaced Decoders:");
+    println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
+    println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
+    for f in formats {
+        if f.has_interlaced_coding() && (can_decode(f, 8) || can_decode(f, 10)) {
+            println!(
+                "  {:<12} {:<8} {:<8}",
+                format_name(f),
+                yn(can_decode_interlaced(f, 8)),
+                yn(can_decode_interlaced(f, 10)),
+            );
         }
     }
 }

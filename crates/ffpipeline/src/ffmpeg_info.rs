@@ -5,14 +5,20 @@ use std::iter::Iterator;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use ersatztv_core::process;
 use serde::Serialize;
 use strum::{Display, EnumIter, IntoEnumIterator, IntoStaticStr};
-use tokio::process::Command;
 
 use crate::error::FFPipelineError;
 
 static KNOWN_ACCELS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| KnownHardwareAccel::iter().map(|x| x.into()).collect());
+
+static KNOWN_DECODERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    KnownDecoders::iter()
+        .map(|x| x.into())
+        .collect::<Vec<&str>>()
+});
 
 static KNOWN_FILTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     KnownVideoFilter::iter()
@@ -20,8 +26,14 @@ static KNOWN_FILTERS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         .collect::<Vec<&str>>()
 });
 
+/// filter presence alone cannot tell a patched build from upstream, so these
+/// filters also get their options probed
+static OPTION_PROBED_FILTERS: &[KnownVideoFilter] = &[KnownVideoFilter::VppQsv];
+
 #[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
 pub enum KnownHardwareAccel {
+    #[strum(serialize = "amf")]
+    Amf,
     #[strum(serialize = "cuda")]
     Cuda,
     #[strum(serialize = "qsv")]
@@ -51,8 +63,6 @@ pub enum KnownVideoFilter {
     Bwdif,
     #[strum(serialize = "bwdif_cuda")]
     BwdifCuda,
-    #[strum(serialize = "deinterlace_qsv")]
-    DeinterlaceQsv,
     #[strum(serialize = "deinterlace_vaapi")]
     DeinterlaceVaapi,
     #[strum(serialize = "libplacebo")]
@@ -83,6 +93,12 @@ pub enum KnownVideoFilter {
     TonemapOpencl,
     #[strum(serialize = "tonemap_vaapi")]
     TonemapVaapi,
+    #[strum(serialize = "transpose_cuda")]
+    TransposeCuda,
+    #[strum(serialize = "transpose_vaapi")]
+    TransposeVaapi,
+    #[strum(serialize = "vpp_amf")]
+    VppAmf,
     #[strum(serialize = "vpp_qsv")]
     VppQsv,
     #[strum(serialize = "w3fdif")]
@@ -93,11 +109,29 @@ pub enum KnownVideoFilter {
     YadifCuda,
 }
 
+#[derive(Display, EnumIter, IntoStaticStr, Debug, PartialEq)]
+pub enum KnownDecoders {
+    #[strum(serialize = "av1_amf")]
+    Av1Amf,
+    #[strum(serialize = "h264_amf")]
+    H264Amf,
+    #[strum(serialize = "hevc_amf")]
+    HevcAmf,
+    #[strum(serialize = "mpeg2_amf")]
+    Mpeg2Amf,
+    #[strum(serialize = "vc1_amf")]
+    Vc1Amf,
+    #[strum(serialize = "vp9_amf")]
+    Vp9Amf,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FfmpegInfo {
     pub(crate) hwaccels: HashSet<String>,
+    pub(crate) decoders: HashSet<String>,
     pub(crate) video_filters: HashSet<String>,
     pub(crate) preferred_filters: HashMap<String, usize>,
+    pub(crate) video_filter_options: HashMap<String, HashSet<String>>,
 }
 
 impl FfmpegInfo {
@@ -107,6 +141,7 @@ impl FfmpegInfo {
         preferred_filters: &[String],
     ) -> Result<FfmpegInfo, FFPipelineError> {
         let hwaccels = Self::load_hw_accels(path).await?;
+        let decoders = Self::load_decoders(path).await?;
         let video_filters = Self::load_video_filters(path, disabled_filters).await?;
 
         // filter preferred by known video filters
@@ -117,10 +152,21 @@ impl FfmpegInfo {
             }
         }
 
+        let mut video_filter_options: HashMap<String, HashSet<String>> = HashMap::new();
+        for filter in OPTION_PROBED_FILTERS {
+            let name = filter.to_string();
+            if video_filters.contains(&name) {
+                let options = Self::load_video_filter_options(path, &name).await?;
+                video_filter_options.insert(name, options);
+            }
+        }
+
         Ok(FfmpegInfo {
             hwaccels,
+            decoders,
             video_filters,
             preferred_filters: preferred,
+            video_filter_options,
         })
     }
 
@@ -129,8 +175,19 @@ impl FfmpegInfo {
         self.hwaccels.iter().any(|f| f == &accel_string)
     }
 
+    pub fn has_decoder(&self, decoder: &str) -> bool {
+        self.decoders.contains(decoder)
+    }
+
     pub fn has_video_filter(&self, filter: &KnownVideoFilter) -> bool {
         self.video_filters.contains(&filter.to_string())
+    }
+
+    /// always false for filters not in [`OPTION_PROBED_FILTERS`]
+    pub fn has_video_filter_option(&self, filter: &KnownVideoFilter, option: &str) -> bool {
+        self.video_filter_options
+            .get(&filter.to_string())
+            .is_some_and(|options| options.contains(option))
     }
 
     /// Returns the "best" known filter from the inputted set. "Best" in this case is defined
@@ -194,7 +251,7 @@ impl FfmpegInfo {
     }
 
     async fn load_hw_accels(path: &Path) -> Result<HashSet<String>, FFPipelineError> {
-        let output = Command::new(path)
+        let output = process::command(path)
             .args(["-hide_banner", "-hwaccels"])
             .output()
             .await
@@ -219,11 +276,73 @@ impl FfmpegInfo {
         Ok(accels)
     }
 
+    async fn load_decoders(path: &Path) -> Result<HashSet<String>, FFPipelineError> {
+        let output = process::command(path)
+            .args(["-hide_banner", "-decoders"])
+            .output()
+            .await
+            .map_err(|_| FFPipelineError::FfmpegCapabilitiesError(String::from("decoders")))?;
+
+        Ok(Self::parse_decoders(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    /// Entries look like ` V....D h264_amf   H264 AMD AMF video decoder`. The legend
+    /// above the `------` line has the same shape (` V..... = Video`), so it is skipped.
+    fn parse_decoders(listing: &str) -> HashSet<String> {
+        listing
+            .lines()
+            .skip_while(|line| !line.trim_start().starts_with("------"))
+            .skip(1)
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let flags = parts.next()?;
+                let name = parts.next()?;
+                (flags.starts_with('V') && KNOWN_DECODERS.contains(&name)).then(|| name.to_owned())
+            })
+            .collect()
+    }
+
+    async fn load_video_filter_options(
+        path: &Path,
+        filter: &str,
+    ) -> Result<HashSet<String>, FFPipelineError> {
+        let output = process::command(path)
+            .args(["-hide_banner", "-h", &format!("filter={filter}")])
+            .output()
+            .await
+            .map_err(|_| {
+                FFPipelineError::FfmpegCapabilitiesError(format!("filter options: {filter}"))
+            })?;
+
+        Ok(Self::parse_filter_options(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    /// only option lines have a `<type>` in the second column; header lines and
+    /// enum constant lines (`bob  1  ..FV`) do not
+    fn parse_filter_options(help_text: &str) -> HashSet<String> {
+        let mut options = HashSet::new();
+
+        for line in help_text.lines() {
+            let mut parts = line.split_whitespace();
+            if let (Some(name), Some(kind)) = (parts.next(), parts.next())
+                && kind.starts_with('<')
+            {
+                options.insert(name.to_owned());
+            }
+        }
+
+        options
+    }
+
     async fn load_video_filters(
         path: &Path,
         disabled_filters: &[String],
     ) -> Result<HashSet<String>, FFPipelineError> {
-        let output = Command::new(path)
+        let output = process::command(path)
             .args(["-hide_banner", "-filters"])
             .output()
             .await
@@ -264,9 +383,8 @@ mod tests {
         );
 
         let info: FfmpegInfo = FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
-            preferred_filters: HashMap::new(),
+            ..Default::default()
         };
 
         let best_fit = info.find_best_fit(
@@ -298,9 +416,9 @@ mod tests {
         preferred_filters.insert(KnownVideoFilter::TonemapVaapi.to_string(), 0);
 
         let info = FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
             preferred_filters,
+            ..Default::default()
         };
 
         let best_fit = info.find_best_fit(
@@ -312,6 +430,75 @@ mod tests {
         );
 
         assert_eq!(best_fit, Some(&KnownVideoFilter::TonemapVaapi));
+    }
+
+    #[test]
+    fn test_parse_filter_options() {
+        let help_text = r"Filter vpp_qsv
+  Description: Quick Sync Video VPP.
+  Inputs:
+       #0: default (video)
+  Outputs:
+       #0: default (video)
+vpp_qsv AVOptions:
+   deinterlace       <int>        ..FV....... deinterlace mode: 0=off, 1=bob, 2=advanced (from 0 to 2) (default 0)
+   denoise           <int>        ..FV....... denoise level [0, 100] (from 0 to 100) (default 0)
+   pad_w             <int>        ..FV....... set the padded output width (0 = no padding) (from 0 to 32767) (default 0)
+   pad_h             <int>        ..FV....... set the padded output height (0 = no padding) (from 0 to 32767) (default 0)
+   pad_color         <color>      ..FV....... set the colour of the padded area (default 'black')
+";
+        let options = FfmpegInfo::parse_filter_options(help_text);
+
+        assert!(options.contains("deinterlace"));
+        assert!(options.contains("pad_w"));
+        assert!(options.contains("pad_color"));
+        assert!(!options.contains("#0:"));
+        assert!(!options.contains("Description:"));
+    }
+
+    #[test]
+    fn test_has_video_filter_option() {
+        let mut video_filters = HashSet::new();
+        video_filters.insert(KnownVideoFilter::VppQsv.to_string());
+
+        let mut video_filter_options = HashMap::new();
+        video_filter_options.insert(
+            KnownVideoFilter::VppQsv.to_string(),
+            HashSet::from([String::from("pad_w"), String::from("pad_h")]),
+        );
+
+        let info = FfmpegInfo {
+            video_filters,
+            video_filter_options,
+            ..Default::default()
+        };
+
+        assert!(info.has_video_filter_option(&KnownVideoFilter::VppQsv, "pad_w"));
+        assert!(!info.has_video_filter_option(&KnownVideoFilter::VppQsv, "does_not_exist"));
+        assert!(!info.has_video_filter_option(&KnownVideoFilter::PadVaapi, "pad_w"));
+    }
+
+    #[test]
+    fn parse_decoders_skips_legend_and_non_video_entries() {
+        let listing = "Decoders:\n V..... = Video\n A..... = Audio\n ------\n \
+                       V....D h264                 H.264\n \
+                       V..... h264_amf             H264 AMD AMF video decoder (codec h264)\n \
+                       V..... mpeg2_amf            MPEG2VIDEO AMD AMF video decoder (codec mpeg2video)\n \
+                       A....D aac                  AAC (Advanced Audio Coding)\n \
+                       S..... dvdsub               DVD subtitles\n";
+        let decoders = FfmpegInfo::parse_decoders(listing);
+        assert!(decoders.contains("h264_amf"));
+        assert!(decoders.contains("mpeg2_amf"));
+        assert!(!decoders.contains("aac"));
+        assert!(!decoders.contains("dvdsub"));
+        assert!(!decoders.contains("Video"));
+
+        let info = FfmpegInfo {
+            decoders,
+            ..Default::default()
+        };
+        assert!(info.has_decoder("mpeg2_amf"));
+        assert!(!info.has_decoder("vc1_amf"));
     }
 
     #[test]

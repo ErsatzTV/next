@@ -4,10 +4,19 @@ use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp, OverlaySource};
-use crate::pipeline::{FrameState, FrameSurface, PixelFormat, SurfaceSet};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet};
 use crate::video_filter::{
     FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
 };
+
+/// what the encoder takes as input
+#[derive(Debug, Clone)]
+pub(crate) struct EncoderTarget {
+    pub(crate) surface: FrameSurface,
+    pub(crate) pixel_format: Option<PixelFormat>,
+    /// on `surface`, passed to the encoder without conversion
+    pub(crate) also_accepts: Vec<PixelFormat>,
+}
 
 #[derive(Debug, Clone)]
 pub enum PipelineFilter {
@@ -46,13 +55,24 @@ impl FilterChain {
 
     /// Disables/drops all video filters from the filter chain.
     pub(crate) fn disable_video(&mut self) {
+        debug_assert!(
+            !self
+                .filters
+                .iter()
+                .any(|f| matches!(f, PipelineFilter::Overlay(_))),
+            "video copy can't carry an overlay"
+        );
         self.filters
             .retain(|f| !matches!(f, PipelineFilter::Video(_)));
     }
 
     /// Optimizes the filter chain by passing the frame state through each filter.
     /// Filters will be dropped when the input state already matches the desired output state.
-    pub(crate) fn evaluate(&mut self, initial_state: &FrameState, ffmpeg_info: &FfmpegInfo) {
+    pub(crate) fn evaluate(
+        &mut self,
+        initial_state: &FrameState,
+        ffmpeg_info: &FfmpegInfo,
+    ) -> FrameState {
         let mut state = initial_state.to_owned();
         let mut active_filters = Vec::new();
 
@@ -79,6 +99,7 @@ impl FilterChain {
         }
 
         self.filters = active_filters;
+        state
     }
 
     /// Resolves the filter chain by walking each filter in order, tracking the
@@ -97,18 +118,21 @@ impl FilterChain {
         accel: &Option<HardwareAccel>,
         filter_options: &VideoFilterOptions,
         initial_state: &FrameState,
-        encoder_surface: &FrameSurface,
-        encoder_pixel_format: &Option<PixelFormat>,
+        encoder: &EncoderTarget,
     ) {
+        let encoder_surface = &encoder.surface;
+        let encoder_pixel_format = &encoder.pixel_format;
         let mut resolved = Vec::new();
         let mut current_state = initial_state.clone();
         let mut surfaces = SurfaceSet::new();
 
         // eagerly convert to 8-bit if it allows us to use a hardware overlay
+        // skip hdr input because tonemap needs 10-bit frames and outputs 8-bit frames
         if let Some(a) = accel.as_ref()
             && let Some(pf) = encoder_pixel_format
             && pf.bit_depth() == 8
             && initial_state.pixel_format.bit_depth() > 8
+            && initial_state.hdr_format == HdrFormat::None
         {
             let initial_state_8bit = FrameState {
                 pixel_format: *pf,
@@ -128,7 +152,7 @@ impl FilterChain {
             if eager_unlocks_hw_overlay {
                 let fmt: Option<VideoFilter> = if initial_state.surface == FrameSurface::System {
                     Some(FormatFilter { format: *pf }.into())
-                } else if a.can_convert_pixel_format(ffmpeg_info, pf) {
+                } else if a.can_convert_pixel_format(ffmpeg_info, &initial_state.pixel_format, pf) {
                     a.format_filter(pf)
                 } else {
                     None
@@ -150,6 +174,30 @@ impl FilterChain {
                         }
                         _ => video_filter.clone(),
                     };
+
+                    // reverse hwmap only works on frames the OpenCL filter got from it, so
+                    // nothing can go between them
+                    if matches!(best, VideoFilter::Fps(_))
+                        && current_state.surface == FrameSurface::OpenCL
+                        && let Some(mapped_from) = resolved.iter().rev().find_map(|f| match f {
+                            PipelineFilter::Video(VideoFilter::HwMap(m))
+                                if m.to_surface == FrameSurface::OpenCL =>
+                            {
+                                Some(m.from_surface)
+                            }
+                            _ => None,
+                        })
+                    {
+                        Self::transfer_surface(
+                            ffmpeg_info,
+                            accel,
+                            &mut resolved,
+                            &mut current_state,
+                            mapped_from,
+                            encoder_pixel_format,
+                            &mut surfaces,
+                        );
+                    }
 
                     if let Some(required) = best.required_surface()
                         && current_state.surface != required
@@ -214,9 +262,8 @@ impl FilterChain {
                     // ensure secondary input matches overlay required surface, pixel format
                     let sec_req = best.kind.secondary_input_state(&current_state);
                     let mut sec = FilterChain::new(
-                        best.secondary
-                            .iter()
-                            .cloned()
+                        Self::convert_before_loop(&best.secondary, &sec_req, accel)
+                            .into_iter()
                             .map(PipelineFilter::Video)
                             .collect(),
                     );
@@ -234,8 +281,11 @@ impl FilterChain {
                         sec_accel,
                         filter_options,
                         &best.secondary_initial_state,
-                        &sec_req.surface,
-                        &Some(sec_req.pixel_format),
+                        &EncoderTarget {
+                            surface: sec_req.surface,
+                            pixel_format: Some(sec_req.pixel_format),
+                            also_accepts: Vec::new(),
+                        },
                     );
                     best.secondary = sec
                         .filters
@@ -257,7 +307,7 @@ impl FilterChain {
         }
 
         if current_state.surface != *encoder_surface {
-            log::debug!(
+            log::trace!(
                 "current surface {:?} doesn't match encoder {:?}",
                 current_state.surface,
                 *encoder_surface
@@ -278,6 +328,7 @@ impl FilterChain {
 
         if let Some(pixel_format) = encoder_pixel_format
             && current_state.pixel_format != *pixel_format
+            && !encoder.also_accepts.contains(&current_state.pixel_format)
         {
             Self::convert_pixel_format(
                 ffmpeg_info,
@@ -303,6 +354,40 @@ impl FilterChain {
         self.filters = new_filters;
     }
 
+    /// convert a still image to the overlay's secondary format before it is looped, so the
+    /// conversion runs once instead of on every repeated frame
+    fn convert_before_loop(
+        secondary: &[VideoFilter],
+        sec_req: &FrameState,
+        accel: &Option<HardwareAccel>,
+    ) -> Vec<VideoFilter> {
+        let mut filters = secondary.to_vec();
+        let Some(loop_index) = filters
+            .iter()
+            .position(|f| matches!(f, VideoFilter::Loop(l) if l.is_still_image))
+        else {
+            return filters;
+        };
+
+        // fade is the only filter known to accept and preserve an alpha format after the loop
+        let format = sec_req.pixel_format;
+        let safe_after_loop = format.has_alpha()
+            && filters[loop_index + 1..]
+                .iter()
+                .all(|f| matches!(f, VideoFilter::Fade(_)));
+
+        // otherwise the upload would convert again to a format it accepts
+        let uploadable = sec_req.surface == FrameSurface::System
+            || accel
+                .as_ref()
+                .is_none_or(|a| a.accepts_upload_format(&format));
+
+        if safe_after_loop && uploadable {
+            filters.insert(loop_index, FormatFilter { format }.into());
+        }
+        filters
+    }
+
     fn transfer_surface(
         ffmpeg_info: &FfmpegInfo,
         accel: &Option<HardwareAccel>,
@@ -324,6 +409,8 @@ impl FilterChain {
                 current_state.surface,
                 current_state.pixel_format.bit_depth(),
             ) {
+                // overlay_cuda leaves yuv420p; hwdownload can't convert
+                _ if current_state.pixel_format == PixelFormat::Yuv420p => PixelFormat::Yuv420p,
                 (FrameSurface::Rkmpp, 10) => PixelFormat::Nv15,
                 (_, 10) => PixelFormat::P010le,
                 _ => PixelFormat::Nv12,
@@ -346,10 +433,13 @@ impl FilterChain {
             let accepts_upload =
                 |pf: &PixelFormat| accel.as_ref().is_none_or(|a| a.accepts_upload_format(pf));
 
+            // with no format filter (videotoolbox) the encoder converts; do it here instead so
+            // we don't upload a 10-bit frame for an 8-bit encode
             let hw_can_convert = |pf: &PixelFormat| {
-                accel
-                    .as_ref()
-                    .is_none_or(|a| a.can_convert_pixel_format(ffmpeg_info, pf))
+                accel.as_ref().is_none_or(|a| {
+                    a.can_convert_pixel_format(ffmpeg_info, &current_state.pixel_format, pf)
+                        && a.format_filter(pf).is_some()
+                })
             };
 
             let needs_format_change = encoder_pixel_format
@@ -436,7 +526,13 @@ impl FilterChain {
                 format.apply_to(current_state);
                 resolved.push(PipelineFilter::Video(format))
             }
-            (_, Some(a)) if a.can_convert_pixel_format(ffmpeg_info, pixel_format) => {
+            (_, Some(a))
+                if a.can_convert_pixel_format(
+                    ffmpeg_info,
+                    &current_state.pixel_format,
+                    pixel_format,
+                ) =>
+            {
                 if let Some(f) = a.format_filter(pixel_format) {
                     f.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(f));
@@ -477,19 +573,6 @@ impl FilterChain {
     }
 
     pub(crate) fn optimize(&mut self) {
-        // swap software scale before software tone map to reduce
-        // the amount of data that needs to be tone mapped
-        if let Some(tonemap_index) = self
-            .filters
-            .iter()
-            .position(|f| matches!(f, PipelineFilter::Video(VideoFilter::ToneMap(_))))
-            && let Some(PipelineFilter::Video(VideoFilter::Scale(_))) =
-                self.filters.get(tonemap_index + 1)
-        {
-            log::debug!("swapping software scale filter before software tonemap filter");
-            self.filters.swap(tonemap_index, tonemap_index + 1);
-        }
-
         // remove DV5 workaround with libplacebo
         if self.filters.iter().any(|f| {
             matches!(
@@ -513,9 +596,14 @@ impl FilterChain {
                     continue;
                 }
 
-                // find the next video filter (before overlay)
+                // find the next video filter (before overlay). skipping fps is safe: only
+                // per-frame filters come after it
                 let mut j = i + 1;
-                while j < self.filters.len() && matches!(self.filters[j], PipelineFilter::Audio(_))
+                while j < self.filters.len()
+                    && matches!(
+                        self.filters[j],
+                        PipelineFilter::Audio(_) | PipelineFilter::Video(VideoFilter::Fps(_))
+                    )
                 {
                     j += 1;
                 }
@@ -524,7 +612,10 @@ impl FilterChain {
                     continue;
                 }
 
-                if let Some(fused) = Self::try_fuse_cuda(&self.filters[i], &self.filters[j]) {
+                let fused = Self::try_fuse_cuda(&self.filters[i], &self.filters[j])
+                    .or_else(|| Self::try_fuse_qsv(&self.filters[i], &self.filters[j]))
+                    .or_else(|| Self::try_fuse_amf(&self.filters[i], &self.filters[j]));
+                if let Some(fused) = fused {
                     self.filters[i] = fused;
                     self.filters.remove(j);
                     changed = true;
@@ -541,7 +632,7 @@ impl FilterChain {
 
     /// try to fuse consecutive scale_cuda (format, resize) into a single scale_cuda kernel
     fn try_fuse_cuda(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
-        use VideoFilter::{FormatCuda, ScaleCuda};
+        use VideoFilter::{FormatCuda, LibplaceboCuda, ScaleCuda};
         let (PipelineFilter::Video(va), PipelineFilter::Video(vb)) = (a, b) else {
             return None;
         };
@@ -559,8 +650,45 @@ impl FilterChain {
                     ..s.clone()
                 }),
             )),
+            // only fuse a tonemap followed by a downscale
+            (LibplaceboCuda(l), ScaleCuda(s))
+                if s.size
+                    .is_some_and(|size| size.pixel_count() < l.input_size.pixel_count())
+                    && s.format.is_none_or(|f| f == l.format) =>
+            {
+                Some(PipelineFilter::Video(LibplaceboCuda(
+                    crate::accel::cuda::LibplaceboCuda {
+                        size: s.size,
+                        ..l.clone()
+                    },
+                )))
+            }
             _ => None,
         }
+    }
+
+    fn try_fuse_qsv(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
+        let (
+            PipelineFilter::Video(VideoFilter::VppQsv(va)),
+            PipelineFilter::Video(VideoFilter::VppQsv(vb)),
+        ) = (a, b)
+        else {
+            return None;
+        };
+        va.fuse(vb)
+            .map(|fused| PipelineFilter::Video(VideoFilter::VppQsv(fused)))
+    }
+
+    fn try_fuse_amf(a: &PipelineFilter, b: &PipelineFilter) -> Option<PipelineFilter> {
+        let (
+            PipelineFilter::Video(VideoFilter::VppAmf(va)),
+            PipelineFilter::Video(VideoFilter::VppAmf(vb)),
+        ) = (a, b)
+        else {
+            return None;
+        };
+        va.fuse(vb)
+            .map(|fused| PipelineFilter::Video(VideoFilter::VppAmf(fused)))
     }
 
     pub(crate) fn build(
@@ -730,26 +858,74 @@ impl FilterChain {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::time::Duration;
+
+    use time::OffsetDateTime;
 
     use super::*;
     use crate::accel::opencl::{PadOpencl, TonemapOpencl};
+    use crate::accel::qsv::Qsv;
     use crate::accel::vaapi::{PadVaapi, TonemapVaapi, Vaapi, VaapiDriver};
+    use crate::accel::video_toolbox::VideoToolbox;
     use crate::capabilities::opencl::OpenCLCapabilities;
+    use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
     use crate::capabilities::vaapi::VaapiCapabilities;
+    use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
+    use crate::color::FrameColor;
     use crate::ffmpeg_info::KnownVideoFilter;
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
+    use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
     use crate::output_settings::ScalingMode;
     use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
-    use crate::pipeline::{HdrFormat, HwPixelFormat};
+    use crate::pipeline::{HdrFormat, HwPixelFormat, VideoFormat};
     use crate::video_filter::{
-        FormatFilter, HwMapFilter, HwUploadFilter, PadFilter, ScaleFilter, ToneMapFilter,
+        FadeFilter, FormatFilter, HwMapFilter, HwUploadFilter, LoopFilter, PadFilter, ScaleFilter,
+        ToneMapFilter,
     };
+
+    #[test]
+    fn optimize_fuses_qsv_vpp_across_fps() {
+        use crate::accel::qsv::VppQsv;
+        use crate::frame_rate::FrameRate;
+        use crate::video_filter::FpsFilter;
+
+        let size = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+        let fps: VideoFilter = FpsFilter {
+            frame_rate: FrameRate::parse_target("25"),
+        }
+        .into();
+        let mut chain = FilterChain::new(vec![
+            PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::deinterlace(None))),
+            PipelineFilter::Video(fps),
+            PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::scale(size))),
+        ]);
+
+        chain.optimize();
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 2, "{args:?}");
+        assert!(
+            args[0].starts_with("vpp_qsv=deinterlace") && args[0].contains("w=1280"),
+            "{args:?}"
+        );
+        assert_eq!(args[1], "fps=25");
+    }
 
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: VaapiDriver::Ihd,
+            driver: Some(VaapiDriver::Ihd),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
@@ -757,6 +933,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities::default(),
@@ -793,6 +970,168 @@ mod tests {
         );
     }
 
+    fn sdr_state(surface: FrameSurface, pixel_format: PixelFormat) -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface,
+            pixel_format,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    fn periodic_watermark(after_loop: Vec<VideoFilter>) -> PipelineFilter {
+        let fades = FadeFilter::for_graphics(
+            Some(&WatermarkTiming::Periodic(PeriodicTiming {
+                clock: PeriodicClock::Content,
+                frequency_ms: 2000,
+                phase_offset_ms: None,
+                disable_after_ms: None,
+                fade_ms: Some(200),
+                hold_ms: 400,
+            })),
+            OffsetDateTime::UNIX_EPOCH,
+            Duration::ZERO,
+            Duration::from_secs(4),
+        );
+
+        let mut secondary: Vec<VideoFilter> = vec![
+            ScaleFilter {
+                size: Some(FrameSize {
+                    width: 192,
+                    height: 192,
+                }),
+                scaling_mode: ScalingMode::ScaleAndPad,
+                input_is_anamorphic: false,
+                flags: None,
+            }
+            .into(),
+            LoopFilter {
+                is_still_image: true,
+                loops: None,
+            }
+            .into(),
+        ];
+        secondary.extend(fades.into_iter().map(VideoFilter::from));
+        secondary.extend(after_loop);
+
+        PipelineFilter::Overlay(OverlayFilter {
+            kind: SoftwareOverlay::default().into(),
+            secondary,
+            secondary_initial_state: FrameState {
+                size: FrameSize {
+                    width: 200,
+                    height: 200,
+                },
+                ..sdr_state(FrameSurface::System, PixelFormat::Rgba)
+            },
+            secondary_source: OverlaySource::Graphics(0),
+            location: None,
+        })
+    }
+
+    fn secondary_chain(
+        overlay: PipelineFilter,
+        accel: Option<HardwareAccel>,
+        ffmpeg_info: &FfmpegInfo,
+        main: FrameState,
+    ) -> String {
+        let mut chain = FilterChain::new(vec![overlay]);
+        chain.resolve(
+            ffmpeg_info,
+            &accel,
+            &VideoFilterOptions::default(),
+            &main,
+            &EncoderTarget {
+                surface: main.surface,
+                pixel_format: Some(main.pixel_format),
+                also_accepts: Vec::new(),
+            },
+        );
+        chain.build("0:a", "0:v", None, &[Some(String::from("1:0"))]);
+
+        let filter_complex = &chain.as_arg()[1];
+        let start = filter_complex.find("[1:0]").unwrap();
+        let end = filter_complex[start..].find(';').unwrap();
+        filter_complex[start..start + end].to_owned()
+    }
+
+    #[test]
+    fn software_overlay_converts_still_image_before_loop() {
+        let sec = secondary_chain(
+            periodic_watermark(Vec::new()),
+            None,
+            &FfmpegInfo::default(),
+            sdr_state(FrameSurface::System, PixelFormat::Yuv420p),
+        );
+
+        assert!(
+            sec.contains("setsar=1,format=yuva420p,loop=-1:1,fade="),
+            "unexpected secondary: {sec}"
+        );
+        assert_eq!(sec.matches("format=").count(), 1, "{sec}");
+    }
+
+    #[test]
+    fn vaapi_overlay_converts_still_image_before_loop_and_only_uploads_after() {
+        let accel = HardwareAccel::Vaapi(Vaapi {
+            capabilities: VaapiCapabilities {
+                vpp_pixel_formats: HashSet::from([
+                    libva_sys::VA_FOURCC_NV12,
+                    libva_sys::VA_FOURCC_BGRA,
+                ]),
+                can_overlay: true,
+                ..vaapi_accel_with_tonemap(VaapiDriver::Ihd, false, false, false).capabilities
+            },
+            ..vaapi_accel_with_tonemap(VaapiDriver::Ihd, false, false, false)
+        });
+
+        let sec = secondary_chain(
+            periodic_watermark(Vec::new()),
+            Some(accel),
+            &ffmpeg_info_with_filters(&[KnownVideoFilter::OverlayVaapi]),
+            sdr_state(FrameSurface::Vaapi, PixelFormat::Nv12),
+        );
+
+        assert!(
+            sec.contains("setsar=1,format=bgra,loop=-1:1,fade="),
+            "unexpected secondary: {sec}"
+        );
+        assert!(sec.ends_with("',hwupload[v_s0]"), "{sec}");
+        assert_eq!(sec.matches("format=").count(), 1, "{sec}");
+    }
+
+    #[test]
+    fn unknown_filter_after_loop_keeps_conversion_at_the_end() {
+        let after_loop = ScaleFilter {
+            size: Some(FrameSize {
+                width: 96,
+                height: 96,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+            input_is_anamorphic: false,
+            flags: None,
+        };
+
+        let sec = secondary_chain(
+            periodic_watermark(vec![after_loop.into()]),
+            None,
+            &FfmpegInfo::default(),
+            sdr_state(FrameSurface::System, PixelFormat::Yuv420p),
+        );
+
+        assert!(sec.contains("setsar=1,loop=-1:1,fade="), "{sec}");
+        assert!(sec.ends_with("setsar=1,format=yuva420p[v_s0]"), "{sec}");
+    }
+
     fn vaapi_accel_with_tonemap(
         driver: VaapiDriver,
         hdr_to_sdr: bool,
@@ -809,7 +1148,7 @@ mod tests {
         }
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver,
+            driver: Some(driver),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
@@ -817,6 +1156,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap,
                 can_hdr_to_hdr_tonemap,
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -832,9 +1172,8 @@ mod tests {
             video_filters.insert(f.to_string());
         }
         FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
-            preferred_filters: HashMap::new(),
+            ..Default::default()
         }
     }
 
@@ -850,8 +1189,53 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
+            rotation: None,
         }
+    }
+
+    #[test]
+    fn resolve_maps_back_from_opencl_before_fps() {
+        let tonemap: VideoFilter = TonemapOpencl {
+            algorithm: Some(String::from("hable")),
+            output_format: HwPixelFormat::Nv12,
+        }
+        .into();
+        let fps: VideoFilter = crate::video_filter::FpsFilter {
+            frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
+        }
+        .into();
+        let mut chain = FilterChain::new(vec![
+            PipelineFilter::Video(tonemap),
+            PipelineFilter::Video(fps),
+        ]);
+
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(vaapi_accel()),
+            &VideoFilterOptions::default(),
+            &hdr_vaapi_state(),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
+        );
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 4, "{args:?}");
+        assert_eq!(args[0], "hwmap=derive_device=opencl");
+        assert!(args[1].starts_with("tonemap_opencl="), "{args:?}");
+        assert_eq!(args[2], "hwmap=derive_device=vaapi:reverse=1");
+        assert_eq!(args[3], "fps=30");
     }
 
     #[test]
@@ -874,8 +1258,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -943,8 +1330,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[]);
 
@@ -973,6 +1363,147 @@ mod tests {
         );
     }
 
+    // vpp_qsv lists RGB4 but its format= cannot emit bgra, so the conversion must go
+    // through software instead of silently leaving the frame in the wrong format
+    fn qsv_accel_with_rgb4() -> HardwareAccel {
+        HardwareAccel::Qsv(Qsv {
+            capabilities: QsvCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                upload_formats: HashSet::from([
+                    QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4),
+                ]),
+                convert_pairs: HashSet::from([
+                    (
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    ),
+                    (
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_RGB4),
+                        QsvFourCC(libvpl_sys::MFX_FOURCC_NV12),
+                    ),
+                ]),
+                vpp_filters: HashSet::new(),
+                rotation_formats: HashSet::new(),
+                composite_pairs: HashSet::new(),
+                runtime_api: None,
+            },
+        })
+    }
+
+    fn sdr_1080p_state(surface: FrameSurface, pixel_format: PixelFormat) -> FrameState {
+        FrameState {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface,
+            pixel_format,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    fn resolve_to_qsv_bgra(initial_state: &FrameState) -> Vec<PipelineFilter> {
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(qsv_accel_with_rgb4()),
+            &VideoFilterOptions::default(),
+            initial_state,
+            &EncoderTarget {
+                surface: FrameSurface::Qsv,
+                pixel_format: Some(PixelFormat::Bgra),
+                also_accepts: Vec::new(),
+            },
+        );
+        chain.filters
+    }
+
+    #[test]
+    fn resolve_converts_to_bgra_in_software_on_the_qsv_surface() {
+        let filters = resolve_to_qsv_bgra(&sdr_1080p_state(FrameSurface::Qsv, PixelFormat::Nv12));
+
+        assert!(
+            matches!(
+                filters.as_slice(),
+                [
+                    PipelineFilter::Video(VideoFilter::HwDownload(_)),
+                    PipelineFilter::Video(VideoFilter::Format(FormatFilter {
+                        format: PixelFormat::Bgra
+                    })),
+                    PipelineFilter::Video(VideoFilter::HwUpload(_)),
+                ]
+            ),
+            "expected hwdownload -> format=bgra -> hwupload, got {:?}",
+            filters
+        );
+    }
+
+    #[test]
+    fn resolve_converts_to_bgra_before_upload_to_qsv() {
+        let filters =
+            resolve_to_qsv_bgra(&sdr_1080p_state(FrameSurface::System, PixelFormat::Yuv420p));
+
+        assert!(
+            matches!(
+                filters.as_slice(),
+                [
+                    PipelineFilter::Video(VideoFilter::Format(FormatFilter {
+                        format: PixelFormat::Bgra
+                    })),
+                    PipelineFilter::Video(VideoFilter::HwUpload(_)),
+                ]
+            ),
+            "expected format=bgra -> hwupload, got {:?}",
+            filters
+        );
+    }
+
+    #[test]
+    fn resolve_converts_10bit_to_8bit_before_upload_to_videotoolbox() {
+        let accel = HardwareAccel::VideoToolbox(VideoToolbox::new(VideoToolboxCapabilities {
+            supported_decoders: HashSet::new(),
+            supported_interlaced_decoders: HashSet::new(),
+            supported_encoders: HashSet::from([(VideoFormat::Hevc, 8)]),
+        }));
+        let mut chain = FilterChain::new(Vec::new());
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(accel),
+            &VideoFilterOptions::default(),
+            &sdr_1080p_state(FrameSurface::System, PixelFormat::Yuv420p10le),
+            &EncoderTarget {
+                surface: FrameSurface::VideoToolbox,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
+        );
+
+        assert!(
+            matches!(
+                chain.filters.as_slice(),
+                [
+                    PipelineFilter::Video(VideoFilter::Format(FormatFilter {
+                        format: PixelFormat::Nv12
+                    })),
+                    PipelineFilter::Video(VideoFilter::HwUpload(HwUploadFilter {
+                        source_format: PixelFormat::Nv12,
+                        ..
+                    })),
+                ]
+            ),
+            "expected format=nv12 -> hwupload, got {:?}",
+            chain.filters
+        );
+    }
+
     #[test]
     fn resolve_does_not_insert_hwmap_when_surfaces_match() {
         let accel = vaapi_accel();
@@ -992,8 +1523,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let has_hwmap = chain
@@ -1191,8 +1725,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1239,8 +1776,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[]);
 
@@ -1262,16 +1802,24 @@ mod tests {
     // -- pad best_filter tests --
 
     fn vaapi_accel_with_opencl(opencl: bool) -> Vaapi {
+        vaapi_accel_with_vendor(
+            "Intel iHD driver for Intel(R) Gen Graphics - 26.2.4 ()",
+            opencl,
+        )
+    }
+
+    fn vaapi_accel_with_vendor(vendor: &str, opencl: bool) -> Vaapi {
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: VaapiDriver::Ihd,
+            driver: None,
             capabilities: VaapiCapabilities {
-                vendor: String::from("test"),
+                vendor: String::from(vendor),
                 supported: HashSet::new(),
                 vpp_pixel_formats: HashSet::from([libva_sys::VA_FOURCC_NV12]),
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -1293,7 +1841,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         }
     }
 
@@ -1320,6 +1870,44 @@ mod tests {
             "expected PadVaapi when both pad_vaapi and pad_opencl available, got {:?}",
             result.as_arg()
         );
+    }
+
+    #[rstest::rstest]
+    #[case::opencl(true)]
+    #[case::software(false)]
+    fn best_filter_skips_pad_vaapi_on_mesa(#[case] opencl: bool) {
+        let vaapi = vaapi_accel_with_vendor(
+            "Mesa Gallium driver 26.0.3 for AMD Radeon Vega Mobile Gfx (radeonsi, raven, ACO)",
+            opencl,
+        );
+        let ffmpeg_info =
+            ffmpeg_info_with_filters(&[KnownVideoFilter::PadVaapi, KnownVideoFilter::PadOpencl]);
+        let state = sdr_vaapi_state();
+        let filter_options = VideoFilterOptions::default();
+
+        let input: VideoFilter = PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+        }
+        .into();
+
+        let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
+        if opencl {
+            assert!(
+                matches!(result, VideoFilter::PadOpencl(_)),
+                "expected PadOpencl on Mesa, got {:?}",
+                result.as_arg()
+            );
+        } else {
+            assert!(
+                matches!(result, VideoFilter::Pad(_)),
+                "expected software Pad on Mesa, got {:?}",
+                result.as_arg()
+            );
+        }
     }
 
     #[test]
@@ -1417,8 +2005,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1490,8 +2081,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1541,8 +2135,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
         chain.build("0:a", "0:v", None, &[]);
 
@@ -1578,7 +2175,7 @@ mod tests {
             size: None,
             scaling_mode: ScalingMode::Stretch,
             input_is_anamorphic: false,
-            force_original_aspect_ratio: None,
+            flags: None,
         }
         .into();
         assert!(upload.as_arg().is_none());
@@ -1614,7 +2211,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1624,8 +2223,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1691,7 +2293,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1700,8 +2304,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1744,7 +2351,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1753,8 +2362,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &None, // no encoder pixel format hint
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: None,
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1811,7 +2423,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1820,8 +2434,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &None, // no encoder pixel format hint
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: None,
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1877,7 +2494,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p10le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -1886,8 +2505,11 @@ mod tests {
             &Some(accel),
             &filter_options,
             &initial_state,
-            &FrameSurface::Vaapi,
-            &Some(PixelFormat::Nv12),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
         );
 
         let video_filters: Vec<&VideoFilter> = chain
@@ -1907,6 +2529,158 @@ mod tests {
                 })
             ),
             "encoder format hint (NV12) should win over bit-depth canonical (P010le)",
+        );
+    }
+
+    fn resolve_rgba_upload_to_cuda(encoder_pixel_format: PixelFormat) -> Vec<String> {
+        resolve_upload_to_cuda(Vec::new(), PixelFormat::Rgba, encoder_pixel_format)
+    }
+
+    fn resolve_upload_to_cuda(
+        filters: Vec<PipelineFilter>,
+        pixel_format: PixelFormat,
+        encoder_pixel_format: PixelFormat,
+    ) -> Vec<String> {
+        use crate::accel::cuda::Cuda;
+        use crate::capabilities::nvidia::NvidiaCapabilities;
+
+        let accel = HardwareAccel::Cuda(Cuda::new(
+            NvidiaCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                device_uuid: None,
+            },
+            None,
+        ));
+
+        let initial_state = sdr_state(FrameSurface::System, pixel_format);
+        let mut chain = FilterChain::new(filters);
+        chain.evaluate(&initial_state, &FfmpegInfo::default());
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(accel),
+            &VideoFilterOptions::default(),
+            &initial_state,
+            &EncoderTarget {
+                surface: FrameSurface::Cuda,
+                pixel_format: Some(encoder_pixel_format),
+                also_accepts: Vec::new(),
+            },
+        );
+
+        chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resolve_drops_alpha_before_cuda_upload_for_opaque_target() {
+        assert_eq!(
+            resolve_rgba_upload_to_cuda(PixelFormat::Nv12),
+            vec!["format=nv12", "hwupload_cuda"]
+        );
+    }
+
+    #[test]
+    fn resolve_keeps_alpha_for_cuda_upload_to_alpha_target() {
+        assert_eq!(
+            resolve_rgba_upload_to_cuda(PixelFormat::Yuva420p),
+            vec!["format=yuva420p", "hwupload_cuda"]
+        );
+    }
+
+    fn resolve_cuda_overlay(
+        encoder_surface: FrameSurface,
+        encoder_pixel_format: PixelFormat,
+        encoder_also_accepts: &[PixelFormat],
+    ) -> Vec<String> {
+        use crate::accel::cuda::Cuda;
+        use crate::capabilities::nvidia::NvidiaCapabilities;
+
+        let accel = HardwareAccel::Cuda(Cuda::new(
+            NvidiaCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                device_uuid: None,
+            },
+            None,
+        ));
+        let ffmpeg_info = ffmpeg_info_with_filters(&[KnownVideoFilter::OverlayCuda]);
+        let initial_state = sdr_state(FrameSurface::Cuda, PixelFormat::Nv12);
+        let mut chain = FilterChain::new(vec![PipelineFilter::Overlay(OverlayFilter {
+            kind: SoftwareOverlay::default().into(),
+            secondary: Vec::new(),
+            secondary_initial_state: sdr_state(FrameSurface::System, PixelFormat::Rgba),
+            secondary_source: OverlaySource::Graphics(0),
+            location: None,
+        })]);
+        chain.resolve(
+            &ffmpeg_info,
+            &Some(accel),
+            &VideoFilterOptions::default(),
+            &initial_state,
+            &EncoderTarget {
+                surface: encoder_surface,
+                pixel_format: Some(encoder_pixel_format),
+                also_accepts: encoder_also_accepts.to_vec(),
+            },
+        );
+
+        chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resolve_downloads_cuda_overlay_output_for_software_encoder() {
+        assert_eq!(
+            resolve_cuda_overlay(FrameSurface::System, PixelFormat::Yuv420p, &[]),
+            vec!["scale_cuda=format=yuv420p", "hwdownload,format=yuv420p"]
+        );
+    }
+
+    #[test]
+    fn resolve_passes_cuda_overlay_output_to_accepting_encoder() {
+        assert_eq!(
+            resolve_cuda_overlay(
+                FrameSurface::Cuda,
+                PixelFormat::Nv12,
+                &[PixelFormat::Yuv420p]
+            ),
+            vec!["scale_cuda=format=yuv420p"]
+        );
+    }
+
+    #[test]
+    fn resolve_converts_cuda_overlay_output_for_nv12_encoder() {
+        assert_eq!(
+            resolve_cuda_overlay(FrameSurface::Cuda, PixelFormat::Nv12, &[]),
+            vec!["scale_cuda=format=yuv420p", "scale_cuda=format=nv12"]
+        );
+    }
+
+    #[test]
+    fn resolve_converts_after_opacity_before_cuda_upload() {
+        let opacity = PipelineFilter::Video(
+            crate::video_filter::ColorChannelMixerFilter { alpha: 0.5 }.into(),
+        );
+        assert_eq!(
+            resolve_upload_to_cuda(vec![opacity], PixelFormat::Yuva420p, PixelFormat::Yuva420p),
+            vec![
+                "colorchannelmixer=aa=0.5",
+                "format=yuva420p",
+                "hwupload_cuda"
+            ]
         );
     }
 }

@@ -2,39 +2,63 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ffpipeline::ffmpeg_info::FfmpegInfo;
+use ffpipeline::copy_decision::{CopyDecision, CopyDecisions};
+use ffpipeline::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel};
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
-use ffpipeline::hw_accel::HardwareAccel;
+use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
 use ffpipeline::input::{
-    InputSettings, InputSource, LocalInputSource, ProbedInput, WatermarkInput, WatermarkLocation,
-    WatermarkTiming,
+    GraphicsKind, InputSettings, InputSource, LavfiInputSource, LocalInputSource, ProbedInput,
+    WatermarkInput, WatermarkLocation, WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
-    AudioLoudnessSettings, AudioOutputSettings, OutputSettings, ScalingMode, SubtitleMode,
-    VideoFilterOptions,
+    AudioLoudnessSettings, AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings,
+    ScalingMode, SubtitleMode, VideoFilterOptions, VideoOutputSettings, VideoTranscodeSettings,
 };
-use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline};
-use ffpipeline::probe::{ProbeDeps, ProbeResult, ProbeResultStream, Probeable};
+use ffpipeline::pipeline::{
+    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline,
+};
+use ffpipeline::probe::{
+    ProbeDeps, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
+    Probeable,
+};
 use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 
+pub mod copy_seek;
+pub mod shared;
+
 static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
+static HARDWARE_ACCEL: OnceCell<Option<HardwareAccel>> = OnceCell::const_new();
 
 pub struct TestEnv {
     pub ffmpeg: PathBuf,
     pub ffprobe: PathBuf,
     pub ffmpeg_info: FfmpegInfo,
+    pub disabled_filters: Vec<String>,
 }
 
 #[allow(dead_code)]
 pub struct TestCase {
     pub fixture_name: &'static str,
+    /// `None`: audio comes from `fixture_name`
+    pub audio_source: Option<TestAudioSource>,
+    pub subtitle_fixture: Option<&'static str>,
     pub params: TestOutputParams,
     pub expected_video_codec: String,
     pub expected_video_size: FrameSize,
     pub expected_audio_codec: String,
+    pub expected_copy: CopyDecisions,
+    /// Output pixel that a burned-in subtitle must make white
+    pub burned_point: Option<(u32, u32)>,
+    pub check_av_alignment: bool,
+}
+
+#[allow(dead_code)]
+pub enum TestAudioSource {
+    Fixture(&'static str),
+    Lavfi(&'static str),
 }
 
 #[allow(dead_code)]
@@ -84,26 +108,512 @@ pub async fn test_env() -> Option<&'static TestEnv> {
                 ffmpeg,
                 ffprobe,
                 ffmpeg_info,
+                disabled_filters,
             })
         })
         .await
         .as_ref()
 }
 
+/// Each hardware suite is its own test binary, so one cached accel per process is enough.
+/// Panics rather than skipping so a suite can't pass without touching the hardware.
 #[allow(dead_code)]
-pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
+pub async fn hardware_accel(
+    known: KnownHardwareAccel,
+    probe: fn() -> Option<HardwareAccel>,
+) -> Option<HardwareAccel> {
+    let env = test_env().await?;
+    assert!(
+        env.ffmpeg_info.has_hw_accel(&known),
+        "{known} not available in ffmpeg"
+    );
+    let accel = HARDWARE_ACCEL.get_or_init(|| async { probe() }).await;
+    let accel = accel.clone().unwrap_or_else(|| {
+        panic!("no usable {known} device found, or it reported no capabilities")
+    });
+    Some(accel)
+}
+
+/// Returns the pipeline args so accel-specific tests can assert which filters were chosen.
+pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<String> {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+    let source_frame_rate = probe_avg_frame_rate(&test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
+    let deinterlace = test_case.params.deinterlace;
+    let video_format = test_case.params.video_format;
+    let bit_depth = test_case.params.bit_depth;
+    let video_size = test_case.params.video_size;
+    let disabled_filters = std::mem::take(&mut test_case.params.disabled_filters);
+    let source_video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.clone()),
+            _ => None,
+        })
+        .expect("no video stream found in source");
+    let video_copied = test_case.expected_copy.video == Some(CopyDecision::Copy);
+    let audio_copied = test_case.expected_copy.audio == Some(CopyDecision::Copy);
+    // copied video keeps the source HDR, so skip the SDR check
+    let source_is_hdr =
+        !video_copied && (source_video.color_params.is_hdr() || source_video.dv_profile == Some(5));
+    // without frame rate normalization, output must keep the source frame rate
+    let expected_frame_rate = test_case
+        .params
+        .frame_rate
+        .clone()
+        .unwrap_or(source_frame_rate);
     let watermark = match test_case.params.watermark.take() {
         Some(watermark) => Some(build_watermark_input(test_env, &watermark).await),
         None => None,
     };
-    let input = build_input(&source, probe, Duration::from_secs(1), watermark);
+    let has_watermark = watermark.is_some();
+    let duration = test_case.params.duration;
+    let in_point = test_case.params.in_point;
+    let mut input = build_input(&source, probe, duration, watermark);
+    if let Some(audio_source) = &test_case.audio_source {
+        input.audio_input = build_audio_input(test_env, audio_source, duration).await;
+    }
+    for item in [&mut input.video_input, &mut input.audio_input] {
+        item.in_point += in_point;
+        item.out_point += in_point;
+    }
+    if let Some(subtitle_fixture) = test_case.subtitle_fixture {
+        let path = fixture_path(subtitle_fixture);
+        let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
+        input.subtitle_input = Some(local_input(&path, probe, duration));
+    }
     let output = build_output(dir.path(), test_case.params);
 
+    let ffmpeg_info = if disabled_filters.is_empty() {
+        Cow::Borrowed(&test_env.ffmpeg_info)
+    } else {
+        let mut all_disabled = test_env.disabled_filters.clone();
+        all_disabled.extend(disabled_filters.iter().map(|f| f.to_string()));
+        Cow::Owned(load_ffmpeg_info(&test_env.ffmpeg, &all_disabled).await)
+    };
+
+    let mut pipeline = generate_pipeline(&ffmpeg_info, input, output).unwrap();
+    assert_eq!(
+        pipeline.copy_decisions(),
+        &test_case.expected_copy,
+        "unexpected copy decisions"
+    );
+    pipeline.optimize();
+    let args: Vec<String> = pipeline.args().iter().map(|a| a.to_string()).collect();
+    assert_stream_copy(&args, "-vcodec", video_copied);
+    assert_stream_copy(&args, "-acodec", audio_copied);
+    let cmd = args.join(" ");
+    for filter in disabled_filters {
+        assert!(
+            !cmd.contains(filter),
+            "disabled filter {filter} is still in the pipeline"
+        );
+    }
+
+    let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
+    assert!(success, "ffmpeg failed:\n{stderr}");
+
+    if let Some(accel) = &accel {
+        assert_accel_usage(
+            accel,
+            &source_video,
+            source_is_hdr,
+            (!video_copied).then_some(video_format),
+            bit_depth,
+            video_size,
+            &args,
+        );
+    }
+
+    let segment = find_first_segment(dir.path());
+    assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
+    if let Some((x, y)) = test_case.burned_point {
+        assert_burned_in(&test_env.ffmpeg, &segment, x, y).await;
+    }
+    if test_case.check_av_alignment {
+        assert_av_aligned(&test_env.ffprobe, &segment).await;
+    }
+    let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
+    assert_video(
+        &output_probe,
+        &test_case.expected_video_codec,
+        test_case.expected_video_size.width,
+        test_case.expected_video_size.height,
+        &expected_frame_rate,
+        (!video_copied).then_some(bit_depth),
+        accel,
+    );
+    assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if !video_copied && let Some(size) = video_size {
+        assert_black_bars(
+            &test_env.ffmpeg,
+            &segment,
+            &source_video,
+            size,
+            has_watermark,
+        )
+        .await;
+    }
+    if source_video.is_quarter_turn()
+        && let Some(size) = video_size
+    {
+        assert_pillarboxed(&test_env.ffmpeg, &segment, size).await;
+    }
+    if deinterlace {
+        let video = output_probe
+            .streams
+            .iter()
+            .find_map(|s| match s {
+                ProbeResultStream::Video(v) => Some(v),
+                _ => None,
+            })
+            .expect("no output video");
+        // HEVC may omit field_order even for progressive output. This rejects
+        // explicit interlace tags; the motion fixture also checks actual pixels.
+        assert!(
+            !video.is_interlaced(),
+            "deinterlaced output is still tagged interlaced: {:?}",
+            video.field_order
+        );
+        if test_case.fixture_name == "480i_h264_motion.ts" {
+            let score =
+                motion_combing_score(&test_env.ffmpeg, &segment, test_case.expected_video_size)
+                    .await;
+            assert!(
+                score < 1.0,
+                "deinterlacing left alternating scanlines: score={score}"
+            );
+        }
+    }
+    if source_is_hdr {
+        assert_sdr_output(&output_probe);
+    }
+    args
+}
+
+/// Canvas sources may use any pixel format with alpha, not just the bgra that legacy sends, so
+/// this checks that opaque, half-transparent and transparent regions all survive the overlay.
+#[allow(dead_code)]
+pub async fn run_canvas_test(
+    test_env: &TestEnv,
+    accel: Option<HardwareAccel>,
+    codec: &str,
+    pix_fmt: &str,
+) {
+    let size = FrameSize {
+        width: 640,
+        height: 360,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.mkv");
+    let canvas = dir.path().join("canvas.nut");
+    let canvas_source = format!(
+        "color=black@0:s={}x{}:r=24,format=bgra,\
+         drawbox=x=0:y=0:w=160:h=160:color=red@1:t=fill:replace=1,\
+         drawbox=x=320:y=0:w=160:h=160:color=red@0.5:t=fill:replace=1",
+        size.width, size.height
+    );
+    let main_source = format!("color=blue:s={}x{}:r=24", size.width, size.height);
+    for (path, args) in [
+        (
+            &main,
+            vec![
+                "-f",
+                "lavfi",
+                "-i",
+                &main_source,
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=48000:cl=stereo",
+                "-t",
+                "4",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "pcm_s16le",
+            ],
+        ),
+        (
+            &canvas,
+            vec![
+                "-f",
+                "lavfi",
+                "-i",
+                &canvas_source,
+                "-t",
+                "4",
+                "-c:v",
+                codec,
+                "-pix_fmt",
+                pix_fmt,
+                "-f",
+                "nut",
+            ],
+        ),
+    ] {
+        let generated = tokio::time::timeout(
+            Duration::from_secs(30),
+            ersatztv_core::process::command(&test_env.ffmpeg)
+                .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
+                .args(args)
+                .arg(path)
+                .output(),
+        )
+        .await
+        .expect("fixture generation timed out")
+        .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+    }
+
+    let canvas_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &canvas).await;
+    let canvas_pix_fmt = canvas_probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.pix_fmt.clone()),
+            _ => None,
+        })
+        .expect("no video stream in canvas");
+    assert_eq!(
+        canvas_pix_fmt, pix_fmt,
+        "canvas fixture has the wrong pixel format"
+    );
+
+    let graphics = WatermarkInput {
+        layer_index: 0,
+        input_source: InputSource::Local(LocalInputSource {
+            path: canvas.to_string_lossy().into_owned(),
+        }),
+        probe_result: canvas_probe,
+        stream_index: None,
+        location: WatermarkLocation::TopLeft,
+        width_percent: None,
+        within_source_content: None,
+        horizontal_margin_percent: None,
+        vertical_margin_percent: None,
+        opacity_percent: None,
+        kind: GraphicsKind::Canvas,
+        in_point: Duration::ZERO,
+        timing: None,
+    };
+    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
+    let source_video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.clone()),
+            _ => None,
+        })
+        .expect("no video stream in main");
+    let input = build_input(&main, probe, Duration::from_secs(1), Some(graphics));
+    let output = build_output(
+        dir.path(),
+        TestOutputParams {
+            video_size: Some(size),
+            accel: accel.clone(),
+            ..TestOutputParams::default()
+        },
+    );
+    let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
+    pipeline.optimize();
+    let args = pipeline.args();
+
+    let filter = args
+        .windows(2)
+        .filter(|a| a[0] == "-filter_complex")
+        .map(|a| a[1].as_ref())
+        .collect::<Vec<_>>()
+        .join(";");
+    let canvas_chain = filter
+        .split(';')
+        .find(|chain| chain.ends_with("[v_s0]"))
+        .unwrap_or_else(|| panic!("no canvas chain in {filter}"));
+    assert!(
+        !canvas_chain.contains("yuva420p,format=bgra"),
+        "canvas is converted to yuva420p and back: {canvas_chain}"
+    );
+    if pix_fmt == "bgra" {
+        assert!(
+            !canvas_chain.contains("format=bgra"),
+            "bgra canvas is converted to bgra: {canvas_chain}"
+        );
+    }
+
+    let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
+    assert!(success, "ffmpeg failed:\n{stderr}");
+
+    if let Some(accel) = &accel {
+        assert_accel_usage(
+            accel,
+            &source_video,
+            false,
+            Some(EncodeFormat::H264),
+            8,
+            Some(size),
+            &args,
+        );
+    }
+
+    let segment = find_first_segment(dir.path());
+    assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
+    let decoded = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(&test_env.ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(&segment)
+            .args([
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ])
+            .output(),
+    )
+    .await
+    .expect("frame decode timed out")
+    .unwrap();
+    assert!(
+        decoded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&decoded.stderr)
+    );
+    let width = size.width as usize;
+    assert_eq!(decoded.stdout.len(), width * size.height as usize * 3);
+    let pixel = |x: usize, y: usize| &decoded.stdout[(y * width + x) * 3..(y * width + x) * 3 + 3];
+
+    let opaque = pixel(80, 80);
+    assert!(
+        opaque[0] > 200 && opaque[1] < 50 && opaque[2] < 50,
+        "opaque canvas region should be red: {opaque:?} ({pix_fmt})"
+    );
+    let half = pixel(400, 80);
+    assert!(
+        (90..=170).contains(&half[0]) && half[1] < 50 && (90..=170).contains(&half[2]),
+        "half-transparent canvas region should blend red over blue: {half:?} ({pix_fmt})"
+    );
+    let transparent = pixel(480, 270);
+    assert!(
+        transparent[0] < 50 && transparent[1] < 50 && transparent[2] > 200,
+        "transparent canvas region should show the blue main video: {transparent:?} ({pix_fmt})"
+    );
+}
+
+/// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
+/// canvas that only arrives in real time (like legacy's renderer). The frames that pile up in
+/// front of the overlay exhaust fixed hardware frame pools (QSV on legacy runtimes).
+#[allow(dead_code)]
+pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<HardwareAccel>) {
+    let size = FrameSize {
+        width: 854,
+        height: 480,
+    };
+    let duration = Duration::from_secs(5);
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.mp4");
+    let generated = tokio::time::timeout(
+        Duration::from_secs(60),
+        ersatztv_core::process::command(&test_env.ffmpeg)
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=656x480:rate=30000/1001",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-t",
+                "8",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "300",
+                "-c:a",
+                "aac",
+                "-ac",
+                "2",
+            ])
+            .arg(&main)
+            .output(),
+    )
+    .await
+    .expect("fixture generation timed out")
+    .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let canvas_source = format!(
+        "color=black@0:s={}x{}:r=30000/1001,format=bgra,realtime",
+        size.width, size.height
+    );
+    let graphics = WatermarkInput {
+        layer_index: 0,
+        input_source: InputSource::Lavfi(LavfiInputSource {
+            params: canvas_source.clone(),
+        }),
+        probe_result: ProbeResult {
+            path: canvas_source,
+            streams: vec![ProbeResultStream::Video(Box::new(ProbeResultVideoStream {
+                stream_index: 0,
+                codec: "rawvideo".to_owned(),
+                codec_type: ffpipeline::probe::CodecType::Video,
+                dv_profile: None,
+                profile: String::new(),
+                height: Some(size.height),
+                width: Some(size.width),
+                frame_rate: FrameRate::parse("30000/1001"),
+                sample_aspect_ratio: Some("1:1".to_owned()),
+                display_aspect_ratio: None,
+                pix_fmt: "bgra".to_owned(),
+                color_params: Default::default(),
+                field_order: None,
+                rotation: None,
+            }))],
+            duration: None,
+            format_name: Some("lavfi".to_owned()),
+        },
+        stream_index: None,
+        location: WatermarkLocation::TopLeft,
+        width_percent: None,
+        within_source_content: None,
+        horizontal_margin_percent: None,
+        vertical_margin_percent: None,
+        opacity_percent: None,
+        kind: GraphicsKind::Canvas,
+        in_point: Duration::ZERO,
+        timing: None,
+    };
+    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
+    let input = build_input(&main, probe, duration, Some(graphics));
+    let output = build_output(
+        dir.path(),
+        TestOutputParams {
+            video_size: Some(size),
+            loudness: Some(AudioLoudnessSettings::default()),
+            accel,
+            ..TestOutputParams::default()
+        },
+    );
     let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
     pipeline.optimize();
 
@@ -111,15 +621,252 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) {
     assert!(success, "ffmpeg failed:\n{stderr}");
 
     let segment = find_first_segment(dir.path());
-    let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
-    assert_video(
-        &output_probe,
-        &test_case.expected_video_codec,
-        test_case.expected_video_size.width,
-        test_case.expected_video_size.height,
-        accel,
+    assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
+}
+
+/// ffprobe reads the stream parameters from headers alone, so a segment whose parameter sets
+/// don't match its slices (e.g. a 10-bit SPS in front of 8-bit slices) still probes fine.
+pub async fn assert_decodes_cleanly(ffmpeg: &Path, path: &Path) {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-hide_banner", "-v", "error", "-i"])
+            .arg(path)
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("decode check timed out")
+    .expect("failed to spawn ffmpeg for decode check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stderr.trim().is_empty(),
+        "output segment does not decode cleanly:\n{stderr}"
     );
-    assert_audio(&output_probe, &test_case.expected_audio_codec);
+}
+
+/// Skip the first frames: sub2video shows a subtitle only after its packet is read.
+pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(path)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg(format!(
+                "select=gte(n\\,10),crop=2:2:{}:{},format=gray",
+                x & !1,
+                y & !1
+            ))
+            .args(["-frames:v", "1", "-f", "rawvideo", "-"])
+            .output(),
+    )
+    .await
+    .expect("pixel check timed out")
+    .expect("failed to decode output");
+    assert!(
+        output.status.success() && output.stdout.len() == 4,
+        "pixel check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.iter().all(|luma| *luma > 200),
+        "no burned-in subtitle at {x},{y}: luma {:?}",
+        output.stdout
+    );
+}
+
+/// A quarter-turn source is taller than it is wide, so scale-and-pad output must have black
+/// pillars on both sides with the picture in the middle. Stretched or sideways output has
+/// picture at the edges instead.
+pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
+    async fn mean_luma(ffmpeg: &Path, path: &Path, crop: &str) -> f64 {
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            ersatztv_core::process::command(ffmpeg)
+                .args(["-v", "error", "-i"])
+                .arg(path)
+                .args(["-map", "0:v:0", "-an", "-vf"])
+                .arg(format!("crop={crop},format=gray"))
+                .args(["-frames:v", "10", "-f", "rawvideo", "-"])
+                .output(),
+        )
+        .await
+        .expect("pixel check timed out")
+        .expect("failed to decode output");
+        assert!(
+            output.status.success(),
+            "pixel check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.stdout.is_empty(),
+            "no decoded frames for pixel check"
+        );
+        output.stdout.iter().map(|b| f64::from(*b)).sum::<f64>() / output.stdout.len() as f64
+    }
+
+    let edge = (size.width / 10) & !1;
+    let left = mean_luma(ffmpeg, path, &format!("{edge}:ih:0:0")).await;
+    let right = mean_luma(ffmpeg, path, &format!("{edge}:ih:iw-{edge}:0")).await;
+    let center = mean_luma(ffmpeg, path, "trunc(iw/5):ih:trunc(iw*2/5):0").await;
+    assert!(
+        left < 32.0 && right < 32.0,
+        "rotated video is not pillarboxed: left luma {left:.1}, right luma {right:.1}"
+    );
+    assert!(
+        center > 64.0,
+        "rotated video has no picture in the centre: luma {center:.1}"
+    );
+}
+
+/// Checks all channels: zero YUV (green) has dark luma.
+/// Skips the top/left bar with a watermark, which can cover it.
+pub async fn assert_black_bars(
+    ffmpeg: &Path,
+    path: &Path,
+    source: &ProbeResultVideoStream,
+    size: FrameSize,
+    has_watermark: bool,
+) {
+    // avoid scaler ringing and chroma bleed at the picture edge
+    const MARGIN: f64 = 4.0;
+
+    let (Some(width), Some(height)) = (source.width, source.height) else {
+        return;
+    };
+    let sar = source
+        .sample_aspect_ratio
+        .as_deref()
+        .and_then(|sar| sar.split_once(':'))
+        .and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?))
+        .filter(|sar| sar.is_finite() && *sar > 0.0)
+        .unwrap_or(1.0);
+    let mut source_ratio = f64::from(width) * sar / f64::from(height);
+    if source.is_quarter_turn() {
+        source_ratio = 1.0 / source_ratio;
+    }
+    let (out_w, out_h) = (f64::from(size.width), f64::from(size.height));
+    let letterbox = source_ratio > out_w / out_h;
+    let bar = if letterbox {
+        (out_h - out_w / source_ratio) / 2.0
+    } else {
+        (out_w - out_h * source_ratio) / 2.0
+    };
+    let depth = ((bar - MARGIN).floor() as u32) & !1;
+    if depth < 8 {
+        return;
+    }
+
+    let crops = if letterbox {
+        [
+            ("top", format!("iw:{depth}:0:0")),
+            ("bottom", format!("iw:{depth}:0:ih-{depth}")),
+        ]
+    } else {
+        [
+            ("left", format!("{depth}:ih:0:0")),
+            ("right", format!("{depth}:ih:iw-{depth}:0")),
+        ]
+    };
+    for (side, crop) in crops.iter().skip(usize::from(has_watermark)) {
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            ersatztv_core::process::command(ffmpeg)
+                .args(["-v", "error", "-i"])
+                .arg(path)
+                .args(["-map", "0:v:0", "-an", "-vf"])
+                .arg(format!("crop={crop},format=rgb24"))
+                .args(["-frames:v", "10", "-f", "rawvideo", "-"])
+                .output(),
+        )
+        .await
+        .expect("pixel check timed out")
+        .expect("failed to decode output");
+        assert!(
+            output.status.success(),
+            "pixel check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.stdout.is_empty(),
+            "no decoded frames for pixel check"
+        );
+        let pixels = (output.stdout.len() / 3) as f64;
+        let mut sums = [0.0; 3];
+        for rgb in output.stdout.as_chunks::<3>().0 {
+            for (sum, value) in sums.iter_mut().zip(rgb) {
+                *sum += f64::from(*value);
+            }
+        }
+        let mean = sums.map(|sum| sum / pixels);
+        assert!(
+            mean.iter().all(|channel| *channel < 12.0),
+            "{side} pad bar is not black: mean rgb {:.1}/{:.1}/{:.1}",
+            mean[0],
+            mean[1],
+            mean[2]
+        );
+    }
+}
+
+/// Only for 480i_h264_motion.ts: a vertical moving bar has identical rows after
+/// deinterlacing. Different field times leave alternating bar positions otherwise.
+/// Sample the middle third to exclude letterboxing, and ignore encoder field tags.
+pub async fn motion_combing_score(ffmpeg: &Path, path: &Path, size: FrameSize) -> f64 {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-an",
+                "-vf",
+                "crop=iw:trunc(ih/3):0:trunc(ih/3),format=gray",
+                "-frames:v",
+                "30",
+                "-f",
+                "rawvideo",
+                "-",
+            ])
+            .output(),
+    )
+    .await
+    .expect("pixel check timed out")
+    .expect("failed to decode motion fixture");
+    assert!(
+        output.status.success(),
+        "pixel check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let width = size.width as usize;
+    // crop rounds subsampled input dimensions down to even values.
+    let height = (size.height as usize / 3) & !1;
+    let frame_bytes = width * height;
+    assert!(
+        output.stdout.len() >= frame_bytes * 20,
+        "too few decoded frames for pixel check"
+    );
+    assert_eq!(
+        output.stdout.len() % frame_bytes,
+        0,
+        "unexpected decoded dimensions"
+    );
+    let mut difference = 0u64;
+    let mut samples = 0u64;
+    for frame in output.stdout.chunks_exact(frame_bytes) {
+        assert!(
+            frame.iter().max().unwrap() - frame.iter().min().unwrap() > 64,
+            "motion fixture lost its foreground/background contrast"
+        );
+        for (a, b) in frame[..frame_bytes - width].iter().zip(&frame[width..]) {
+            difference += u64::from(a.abs_diff(*b));
+            samples += 1;
+        }
+    }
+    difference as f64 / samples as f64
 }
 
 pub fn find_ffmpeg() -> Option<PathBuf> {
@@ -190,6 +937,8 @@ pub async fn build_watermark_input(
         horizontal_margin_percent: Some(5.0),
         vertical_margin_percent: Some(5.0),
         opacity_percent: watermark.opacity_percent,
+        kind: GraphicsKind::Media,
+        in_point: Duration::ZERO,
         timing: watermark.timing.clone(),
     }
 }
@@ -200,40 +949,75 @@ pub fn build_input(
     duration: Duration,
     watermark: Option<WatermarkInput>,
 ) -> InputSettings {
-    let path_str = path.to_string_lossy().into_owned();
     InputSettings {
         start: OffsetDateTime::now_utc(),
         playout_offset: Duration::ZERO,
-        audio_input: ProbedInput {
-            input_source: InputSource::Local(LocalInputSource {
-                path: path_str.clone(),
-            }),
-            probe_result: probe.clone(),
-            in_point: Duration::ZERO,
-            out_point: duration,
-            stream_index: None,
-        },
-        video_input: ProbedInput {
-            input_source: InputSource::Local(LocalInputSource { path: path_str }),
-            probe_result: probe,
-            in_point: Duration::ZERO,
-            out_point: duration,
-            stream_index: None,
-        },
+        audio_input: local_input(path, probe.clone(), duration),
+        video_input: local_input(path, probe, duration),
         subtitle_input: None,
         graphics_inputs: watermark.into_iter().collect(),
+        channel_number: None,
+        video_copy_seek: None,
+        video_copy_blockers: Vec::new(),
+    }
+}
+
+fn local_input(path: &Path, probe: ProbeResult, duration: Duration) -> ProbedInput {
+    ProbedInput {
+        input_source: InputSource::Local(LocalInputSource {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        probe_result: probe,
+        in_point: Duration::ZERO,
+        out_point: duration,
+        stream_index: None,
+    }
+}
+
+async fn build_audio_input(
+    test_env: &TestEnv,
+    source: &TestAudioSource,
+    duration: Duration,
+) -> ProbedInput {
+    match source {
+        TestAudioSource::Fixture(name) => {
+            let path = fixture_path(name);
+            let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
+            local_input(&path, probe, duration)
+        }
+        // match the channel's probe hint; probing lavfi through nut reports vorbis
+        TestAudioSource::Lavfi(params) => ProbedInput {
+            input_source: InputSource::Lavfi(LavfiInputSource {
+                params: params.to_string(),
+            }),
+            probe_result: ProbeResult {
+                path: params.to_string(),
+                streams: vec![ProbeResultStream::Audio(ProbeResultAudioStream {
+                    stream_index: 0,
+                    codec: String::from("pcm_s16le"),
+                    channels: 2,
+                })],
+                duration: Some(duration),
+                format_name: Some(String::from("mpegts")),
+            },
+            in_point: Duration::ZERO,
+            out_point: duration,
+            stream_index: None,
+        },
     }
 }
 
 #[allow(dead_code)]
 pub struct TestOutputParams {
-    pub video_format: Option<VideoFormat>,
-    pub bit_depth: Option<u8>,
+    pub video_copy: Option<CopyPolicy<VideoFormat>>,
+    pub video_format: EncodeFormat,
+    pub bit_depth: u8,
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
     pub deinterlace: bool,
-    pub audio_format: Option<AudioFormat>,
+    pub audio_copy: Option<CopyPolicy<String>>,
+    pub audio_format: AudioFormat,
     pub audio_bitrate: Option<Kbps>,
     pub audio_channels: Option<u32>,
     pub loudness: Option<AudioLoudnessSettings>,
@@ -241,18 +1025,24 @@ pub struct TestOutputParams {
     pub frame_rate: Option<FrameRate>,
     pub filter_options: VideoFilterOptions,
     pub watermark: Option<TestWatermark>,
+    /// Hidden from `FfmpegInfo` for this test only, to force a fallback path.
+    pub disabled_filters: Vec<&'static str>,
+    pub in_point: Duration,
+    pub duration: Duration,
 }
 
 impl Default for TestOutputParams {
     fn default() -> Self {
         Self {
-            video_format: Some(VideoFormat::H264),
-            bit_depth: Some(8),
+            video_copy: None,
+            video_format: EncodeFormat::H264,
+            bit_depth: 8,
             video_bitrate: Some(Kbps(5000)),
             video_buffer: Some(Kbps(10000)),
             video_size: None,
             deinterlace: false,
-            audio_format: Some(AudioFormat::Aac),
+            audio_copy: None,
+            audio_format: AudioFormat::Aac,
             audio_bitrate: Some(Kbps(192)),
             audio_channels: Some(2),
             loudness: None,
@@ -260,6 +1050,9 @@ impl Default for TestOutputParams {
             frame_rate: None,
             filter_options: VideoFilterOptions::default(),
             watermark: None,
+            disabled_filters: Vec::new(),
+            in_point: Duration::ZERO,
+            duration: Duration::from_secs(1),
         }
     }
 }
@@ -267,21 +1060,29 @@ impl Default for TestOutputParams {
 pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
     OutputSettings {
         audio: AudioOutputSettings {
-            format: params.audio_format,
-            bitrate: params.audio_bitrate,
-            buffer: params.audio_bitrate.map(|b| Kbps(b.0 * 2)),
-            channels: params.audio_channels,
-            sample_rate: Some(Hz(48000)),
-            loudness: params.loudness,
+            copy: params.audio_copy,
+            transcode: AudioTranscodeSettings {
+                format: params.audio_format,
+                bitrate: params.audio_bitrate,
+                buffer: params.audio_bitrate.map(|b| Kbps(b.0 * 2)),
+                channels: params.audio_channels,
+                sample_rate: Some(Hz(48000)),
+                loudness: params.loudness,
+            },
         },
-        video_format: params.video_format,
-        bit_depth: params.bit_depth,
-        video_bitrate: params.video_bitrate,
-        video_buffer: params.video_buffer,
-        video_size: params.video_size,
-        scaling_mode: ScalingMode::ScaleAndPad,
-        filter_options: params.filter_options,
-        deinterlace: params.deinterlace,
+        video: VideoOutputSettings {
+            copy: params.video_copy,
+            transcode: VideoTranscodeSettings {
+                format: params.video_format,
+                bit_depth: params.bit_depth,
+                bitrate: params.video_bitrate,
+                buffer: params.video_buffer,
+                size: params.video_size,
+                scaling_mode: ScalingMode::ScaleAndPad,
+                deinterlace: params.deinterlace,
+                filter_options: params.filter_options,
+            },
+        },
         accel: params.accel,
         format: OutputFormat::Hls {
             playlist: dir.join("live.m3u8").to_string_lossy().into_owned(),
@@ -307,7 +1108,7 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
 
     let output = tokio::time::timeout(
         Duration::from_secs(30),
-        tokio::process::Command::new(ffmpeg)
+        ersatztv_core::process::command(ffmpeg)
             .args(args.iter().map(Cow::as_ref))
             .envs(
                 envs.iter()
@@ -315,7 +1116,6 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
             )
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -327,6 +1127,33 @@ pub async fn run_ffmpeg_pipeline(ffmpeg: &Path, pipeline: &Pipeline) -> (bool, S
         log::error!("ffmpeg exited with {}", output.status);
     }
     (output.status.success(), stderr)
+}
+
+/// r_frame_rate is guessed from timestamp deltas and is wrong for irregular fixtures
+/// (480p_h264_sps_change.ts reports 240/1 for 30 fps content), so the expected source
+/// rate comes from avg_frame_rate instead
+pub async fn probe_avg_frame_rate(ffprobe: &Path, path: &Path) -> FrameRate {
+    let output = ersatztv_core::process::command(ffprobe)
+        .args(["-v", "error", "-select_streams", "v:0"])
+        // not csv: a stream with side data (MPEG-2 CPB properties) gets an extra
+        // empty field, so the value would come out as "30/1,"
+        .args([
+            "-show_entries",
+            "stream=avg_frame_rate",
+            "-of",
+            "default=nw=1:nk=1",
+        ])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to spawn ffprobe");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text
+        .lines()
+        .next()
+        .expect("no avg_frame_rate in source")
+        .trim();
+    FrameRate::parse(line)
 }
 
 pub fn find_first_segment(dir: &Path) -> PathBuf {
@@ -352,6 +1179,8 @@ pub fn assert_video(
     codec: &str,
     width: u32,
     height: u32,
+    frame_rate: &FrameRate,
+    bit_depth: Option<u8>,
     accel: Option<HardwareAccel>,
 ) {
     let video = probe
@@ -363,8 +1192,28 @@ pub fn assert_video(
         })
         .expect("no video stream found in output");
     assert_eq!(video.codec.to_lowercase(), codec, "unexpected video codec");
+    if let Some(bit_depth) = bit_depth {
+        assert_eq!(
+            pix_fmt_bit_depth(&video.pix_fmt),
+            bit_depth,
+            "unexpected video bit depth (pix_fmt {})",
+            video.pix_fmt
+        );
+        // libx264 picks 4:4:4 for rgb input
+        assert!(
+            pix_fmt_is_420(&video.pix_fmt),
+            "unexpected video chroma subsampling (pix_fmt {})",
+            video.pix_fmt
+        );
+    }
     assert_eq!(video.width, Some(width), "unexpected video width");
     assert_eq!(video.height, Some(height), "unexpected video height");
+    assert!(
+        frame_rates_equal(&video.frame_rate, frame_rate),
+        "unexpected video frame rate: expected {}, got {}",
+        frame_rate.r_frame_rate,
+        video.frame_rate.r_frame_rate
+    );
 
     // RKMPP encoders don't seem to set SAR
     if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) {
@@ -374,6 +1223,53 @@ pub fn assert_video(
             "unexpected SAR"
         );
     }
+}
+
+/// `PixelFormat::parse` falls back to yuv420p for unknown names, which would hide a mismatch here
+fn pix_fmt_bit_depth(pix_fmt: &str) -> u8 {
+    match pix_fmt {
+        "yuv420p" | "yuvj420p" | "nv12" | "yuv422p" | "yuv444p" => 8,
+        "yuv420p10le" | "p010le" | "yuv422p10le" | "yuv444p10le" => 10,
+        _ => panic!("unknown bit depth for output pix_fmt {pix_fmt}"),
+    }
+}
+
+fn pix_fmt_is_420(pix_fmt: &str) -> bool {
+    matches!(
+        pix_fmt,
+        "yuv420p" | "yuvj420p" | "nv12" | "yuv420p10le" | "p010le"
+    )
+}
+
+/// Compares frame rates as exact rationals so 30000/1001 != 30 and 60/2 == 30/1
+fn frame_rates_equal(a: &FrameRate, b: &FrameRate) -> bool {
+    fn rational(frame_rate: &FrameRate) -> Option<(u64, u64)> {
+        let text = frame_rate.r_frame_rate.trim();
+        match text.split_once('/') {
+            Some((num, den)) => Some((num.parse().ok()?, den.parse().ok()?)),
+            None => Some((text.parse().ok()?, 1)),
+        }
+    }
+
+    match (rational(a), rational(b)) {
+        (Some((an, ad)), Some((bn, bd))) => an * bd == bn * ad,
+        _ => a.parsed_frame_rate == b.parsed_frame_rate,
+    }
+}
+
+/// The output probe can't tell copy from a same-codec transcode.
+fn assert_stream_copy(args: &[String], option: &str, copied: bool) {
+    let codec = args
+        .iter()
+        .rposition(|a| a == option)
+        .map(|i| args[i + 1].as_str())
+        .unwrap_or_else(|| panic!("no {option} in pipeline args"));
+    assert_eq!(
+        codec == "copy",
+        copied,
+        "expected {option} {}, got {codec}",
+        if copied { "copy" } else { "an encoder" }
+    );
 }
 
 pub fn assert_audio(probe: &ProbeResult, codec: &str) {
@@ -386,4 +1282,149 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
         })
         .expect("no audio stream found in output");
     assert_eq!(audio.codec, codec, "unexpected audio codec");
+}
+
+/// one 30 fps video frame plus one AAC frame
+const AV_ALIGNMENT_TOLERANCE: f64 = 0.06;
+
+#[allow(dead_code)]
+pub async fn assert_av_aligned(ffprobe: &Path, path: &Path) {
+    let output = ersatztv_core::process::command(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "packet=codec_type,pts_time,duration_time",
+        ])
+        .args(["-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to run ffprobe");
+    let packets = String::from_utf8_lossy(&output.stdout);
+
+    let mut ranges: std::collections::HashMap<String, (f64, f64)> = Default::default();
+    for line in packets.lines() {
+        // ffprobe adds an empty side data field
+        let fields: Vec<&str> = line.split(',').collect();
+        let [codec_type, pts, duration, ..] = fields[..] else {
+            continue;
+        };
+        let (Ok(pts), Ok(duration)) = (pts.parse::<f64>(), duration.parse::<f64>()) else {
+            continue;
+        };
+        let range = ranges
+            .entry(codec_type.to_owned())
+            .or_insert((f64::MAX, f64::MIN));
+        range.0 = range.0.min(pts);
+        range.1 = range.1.max(pts + duration);
+    }
+
+    let video = ranges.get("video").expect("no video packets");
+    let audio = ranges.get("audio").expect("no audio packets");
+    // a copy cut by -t can end the video before the audio
+    assert!(
+        (video.0 - audio.0).abs() < AV_ALIGNMENT_TOLERANCE
+            && audio.1 > video.1 - AV_ALIGNMENT_TOLERANCE,
+        "audio {audio:?} and video {video:?} are not aligned"
+    );
+}
+
+/// The output assertions cannot tell hardware output from a software fallback, so the
+/// pipeline must agree with what the accel's capability probe says it can do (PR #192).
+#[allow(dead_code)]
+pub fn assert_accel_usage(
+    accel: &HardwareAccel,
+    source: &ProbeResultVideoStream,
+    source_is_hdr: bool,
+    video_format: Option<EncodeFormat>,
+    bit_depth: u8,
+    video_size: Option<FrameSize>,
+    args: &[impl AsRef<str>],
+) {
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+    let cmd = args.join(" ");
+
+    let hw_decode = args.contains(&"-hwaccel");
+    let Some(format) = video_format else {
+        assert!(
+            !hw_decode,
+            "{accel} used hardware decode for video stream copy"
+        );
+        return;
+    };
+    if source.rotation_degrees() != 0 {
+        assert!(
+            cmd.contains("transpose") || cmd.contains("hflip,vflip"),
+            "rotated source must be rotated by the pipeline"
+        );
+    }
+    if accel.can_decode_stream(source) {
+        assert!(
+            hw_decode,
+            "{accel} reports it can decode {} {} but the pipeline used software decode",
+            source.codec, source.pix_fmt
+        );
+    } else if !source_is_hdr {
+        // HDR sources may take an accel-specific decode path (e.g. AMF decode-for-tonemap)
+        assert!(
+            !hw_decode,
+            "{accel} reports it cannot decode {} {} but the pipeline used hardware decode",
+            source.codec, source.pix_fmt
+        );
+    }
+
+    let actual = args
+        .iter()
+        .position(|a| *a == "-vcodec")
+        .map(|i| args[i + 1])
+        .expect("no -vcodec in pipeline args");
+    if accel.can_encode(&format, bit_depth) {
+        let expected = accel
+            .codec_for_format(&format, bit_depth, video_size)
+            .map(|c| c.codec_name())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{accel} reports it can encode {bit_depth}-bit {format} but has no codec for it"
+                )
+            });
+        assert_eq!(
+            actual, expected,
+            "{accel} reports it can encode {bit_depth}-bit {format} but the pipeline used {actual}"
+        );
+    } else {
+        let expected = match format {
+            EncodeFormat::Mpeg2Video => "mpeg2video",
+            EncodeFormat::H264 => "libx264",
+            EncodeFormat::Hevc => "libx265",
+        };
+
+        assert_eq!(
+            actual, expected,
+            "{accel} reports it cannot encode {bit_depth}-bit {format} but the pipeline used {actual}"
+        );
+    }
+}
+
+// this helps catch cases where e.g. vpp_qsv=tonemap=1 silently no-ops
+pub fn assert_sdr_output(probe: &ProbeResult) {
+    let video = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v),
+            _ => None,
+        })
+        .expect("no video stream found in output");
+    assert!(
+        !video.color_params.is_hdr(),
+        "output is still tagged HDR: {:?}",
+        video.color_params
+    );
+    assert_eq!(
+        video.color_params.color_transfer.as_deref(),
+        Some("bt709"),
+        "tonemapped output should be tagged bt709: {:?}",
+        video.color_params
+    );
 }

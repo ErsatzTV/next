@@ -7,7 +7,7 @@ use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::pipeline::{
-    FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
+    EncodeFormat, FrameState, FrameSurface, HwPixelFormat, PixelFormat, SurfaceSet, VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
@@ -27,58 +27,49 @@ impl HwAccel for Rkmpp {
         _filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleRkrga)
-                && current_state.pixel_format.bit_depth() == 8 =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleRkrga)
+                    && current_state.pixel_format.bit_depth() == 8 =>
             {
-                ScaleRkrga {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                }
-                .into()
+                ScaleRkrga { size: *size }.into()
             }
             _ => video_filter.clone(),
         }
     }
 
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        let format = match codec {
-            "h264" => Some(VideoFormat::H264),
-            "hevc" => Some(VideoFormat::Hevc),
-            "vp8" => Some(VideoFormat::Vp8),
-            "vp9" => Some(VideoFormat::Vp9),
-            _ => None,
-        };
-        format.is_some_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+        codec
+            .parse::<VideoFormat>()
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.capabilities.can_encode(format, bit_depth)
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        self.capabilities
+            .can_encode(&VideoFormat::from(*format), bit_depth)
     }
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
         match (format, bit_depth) {
-            (VideoFormat::H264, 8) if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
+            (EncodeFormat::H264, 8) if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "h264_rkmpp",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
+                also_accepts: &[],
             }),
-            (VideoFormat::Hevc, 8) if self.capabilities.can_encode(format, 8) => Some(VideoCodec {
+            (EncodeFormat::Hevc, 8) if self.can_encode(format, 8) => Some(VideoCodec {
                 codec_name: "hevc_rkmpp",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Rkmpp,
+                also_accepts: &[],
             }),
             _ => None,
         }
@@ -135,17 +126,17 @@ impl HwAccel for Rkmpp {
     fn can_convert_pixel_format(
         &self,
         ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
         ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleRkrga)
-            && matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::Nv15)
+            && matches!(to, PixelFormat::Nv12 | PixelFormat::Nv15)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ScaleRkrga {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
 }
 
 impl VideoFilterOp for ScaleRkrga {
@@ -168,21 +159,12 @@ impl VideoFilterOp for ScaleRkrga {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_rkrga=w=iw*sar:h=ih,scale_rkrga=w={}:h={}:force_original_aspect_ratio=0,setsar=1",
-                    size.width, size.height
-                ))
-            } else {
-                Some(format!(
-                    "scale_rkrga=w={}:h={}:force_original_aspect_ratio=0,setsar=1",
-                    size.width, size.height
-                ))
-            }
-        } else {
-            None
-        }
+        self.size.as_ref().map(|size| {
+            format!(
+                "scale_rkrga=w={}:h={}:force_original_aspect_ratio=0,setsar=1",
+                size.width, size.height
+            )
+        })
     }
 }
 

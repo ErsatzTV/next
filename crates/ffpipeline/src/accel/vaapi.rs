@@ -4,20 +4,21 @@ use crate::ArgVec;
 use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
 use crate::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
+use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
 use crate::hw_accel::{HwAccel, HwDecoder};
 use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{FramePoint, OverlayFilter, OverlayKind, OverlayKindOp};
 use crate::pipeline::{
-    EnvironmentVariable, FrameState, FrameSurface, HdrFormat, HwPixelFormat, PixelFormat,
-    SurfaceSet, VideoFormat,
+    EncodeFormat, EnvironmentVariable, FrameState, FrameSurface, HdrFormat, HwPixelFormat,
+    PixelFormat, SurfaceSet, VideoFormat,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::VideoCodec;
 use crate::video_filter::{
-    DeinterlaceFilter, ForceOriginalAspectRatio, HwMapFilter, PadFilter, ScaleFilter,
-    ToneMapFilter, VideoFilter, VideoFilterOp,
+    DeinterlaceFilter, HwMapFilter, PadFilter, ScaleFilter, ToneMapFilter, TransposeDir,
+    TransposeFilter, VideoFilter, VideoFilterOp,
 };
 
 #[derive(Debug, Clone, PartialEq, strum::Display, Serialize)]
@@ -33,7 +34,8 @@ pub enum VaapiDriver {
 #[derive(Debug, Clone, Serialize)]
 pub struct Vaapi {
     pub device: String,
-    pub driver: VaapiDriver,
+    /// `None` leaves driver selection to libva.
+    pub driver: Option<VaapiDriver>,
     pub capabilities: VaapiCapabilities,
     pub opencl_capabilities: OpenCLCapabilities,
 }
@@ -47,26 +49,20 @@ impl HwAccel for Vaapi {
         filter_options: &VideoFilterOptions,
     ) -> VideoFilter {
         match video_filter {
-            VideoFilter::Scale(ScaleFilter {
-                size,
-                input_is_anamorphic,
-                force_original_aspect_ratio,
-                ..
-            }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi)
-                && !current_state.pixel_format.has_alpha()
-                && self
-                    .capabilities
-                    .vpp_supports_format(&current_state.pixel_format) =>
+            VideoFilter::Scale(ScaleFilter { size, .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVaapi)
+                    && !current_state.pixel_format.has_alpha()
+                    && self
+                        .capabilities
+                        .vpp_supports_format(&current_state.pixel_format) =>
             {
-                ScaleVaapi {
-                    size: *size,
-                    input_is_anamorphic: *input_is_anamorphic,
-                    force_original_aspect_ratio: force_original_aspect_ratio.clone(),
-                }
-                .into()
+                ScaleVaapi { size: *size }.into()
             }
             VideoFilter::Pad(PadFilter { size, .. }) => {
-                let mut pad_options = vec![KnownVideoFilter::PadVaapi];
+                let mut pad_options = vec![];
+                if self.capabilities.can_pad() {
+                    pad_options.push(KnownVideoFilter::PadVaapi);
+                }
                 if self.opencl_capabilities.can_pad() {
                     pad_options.push(KnownVideoFilter::PadOpencl);
                 }
@@ -77,7 +73,11 @@ impl HwAccel for Vaapi {
                                 .capabilities
                                 .vpp_supports_format(&current_state.pixel_format) =>
                         {
-                            PadVaapi { size: *size }.into()
+                            PadVaapi {
+                                size: *size,
+                                color: current_state.color,
+                            }
+                            .into()
                         }
                         KnownVideoFilter::PadOpencl => PadOpencl { size: *size }.into(),
                         _ => video_filter.clone(),
@@ -119,7 +119,7 @@ impl HwAccel for Vaapi {
 
                 let mut tonemap_options = vec![];
 
-                if current_state.hdr_format == HdrFormat::Pq {
+                if matches!(current_state.hdr_format, HdrFormat::Pq | HdrFormat::Hdr10) {
                     tonemap_options.push(KnownVideoFilter::TonemapVaapi);
                 }
 
@@ -143,6 +143,13 @@ impl HwAccel for Vaapi {
                 } else {
                     video_filter.clone()
                 }
+            }
+
+            VideoFilter::Transpose(TransposeFilter { dir: Some(dir), .. })
+                if ffmpeg_info.has_video_filter(&KnownVideoFilter::TransposeVaapi)
+                    && self.capabilities.can_rotate(*dir) =>
+            {
+                TransposeVaapi { dir: *dir }.into()
             }
 
             _ => video_filter.clone(),
@@ -183,9 +190,12 @@ impl HwAccel for Vaapi {
         result
     }
 
-    fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        let result = self.capabilities.can_encode(format, bit_depth)
-            || self.capabilities.can_encode_low_power(format, bit_depth);
+    fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
+        let video_format = VideoFormat::from(*format);
+        let result = self.capabilities.can_encode(&video_format, bit_depth)
+            || self
+                .capabilities
+                .can_encode_low_power(&video_format, bit_depth);
 
         if !result {
             log::debug!(
@@ -200,15 +210,17 @@ impl HwAccel for Vaapi {
 
     fn codec_for_format(
         &self,
-        format: &VideoFormat,
+        format: &EncodeFormat,
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
-        let force_cqp = self.capabilities.rate_control_mode_for(format, bit_depth)
+        let force_cqp = self
+            .capabilities
+            .rate_control_mode_for(&VideoFormat::from(*format), bit_depth)
             == Some(RateControlMode::Cqp);
 
         match format {
-            VideoFormat::H264 => {
+            EncodeFormat::H264 => {
                 let options = if force_cqp {
                     args!["-rc_mode", "1"]
                 } else {
@@ -221,9 +233,10 @@ impl HwAccel for Vaapi {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                     preferred_surface: FrameSurface::Vaapi,
+                    also_accepts: &[],
                 })
             }
-            VideoFormat::Hevc => {
+            EncodeFormat::Hevc => {
                 let mut options = Vec::new();
                 if force_cqp {
                     options.extend(args!["-rc_mode", "1"]);
@@ -235,17 +248,35 @@ impl HwAccel for Vaapi {
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                     preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                     preferred_surface: FrameSurface::Vaapi,
+                    also_accepts: &[],
                 })
             }
-            _ => None,
+            EncodeFormat::Mpeg2Video => {
+                let mut options = Vec::new();
+                if force_cqp {
+                    options.extend(args!["-rc_mode", "1"]);
+                }
+
+                Some(VideoCodec {
+                    codec_name: "mpeg2_vaapi",
+                    options,
+                    preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                    preferred_pixel_format_10bit: None,
+                    preferred_surface: FrameSurface::Vaapi,
+                    also_accepts: &[],
+                })
+            }
         }
     }
 
     fn envs(&self) -> Vec<EnvironmentVariable> {
-        vec![EnvironmentVariable {
-            key: String::from("LIBVA_DRIVER_NAME"),
-            value: self.driver.to_string(),
-        }]
+        self.driver
+            .iter()
+            .map(|driver| EnvironmentVariable {
+                key: String::from("LIBVA_DRIVER_NAME"),
+                value: driver.to_string(),
+            })
+            .collect()
     }
 
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
@@ -337,17 +368,16 @@ impl HwAccel for Vaapi {
     fn can_convert_pixel_format(
         &self,
         _ffmpeg_info: &FfmpegInfo,
-        pixel_format: &PixelFormat,
+        _from: &PixelFormat,
+        to: &PixelFormat,
     ) -> bool {
-        self.capabilities.vpp_supports_format(pixel_format)
+        self.capabilities.vpp_supports_format(to)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ScaleVaapi {
     pub(crate) size: Option<FrameSize>,
-    pub(crate) input_is_anamorphic: bool,
-    pub(crate) force_original_aspect_ratio: Option<ForceOriginalAspectRatio>,
 }
 
 impl VideoFilterOp for ScaleVaapi {
@@ -370,32 +400,19 @@ impl VideoFilterOp for ScaleVaapi {
     }
 
     fn as_arg(&self) -> Option<String> {
-        if let Some(size) = &self.size {
-            let aspect_ratio = self
-                .force_original_aspect_ratio
-                .as_ref()
-                .map_or(String::new(), |f| f.as_arg());
-
-            if self.input_is_anamorphic {
-                Some(format!(
-                    "scale_vaapi=iw*sar:ih,scale_vaapi={}:{}{}:force_divisible_by=2,setsar=1",
-                    size.width, size.height, aspect_ratio
-                ))
-            } else {
-                Some(format!(
-                    "scale_vaapi={}:{}{}:force_divisible_by=2,setsar=1",
-                    size.width, size.height, aspect_ratio
-                ))
-            }
-        } else {
-            None
-        }
+        self.size.map(|size| {
+            format!(
+                "scale_vaapi={}:{}:force_divisible_by=2,setsar=1",
+                size.width, size.height
+            )
+        })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PadVaapi {
     pub(crate) size: Option<FrameSize>,
+    pub(crate) color: FrameColor,
 }
 
 impl VideoFilterOp for PadVaapi {
@@ -415,9 +432,18 @@ impl VideoFilterOp for PadVaapi {
     }
 
     fn as_arg(&self) -> Option<String> {
-        self.size
-            .as_ref()
-            .map(|s| format!("pad_vaapi={}:{}:-1:-1:color=black", s.width, s.height))
+        let size = self.size?;
+        let pad = format!("pad_vaapi={}:{}:-1:-1:color=black", size.width, size.height);
+
+        // iHD pads BT.2020 frames with zero YUV (green). Black is the same in all matrices.
+        // The driver does not convert the picture when input and output tags are equal.
+        if self.color.is_bt2020()
+            && let Some(retagged) = self.color.as_bt709_around(&pad)
+        {
+            Some(retagged)
+        } else {
+            Some(pad)
+        }
     }
 }
 
@@ -455,9 +481,9 @@ impl VideoFilterOp for TonemapVaapi {
     }
 
     fn apply_to(&self, state: &mut FrameState) {
-        state.hdr_format = HdrFormat::None;
         state.pixel_format = self.output_format.into();
         state.surface = FrameSurface::Vaapi;
+        state.apply_tonemap();
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -531,6 +557,29 @@ impl VideoFilterOp for DeinterlaceVaapi {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TransposeVaapi {
+    pub(crate) dir: TransposeDir,
+}
+
+impl VideoFilterOp for TransposeVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.apply_rotation();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("transpose_vaapi={}", self.dir as u32))
+    }
+}
+
 fn to_canonical(format: PixelFormat) -> PixelFormat {
     match format {
         PixelFormat::Yuv420p10le => PixelFormat::P010le,
@@ -558,16 +607,15 @@ mod tests {
             video_filters.insert(f.to_string());
         }
         FfmpegInfo {
-            hwaccels: HashSet::new(),
             video_filters,
-            preferred_filters: HashMap::new(),
+            ..Default::default()
         }
     }
 
     fn make_vaapi() -> Vaapi {
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
-            driver: VaapiDriver::Ihd,
+            driver: Some(VaapiDriver::Ihd),
             capabilities: VaapiCapabilities {
                 vendor: String::from("test"),
                 supported: HashSet::new(),
@@ -575,6 +623,7 @@ mod tests {
                 can_hdr_to_sdr_tonemap: HashSet::new(),
                 can_hdr_to_hdr_tonemap: HashSet::new(),
                 can_overlay: false,
+                rotation_flags: 0,
                 rate_control: HashMap::new(),
             },
             opencl_capabilities: OpenCLCapabilities {
@@ -596,7 +645,58 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::Nv12,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    #[test]
+    fn envs_sets_driver_name_only_when_driver_is_set() {
+        let mut vaapi = make_vaapi();
+        let envs = vaapi.envs();
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].key, "LIBVA_DRIVER_NAME");
+        assert_eq!(envs[0].value, "iHD");
+
+        vaapi.driver = None;
+        assert!(vaapi.envs().is_empty());
+    }
+
+    #[test]
+    fn transpose_requires_the_requested_driver_rotation_and_filter() {
+        for (dir, flag) in [
+            (TransposeDir::Clock, libva_sys::VA_ROTATION_90),
+            (TransposeDir::CClock, libva_sys::VA_ROTATION_270),
+            (TransposeDir::Reversal, libva_sys::VA_ROTATION_180),
+        ] {
+            for flags in [
+                0,
+                1 << libva_sys::VA_ROTATION_90,
+                1 << libva_sys::VA_ROTATION_180,
+                1 << libva_sys::VA_ROTATION_270,
+            ] {
+                for available in [false, true] {
+                    let mut vaapi = make_vaapi();
+                    vaapi.capabilities.rotation_flags = flags;
+                    let info = make_ffmpeg_info(if available {
+                        &[KnownVideoFilter::TransposeVaapi]
+                    } else {
+                        &[]
+                    });
+                    let filter = TransposeFilter { dir: Some(dir) }.into();
+                    let result = vaapi.best_filter(
+                        &filter,
+                        &info,
+                        &make_frame_state(),
+                        &VideoFilterOptions::default(),
+                    );
+                    assert_eq!(
+                        matches!(result, VideoFilter::TransposeVaapi(_)),
+                        available && flags & (1 << flag) != 0
+                    );
+                }
+            }
         }
     }
 
