@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 - Channel config version `0.1.2` adds `normalization.video.filters.scale.flags` to choose the software scaling algorithm (e.g. `bicubic`, `lanczos`, `fast_bilinear`)
   - Applies to the main picture, graphics and image subtitles wherever software scaling runs
+- Playout version `0.0.6` adds `retry_budget_ms` and `retry_backoff_ms` to `dynamic` sources, to retry a failed request with backoff
+  - Transport errors, timeouts and 5xx responses are retried; 4xx responses and an invalid body are not
+  - Retry is off when `retry_budget_ms` is absent or `0`
+- Channel config version `0.1.2` adds `fallback.duration_seconds` to set how long the fallback plays before the channel tries again (default 60)
+  - After a failed `dynamic` source, the fallback lasts at least the source's `retry_budget_ms`
 
 ### Changed
 - Software scaling now defaults to `bicubic` instead of `fast_bilinear`, which reduces aliasing when downscaling

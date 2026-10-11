@@ -1,5 +1,6 @@
 mod channel_session;
 mod dossier;
+mod dynamic_retry;
 mod fallback;
 mod local_proxy;
 mod playlist_manager;

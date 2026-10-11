@@ -1,4 +1,6 @@
+use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use ersatztv_core::{SchemaVersion, VersionedSchema};
 use schemars::JsonSchema;
@@ -80,6 +82,18 @@ pub struct FallbackConfig {
     /// regardless of the normalization subtitle mode
     #[serde(default)]
     pub show_error: bool,
+    /// Fallback length in seconds when the fallback has no end time, e.g. after a failed
+    /// dynamic source. Default 60. Raised to the source's `retry_budget_ms` if shorter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<NonZeroU32>,
+}
+
+impl FallbackConfig {
+    pub fn duration(&self) -> Duration {
+        self.duration_seconds.map_or(Duration::from_mins(1), |s| {
+            Duration::from_secs(s.get().into())
+        })
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
@@ -1072,5 +1086,24 @@ mod tests {
         let message = config_error(load(&[base]).await);
 
         assert!(message.contains("may only contain"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn fallback_duration_defaults_to_one_minute() {
+        let config = load(&[base()]).await.unwrap();
+        assert_eq!(config.fallback.duration(), Duration::from_mins(1));
+
+        let mut base = base();
+        base["fallback"]["duration_seconds"] = json!(30);
+        let config = load(&[base]).await.unwrap();
+        assert_eq!(config.fallback.duration(), Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn zero_fallback_duration_is_rejected() {
+        let mut base = base();
+        base["fallback"]["duration_seconds"] = json!(0);
+
+        config_error(load(&[base]).await);
     }
 }

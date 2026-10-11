@@ -448,6 +448,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "log",
+ "rand 0.10.1",
  "reqwest",
  "schemars",
  "serde",
