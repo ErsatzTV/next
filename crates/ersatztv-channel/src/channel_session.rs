@@ -258,7 +258,8 @@ impl ChannelSession {
             loop {
                 let mut playlist_manager = pm.lock().await;
                 let _ = playlist_manager.update().await;
-                if *playlist_manager.timeout() {
+                // troubleshooting has no clients and ends on its own
+                if !troubleshoot && *playlist_manager.timeout() {
                     tn.notify_one();
                     break;
                 }

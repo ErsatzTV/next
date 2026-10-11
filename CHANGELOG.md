@@ -28,6 +28,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Reject `normalization.video.filters` options that contain filter graph syntax when the channel config loads, instead of failing every item
 - Play silence for sources without an audio stream, instead of the fallback for the whole item
   - Applies to every source kind, and to a probe hint with no audio streams
+- `ersatztv-channel` now stops after 90 seconds without a client even when `.heartbeat` was never created, and counts from when the channel became ready
+  - Previously a worker spawned directly (not by `ersatztv`) whose client never requested a segment transcoded forever
+  - Troubleshooting runs no longer stop on a stale `.heartbeat`
 
 ## [0.2.0] - 2026-10-07
 ### Breaking

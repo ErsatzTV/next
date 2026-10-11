@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
@@ -36,6 +36,7 @@ pub struct PlaylistManager {
     generated_subtitle_playlist_file: String,
     ffmpeg_playlist_file: String,
     ready: bool,
+    ready_at: Option<Instant>,
 
     segments: VecDeque<Segment>,
     discontinuity_before: HashSet<String>,
@@ -87,6 +88,7 @@ impl PlaylistManager {
             ffmpeg_playlist_file: output_files.ffmpeg_playlist_file,
             generated_subtitle_playlist_file: output_files.generated_subtitle_playlist_file,
             ready: false,
+            ready_at: None,
 
             segments: VecDeque::new(),
             discontinuity_before: HashSet::new(),
@@ -283,13 +285,18 @@ impl PlaylistManager {
         if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
             tokio::fs::write(&self.ready_file, b"").await?;
             self.ready = true;
+            self.ready_at = Some(Instant::now());
         }
 
-        if self.heartbeat_file.exists() {
-            let metadata = tokio::fs::metadata(&self.heartbeat_file).await?;
-            let modified = metadata.modified()?;
-            self.timeout = modified.elapsed().unwrap_or(Duration::MAX) > HEARTBEAT_FILE_TIMEOUT;
-        }
+        let idle = match tokio::fs::metadata(&self.heartbeat_file).await {
+            Ok(metadata) => Some(metadata.modified()?.elapsed().unwrap_or(Duration::MAX)),
+            // no client ever arrived
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.ready_at.map(|t| t.elapsed())
+            }
+            Err(e) => return Err(e.into()),
+        };
+        self.timeout = idle.is_some_and(|i| i > HEARTBEAT_FILE_TIMEOUT);
 
         Ok(())
     }
@@ -505,6 +512,38 @@ mod tests {
         tokio::fs::write(folder.join("ffmpeg.m3u8"), playlist)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn idle_clock_starts_at_ready_without_heartbeat_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now - Duration::from_mins(1));
+        pm.update().await.unwrap();
+        assert!(!pm.ready);
+        assert!(!pm.timeout);
+
+        let names = [
+            "live000000.ts",
+            "live000001.ts",
+            "live000002.ts",
+            "live000003.ts",
+        ];
+        write_ffmpeg_segments(folder.path(), &names).await;
+        pm.update().await.unwrap();
+        assert!(pm.ready);
+        assert!(!pm.timeout);
+
+        pm.ready_at = Instant::now().checked_sub(HEARTBEAT_FILE_TIMEOUT + Duration::from_secs(1));
+        pm.update().await.unwrap();
+        assert!(pm.timeout);
+
+        tokio::fs::write(folder.path().join(HEARTBEAT_FILE_NAME), b"")
+            .await
+            .unwrap();
+        pm.update().await.unwrap();
+        assert!(!pm.timeout);
     }
 
     #[tokio::test]
