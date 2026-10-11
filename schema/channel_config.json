@@ -207,6 +207,15 @@
       "description": "Controls the content that replaces scheduled content when there is nothing to play\n(a gap in the playout) or when the scheduled item fails",
       "type": "object",
       "properties": {
+        "duration_seconds": {
+          "description": "Fallback length in seconds when the fallback has no end time, e.g. after a failed\ndynamic source. Default 60. Raised to the source's `retry_budget_ms` if shorter.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
         "show_error": {
           "description": "Burn the reason for the fallback into the fallback video; this is always burned,\nregardless of the normalization subtitle mode",
           "type": "boolean",

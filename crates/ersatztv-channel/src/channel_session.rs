@@ -43,6 +43,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
 
 use crate::dossier::DossierBuilder;
+use crate::dynamic_retry::{RetryPolicy, get_json, with_retry};
 use crate::fallback::{FallbackReason, error_card_subtitle};
 use crate::local_proxy::{LocalProxyServer, ScriptCommand};
 use crate::playlist_manager::{
@@ -406,13 +407,19 @@ impl ChannelSession {
             .get_current_item(&self.transcoded_until)
             .await;
 
+        // a fallback shorter than the retry budget drains the buffer
+        let mut min_fallback = Duration::ZERO;
         if let Ok(
             item @ PlayoutItem {
-                source: Some(PlayoutItemSource::Dynamic { .. }),
+                source:
+                    Some(PlayoutItemSource::Dynamic {
+                        retry_budget_ms, ..
+                    }),
                 ..
             },
         ) = current_item_result
         {
+            min_fallback = Duration::from_millis(retry_budget_ms.unwrap_or_default());
             current_item_result = self
                 .resolve_dynamic_item(&self.transcoded_until, &item)
                 .await;
@@ -423,7 +430,7 @@ impl ChannelSession {
             Ok(playout_item) if self.ended_item_id.as_ref() == Some(&playout_item.id) => {
                 is_fallback = true;
                 let reason = FallbackReason::source_ended(&playout_item, self.transcoded_until);
-                self.fallback_playout_item(&reason).await
+                self.fallback_playout_item(&reason, Duration::ZERO).await
             }
             Ok(playout_item) => {
                 self.ended_item_id = None;
@@ -438,7 +445,7 @@ impl ChannelSession {
                 }
                 reason.log(&self.transcoded_until);
                 is_fallback = true;
-                self.fallback_playout_item(&reason).await
+                self.fallback_playout_item(&reason, min_fallback).await
             }
         };
 
@@ -467,7 +474,7 @@ impl ChannelSession {
                 }
                 let reason = FallbackReason::from_transcode_error(&current_item, e);
                 reason.log(&self.transcoded_until);
-                let fallback_item = self.fallback_playout_item(&reason).await;
+                let fallback_item = self.fallback_playout_item(&reason, Duration::ZERO).await;
                 // the failed pass may have output segments
                 let pts_duration = match self.pts_scanner.get_last_pts().await {
                     Ok(scanned_pts_time) => Some(scanned_pts_time.duration),
@@ -1304,7 +1311,11 @@ impl ChannelSession {
         }
     }
 
-    async fn fallback_playout_item(&self, reason: &FallbackReason) -> PlayoutItem {
+    async fn fallback_playout_item(
+        &self,
+        reason: &FallbackReason,
+        min_duration: Duration,
+    ) -> PlayoutItem {
         let width = self
             .channel_config
             .normalization
@@ -1319,7 +1330,7 @@ impl ChannelSession {
             .height
             .unwrap_or(1080);
 
-        let duration = Duration::from_mins(1);
+        let duration = fallback_duration(self.channel_config.fallback.duration(), min_duration);
 
         let subtitle = if self.channel_config.fallback.show_error {
             self.write_error_card(reason, width, height, duration).await
@@ -1374,6 +1385,8 @@ impl ChannelSession {
             headers,
             user_agent,
             timeout_us,
+            retry_budget_ms,
+            retry_backoff_ms,
         }) = &dynamic_item.source
         else {
             return Err(ChannelError::DynamicSourceRequired);
@@ -1438,23 +1451,17 @@ impl ChannelSession {
             .map_err(|e| ChannelError::DynamicSourceFailure(format!("bad time value: {e}")))?,
         );
 
-        let timeout = timeout_us
-            .map(Duration::from_micros)
-            .unwrap_or_else(|| Duration::from_secs(10));
-
-        let mut item: PlayoutItem = self
-            .dynamic_http_client
-            .get(&expanded_uri)
-            .headers(header_map)
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?
-            .json()
-            .await
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?;
+        let policy = RetryPolicy::new(*timeout_us, *retry_budget_ms, *retry_backoff_ms);
+        let mut item: PlayoutItem = with_retry(&policy, |timeout| {
+            get_json(
+                &self.dynamic_http_client,
+                &expanded_uri,
+                &header_map,
+                timeout,
+            )
+        })
+        .await
+        .map_err(ChannelError::DynamicSourceFailure)?;
 
         // always start at the requested time
         if item.start != *start {
@@ -1709,6 +1716,18 @@ fn playout_timing_to_pipeline(
 
         ffpipeline::input::WatermarkTiming::Periodic(periodic_timing)
     })
+}
+
+fn fallback_duration(configured: Duration, min_duration: Duration) -> Duration {
+    if configured >= min_duration {
+        return configured;
+    }
+    log::warn!(
+        "fallback duration {}s is shorter than the dynamic source retry budget; using {}s",
+        configured.as_secs_f64(),
+        min_duration.as_secs_f64()
+    );
+    min_duration
 }
 
 fn fallback_item(
@@ -2040,6 +2059,17 @@ mod tests {
             out_point: duration,
             stream_index: None,
         }
+    }
+
+    #[test]
+    fn fallback_duration_is_at_least_the_retry_budget() {
+        let minute = Duration::from_mins(1);
+        assert_eq!(fallback_duration(minute, Duration::ZERO), minute);
+        assert_eq!(fallback_duration(minute, Duration::from_secs(25)), minute);
+        assert_eq!(
+            fallback_duration(Duration::from_secs(10), Duration::from_secs(25)),
+            Duration::from_secs(25)
+        );
     }
 
     /// Copied lavfi streams mux as `bin_data` and ffmpeg exits 0, so a copied fallback is a

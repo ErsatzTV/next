@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ersatztv.org/playout/version/0.0.5",
+  "$id": "https://ersatztv.org/playout/version/0.0.6",
   "title": "Playout",
   "description": "A playout schedule for a single time window.\n\nFiles should be named `{start}_{finish}.json` using compact ISO 8601 (no separators), e.g. `20260413T000000.000000000-0500_20260414T002131.620000000-0500.json`, so that the channel can locate the correct file for the current time.",
   "type": "object",
@@ -649,7 +649,23 @@
             "null"
           ],
           "minimum": 0,
-          "description": "Request timeout in microseconds. Defaults to 10 seconds."
+          "description": "Request timeout in microseconds. Defaults to 10 seconds. With retry enabled, each attempt's timeout is the smaller of this and the retry budget left."
+        },
+        "retry_budget_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Total time in milliseconds to spend resolving this source, including every attempt and the waits between them. Absent or 0 disables retry. Transport errors, timeouts and 5xx responses are retried; 4xx responses and a body that isn't a valid `PlayoutItem` are not. When resolution still fails, the channel plays its fallback for at least this long (see `fallback.duration_seconds` in the channel config). Retries delay the first segment when a channel starts while the resolver is unreachable."
+        },
+        "retry_backoff_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "Delay in milliseconds before the first retry. Defaults to 250. The delay doubles after each retry, with jitter, and a retry is skipped when its delay would use up the budget."
         }
       }
     },

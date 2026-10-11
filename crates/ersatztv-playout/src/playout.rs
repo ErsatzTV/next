@@ -14,7 +14,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 5,
+    compatible: 6,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/playout/version/", SUPPORTED_SCHEMA);
@@ -279,6 +279,12 @@ pub enum PlayoutItemSource {
         /// Socket timeout in microseconds
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_us: Option<u64>,
+        /// Absent or 0: no retry
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_budget_ms: Option<u64>,
+        /// Default 250; doubles after each retry
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_backoff_ms: Option<u64>,
     },
 }
 
@@ -501,10 +507,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schema_003_to_005_files_load() {
+    async fn schema_003_to_006_files_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        for version in ["0.0.3", "0.0.4", "0.0.5"] {
+        for version in ["0.0.3", "0.0.4", "0.0.5", "0.0.6"] {
             let mut item = item_json();
             let mut graphics = layer("canvas.nut");
             if version == "0.0.4" {
@@ -538,7 +544,7 @@ mod tests {
     async fn newer_schema_is_rejected_with_supported_version() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        let newer = "https://ersatztv.org/playout/version/0.0.6";
+        let newer = "https://ersatztv.org/playout/version/0.0.7";
         let value = serde_json::json!({ "version": newer, "items": [] });
         tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
             .await
@@ -550,7 +556,7 @@ mod tests {
                 supported,
             })) => {
                 assert_eq!(found, newer);
-                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.5");
+                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.6");
             }
             other => panic!("expected Unsupported, got {:?}", other.err()),
         }
