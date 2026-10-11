@@ -3,6 +3,7 @@ mod dossier;
 mod dynamic_retry;
 mod fallback;
 mod local_proxy;
+mod logging;
 mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
@@ -53,7 +54,17 @@ pub fn main() -> ExitCode {
     // first, so a parent that dies during startup is still seen
     let parent_exit = parent_exit();
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    // clap may exit here; nothing is spawned yet
+    let args = Args::parse();
+
+    logging::init();
+    let span = match &args.command {
+        Commands::Run { number, .. } => tracing::info_span!("channel", number = %number),
+        Commands::Debug { .. } => tracing::Span::none(),
+    };
+    // tasks spawned from here need .in_current_span() to keep the channel number
+    let _span = span.enter();
+
     kill_descendants_on_exit();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -67,8 +78,6 @@ pub fn main() -> ExitCode {
         }
     };
 
-    // clap may exit here; nothing is spawned yet
-    let args = Args::parse();
     let watch_parent = matches!(
         args.command,
         Commands::Run {

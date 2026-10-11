@@ -41,6 +41,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use time::OffsetDateTime;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
+use tracing::Instrument;
 
 use crate::dossier::DossierBuilder;
 use crate::dynamic_retry::{RetryPolicy, get_json, with_retry};
@@ -254,24 +255,27 @@ impl ChannelSession {
         let pm = self.playlist_manager.clone();
         let tn = self.timeout_notify.clone();
 
-        tokio::spawn(async move {
-            loop {
-                let mut playlist_manager = pm.lock().await;
-                let _ = playlist_manager.update().await;
-                // troubleshooting has no clients and ends on its own
-                if !troubleshoot && *playlist_manager.timeout() {
-                    tn.notify_one();
-                    break;
+        tokio::spawn(
+            async move {
+                loop {
+                    let mut playlist_manager = pm.lock().await;
+                    let _ = playlist_manager.update().await;
+                    // troubleshooting has no clients and ends on its own
+                    if !troubleshoot && *playlist_manager.timeout() {
+                        tn.notify_one();
+                        break;
+                    }
+                    let interval = if *playlist_manager.is_ready() {
+                        PLAYLIST_UPDATE_INTERVAL
+                    } else {
+                        PLAYLIST_UPDATE_INTERVAL_STARTUP
+                    };
+                    drop(playlist_manager);
+                    tokio::time::sleep(interval).await;
                 }
-                let interval = if *playlist_manager.is_ready() {
-                    PLAYLIST_UPDATE_INTERVAL
-                } else {
-                    PLAYLIST_UPDATE_INTERVAL_STARTUP
-                };
-                drop(playlist_manager);
-                tokio::time::sleep(interval).await;
             }
-        });
+            .in_current_span(),
+        );
 
         // always work ahead initially
         let realtime = false;
@@ -857,20 +861,23 @@ impl ChannelSession {
         )));
 
         let reader_ring = Arc::clone(&ring);
-        let reader_handle = tokio::spawn(async move {
-            let mut lines = tokio::io::BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("{line}");
-                if let Ok(mut buf) = reader_ring.lock() {
-                    if buf.len() == STDERR_RING_LINES {
-                        buf.pop_front();
+        let reader_handle = tokio::spawn(
+            async move {
+                let mut lines = tokio::io::BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    tracing::debug!(target: "ffmpeg", "{line}");
+                    if let Ok(mut buf) = reader_ring.lock() {
+                        if buf.len() == STDERR_RING_LINES {
+                            buf.pop_front();
+                        }
+                        buf.push_back(line);
                     }
-                    buf.push_back(line);
                 }
             }
-        });
+            .in_current_span(),
+        );
 
-        log::debug!("waiting for ffmpeg to terminate...");
+        log::debug!("waiting for ffmpeg to finish...");
 
         let exit = tokio::select! {
             status = ffmpeg_child.wait() => FfmpegExit::Exited(status),
