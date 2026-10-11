@@ -32,7 +32,6 @@
       "bitrate_kbps": 2000,
       "buffer_kbps": 4000,
       "accel": null,
-      "tonemap_algorithm": "linear",
       "vaapi_device": "/dev/dri/renderD128",
       "vaapi_driver": "ihd"
     },

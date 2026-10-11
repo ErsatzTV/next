@@ -167,7 +167,7 @@
           ]
         },
         "mode": {
-          "description": "`copy`: copy items with a source codec in `copy_formats`. Transcode all other items.",
+          "description": "Whether to transcode every item or copy items whose codec allows it.",
           "$ref": "#/$defs/StreamMode",
           "default": "transcode"
         },
@@ -815,7 +815,7 @@
           "minimum": 0
         },
         "mode": {
-          "description": "`copy`: copy items with a source codec in `copy_formats`. Transcode all other items, and\nitems with graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI\nsources.",
+          "description": "Whether to transcode every item or copy items whose codec allows it. In `copy` mode, items\nwith graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI sources are\nalways transcoded.",
           "$ref": "#/$defs/StreamMode",
           "default": "transcode"
         },
