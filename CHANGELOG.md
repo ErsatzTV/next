@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 - Software scaling now defaults to `bicubic` instead of `fast_bilinear`, which reduces aliasing when downscaling
   - Set `normalization.video.filters.scale.flags` to `fast_bilinear` to keep the previous output
+- `ersatztv-channel` now logs through `tracing` and includes the channel number (`channel{number=7}`) in all messages
+  - Set `ETV_LOG_FORMAT=json` for one JSON object per line with the channel number in `span.number`
 
 ### Fixed
 - Always encode 4:2:0 output, which many clients require

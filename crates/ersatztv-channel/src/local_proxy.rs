@@ -16,6 +16,7 @@ use ersatztv_channel::error::ChannelError;
 use ersatztv_core::process;
 use futures_core::Stream;
 use tokio::net::TcpListener;
+use tracing::Instrument;
 
 #[derive(Clone, Hash)]
 pub struct ScriptCommand {
@@ -50,9 +51,12 @@ impl LocalProxyServer {
         let app = Router::new()
             .route("/{token}", get(handle))
             .with_state(state.clone());
-        let task = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        let task = tokio::spawn(
+            async move {
+                let _ = axum::serve(listener, app).await;
+            }
+            .in_current_span(),
+        );
         Ok(Self {
             base: format!("http://127.0.0.1:{port}"),
             state,
