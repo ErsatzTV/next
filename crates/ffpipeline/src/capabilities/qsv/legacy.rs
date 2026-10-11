@@ -15,7 +15,7 @@ use libvpl_sys::*;
 use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
 use crate::pipeline::VideoFormat;
 
-const CODECS: &[(VideoFormat, u32)] = &[
+pub(super) const CODECS: &[(VideoFormat, u32)] = &[
     (VideoFormat::Av1, MFX_CODEC_AV1),
     (VideoFormat::H264, MFX_CODEC_AVC),
     (VideoFormat::Hevc, MFX_CODEC_HEVC),
@@ -30,6 +30,9 @@ const VPP_FORMATS: &[(u32, u8)] = &[
     (MFX_FOURCC_P010, 10),
     (MFX_FOURCC_RGB4, 8),
 ];
+
+/// No rgb4: pad runs on decoded video.
+const COMPOSITE_FORMATS: &[(u32, u8)] = &[(MFX_FOURCC_NV12, 8), (MFX_FOURCC_P010, 10)];
 
 /// A legacy session needs a device before it can answer capability questions. On
 /// Linux the caller must supply a VA display, or every query returns
@@ -66,9 +69,9 @@ pub(crate) fn probe(vpl: &VplLib) -> Option<QsvCapabilities> {
             continue;
         }
 
-        session.log_identity(*candidate);
+        let platform = session.log_identity(*candidate);
 
-        let capabilities = session.probe_capabilities();
+        let capabilities = session.probe_capabilities(&platform);
         if capabilities.count() > 0 {
             return Some(capabilities);
         }
@@ -111,7 +114,7 @@ impl<'a> Session<'a> {
         true
     }
 
-    fn log_identity(&self, requested: mfxIMPL) {
+    fn log_identity(&self, requested: mfxIMPL) -> mfxPlatform {
         let mut version = mfxVersion::default();
         let mut implementation: mfxIMPL = 0;
         let mut platform = mfxPlatform::default();
@@ -127,14 +130,17 @@ impl<'a> Session<'a> {
         }
 
         log::debug!(
-            "[qsv] legacy Media SDK session: requested impl 0x{requested:x}, got impl 0x{implementation:x}, API {}.{}, device 0x{:x}",
+            "[qsv] legacy Media SDK session: requested impl 0x{requested:x}, got impl 0x{implementation:x}, API {}.{}, platform {}, device 0x{:x}",
             version.Major,
             version.Minor,
+            platform.CodeName,
             platform.DeviceId,
         );
+
+        platform
     }
 
-    fn probe_capabilities(&self) -> QsvCapabilities {
+    fn probe_capabilities(&self, platform: &mfxPlatform) -> QsvCapabilities {
         let mut supported_decoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
         let mut supported_encoders: HashMap<VideoFormat, Vec<u8>> = HashMap::new();
 
@@ -149,6 +155,7 @@ impl<'a> Session<'a> {
 
             let encode: Vec<u8> = [8u8, 10]
                 .into_iter()
+                .filter(|_| !encoder_is_broken(*format, platform.CodeName))
                 .filter(|bit_depth| self.can_encode(*codec_id, *bit_depth))
                 .collect();
             if !encode.is_empty() {
@@ -156,22 +163,48 @@ impl<'a> Session<'a> {
             }
         }
 
-        let mut vpp_pixel_formats = HashSet::new();
-        for (fourcc, bit_depth) in VPP_FORMATS {
-            // VPP accepts rgb4 only as an input, so test both directions
-            if self.can_vpp((*fourcc, *bit_depth), (MFX_FOURCC_NV12, 8))
-                || self.can_vpp((MFX_FOURCC_NV12, 8), (*fourcc, *bit_depth))
-            {
-                vpp_pixel_formats.insert(QsvFourCC(*fourcc));
-            }
-        }
+        let convert_pairs: HashSet<(QsvFourCC, QsvFourCC)> = VPP_FORMATS
+            .iter()
+            .flat_map(|input| VPP_FORMATS.iter().map(move |output| (*input, *output)))
+            .filter(|(input, output)| self.can_vpp(*input, *output))
+            .map(|(input, output)| (QsvFourCC(input.0), QsvFourCC(output.0)))
+            .collect();
+
+        // VPP accepts rgb4 only as an input, so an uploaded format needs a conversion
+        // in either direction
+        let nv12 = QsvFourCC(MFX_FOURCC_NV12);
+        let upload_formats = VPP_FORMATS
+            .iter()
+            .filter(|(fourcc, bit_depth)| {
+                self.can_upload(*fourcc, *bit_depth)
+                    && (convert_pairs.contains(&(QsvFourCC(*fourcc), nv12))
+                        || convert_pairs.contains(&(nv12, QsvFourCC(*fourcc))))
+            })
+            .map(|(fourcc, _)| QsvFourCC(*fourcc))
+            .collect();
 
         QsvCapabilities {
             supported_decoders,
             supported_encoders,
-            vpp_pixel_formats,
+            upload_formats,
+            convert_pairs,
             // 1.x runtime does not provide a filter list
             vpp_filters: HashSet::new(),
+            rotation_formats: VPP_FORMATS
+                .iter()
+                .filter(|(fourcc, bit_depth)| {
+                    [90, 180, 270]
+                        .into_iter()
+                        .all(|angle| self.can_rotate(*fourcc, *bit_depth, angle))
+                })
+                .map(|(fourcc, _)| QsvFourCC(*fourcc))
+                .collect(),
+            composite_pairs: COMPOSITE_FORMATS
+                .iter()
+                .flat_map(|from| COMPOSITE_FORMATS.iter().map(move |to| (*from, *to)))
+                .filter(|(from, to)| self.can_composite(*from, *to))
+                .map(|(from, to)| (QsvFourCC(from.0), QsvFourCC(to.0)))
+                .collect(),
             runtime_api: self.api_version(),
         }
     }
@@ -233,6 +266,129 @@ impl<'a> Session<'a> {
         self.query(Query::Vpp, 0, &mut input)
     }
 
+    /// hwupload uses a VPP session to copy frames into video memory. This session
+    /// keeps the same format (hwcontext_qsv). The session opens only when the
+    /// runtime returns `MFX_ERR_NONE`. Haswell returns `MFX_ERR_NONE` for P010 to
+    /// NV12. It returns partial acceleration for P010 to P010. Thus hwupload cannot
+    /// copy P010 frames to the GPU on Haswell.
+    fn can_upload(&self, fourcc: u32, bit_depth: u8) -> bool {
+        let vpp = mfxInfoVPP {
+            In: frame_info(fourcc, bit_depth),
+            Out: frame_info(fourcc, bit_depth),
+            ..Default::default()
+        };
+
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion { vpp };
+        input.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        let mut output = input;
+
+        let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
+        log::debug!(
+            "[qsv] legacy upload query {:?}: {status}",
+            QsvFourCC(fourcc)
+        );
+
+        status == MFX_ERR_NONE
+    }
+
+    fn can_rotate(&self, fourcc: u32, bit_depth: u8, angle: u16) -> bool {
+        let mut rotation = mfxExtVPPRotation {
+            Header: mfxExtBuffer {
+                BufferId: MFX_EXTBUFF_VPP_ROTATION,
+                BufferSz: std::mem::size_of::<mfxExtVPPRotation>() as u32,
+            },
+            Angle: angle,
+            ..Default::default()
+        };
+        let mut output_rotation = rotation;
+        let mut input_ext = &mut rotation as *mut mfxExtVPPRotation;
+        let mut output_ext = &mut output_rotation as *mut mfxExtVPPRotation;
+        let source = frame_info(fourcc, bit_depth);
+        let mut target = source;
+        if angle != 180 {
+            std::mem::swap(&mut target.Width, &mut target.Height);
+            std::mem::swap(&mut target.CropW, &mut target.CropH);
+        }
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion {
+            vpp: mfxInfoVPP {
+                In: source,
+                Out: target,
+                ..Default::default()
+            },
+        };
+        input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        input.ExtParam = (&mut input_ext as *mut *mut mfxExtVPPRotation).cast();
+        input.NumExtParam = 1;
+        let mut output = input;
+        output.ExtParam = (&mut output_ext as *mut *mut mfxExtVPPRotation).cast();
+        let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
+        // Warnings can mean the runtime skipped rotation or changed the requested settings.
+        status == MFX_ERR_NONE && output_rotation.Angle == angle
+    }
+
+    /// The patched vpp_qsv pads with a single-stream composite, so query a sample 4:3
+    /// frame in a 16:9 canvas. Composite docs list only NV12 -> NV12 and RGB output,
+    /// and legacy runtimes do reject P010 output, so query each format pair.
+    fn can_composite(&self, from: (u32, u8), to: (u32, u8)) -> bool {
+        let mut input_stream = mfxVPPCompInputStream {
+            DstX: 240,
+            DstY: 0,
+            DstW: 1440,
+            DstH: 1080,
+            ..Default::default()
+        };
+        let mut output_stream = input_stream;
+        let mut composite = mfxExtVPPComposite {
+            Header: mfxExtBuffer {
+                BufferId: MFX_EXTBUFF_VPP_COMPOSITE,
+                BufferSz: std::mem::size_of::<mfxExtVPPComposite>() as u32,
+            },
+            Y: 16 << (to.1 - 8),
+            U: 128 << (to.1 - 8),
+            V: 128 << (to.1 - 8),
+            NumTiles: 0,
+            reserved1: [0; 23],
+            NumInputStream: 1,
+            InputStream: &mut input_stream,
+        };
+        let mut output_composite = composite;
+        output_composite.InputStream = &mut output_stream;
+        let mut input_ext = &mut composite as *mut mfxExtVPPComposite;
+        let mut output_ext = &mut output_composite as *mut mfxExtVPPComposite;
+
+        let mut source = frame_info(from.0, from.1);
+        source.Width = 640;
+        source.Height = 480;
+        source.CropW = 640;
+        source.CropH = 480;
+
+        let mut input = mfxVideoParam::zeroed();
+        input.u = mfxVideoParamUnion {
+            vpp: mfxInfoVPP {
+                In: source,
+                Out: frame_info(to.0, to.1),
+                ..Default::default()
+            },
+        };
+        input.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        input.ExtParam = (&mut input_ext as *mut *mut mfxExtVPPComposite).cast();
+        input.NumExtParam = 1;
+        let mut output = input;
+        output.ExtParam = (&mut output_ext as *mut *mut mfxExtVPPComposite).cast();
+
+        let status = unsafe { (self.vpl.MFXVideoVPP_Query)(self.handle, &mut input, &mut output) };
+        log::debug!(
+            "[qsv] legacy composite query {:?} -> {:?}: {status}",
+            QsvFourCC(from.0),
+            QsvFourCC(to.0)
+        );
+
+        // unlike query(), a warning fails: it can mean the runtime ignored the composite
+        status == MFX_ERR_NONE
+    }
+
     fn query(&self, kind: Query, codec_id: u32, input: &mut mfxVideoParam) -> bool {
         let mut output = mfxVideoParam::zeroed();
 
@@ -274,6 +430,16 @@ enum Query {
     Decode,
     Encode,
     Vpp,
+}
+
+/// Encoders that pass `MFXVideoENCODE_Query` and `Init` but cannot encode a frame.
+///
+/// Haswell (Windows driver 20.19.15.5171, API 1.20) accepts MPEG-2 at every profile,
+/// preset, slice count and rate control, then fails the first frame from video memory
+/// with `MFX_ERR_DEVICE_FAILED` and hangs on system memory. The failure also breaks
+/// every other session on the device. Kaby Lake (API 1.35) encodes the same streams.
+fn encoder_is_broken(format: VideoFormat, code_name: u16) -> bool {
+    format == VideoFormat::Mpeg2Video && code_name == MFX_PLATFORM_HASWELL
 }
 
 /// `mfxInfoMFX` is smaller than `mfxInfoVPP`, the other arm of the union. write the

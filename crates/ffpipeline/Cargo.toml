@@ -1,6 +1,7 @@
 [package]
 name = "ffpipeline"
-version = "0.1.0"
+version.workspace = true
+publish.workspace = true
 edition = "2024"
 
 [dependencies]
@@ -8,7 +9,10 @@ clap = { workspace = true }
 derive_more = { workspace = true }
 enum_dispatch = { workspace = true }
 env_logger = { workspace = true }
+ersatztv-core = { workspace = true }
+libamf-sys = { workspace = true }
 libcl-sys = { workspace = true }
+libd3d11-sys = { workspace = true }
 libmpp-sys = { workspace = true }
 libnvidia-sys = { workspace = true }
 libva-sys = { workspace = true }

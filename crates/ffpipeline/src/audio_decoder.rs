@@ -16,7 +16,7 @@ impl AudioDecoder {
         AudioDecoder {
             input_codec: audio_stream.codec.to_owned(),
             input_channels: audio_stream.channels,
-            output_channels: output_settings.audio.channels,
+            output_channels: output_settings.audio.transcode.channels,
         }
     }
 

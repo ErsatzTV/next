@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::{ChannelError, IoContext};
-use tokio::process::Command;
+use ersatztv_core::process;
 
 pub struct PtsTime {
     pub duration: Duration,
@@ -11,12 +11,14 @@ pub struct PtsTime {
 
 pub struct PtsScanner {
     output_folder: PathBuf,
+    ffprobe_path: PathBuf,
 }
 
 impl PtsScanner {
-    pub fn new(channel_config: &ChannelConfig) -> PtsScanner {
+    pub fn new(channel_config: &ChannelConfig, ffprobe_path: &Path) -> PtsScanner {
         PtsScanner {
             output_folder: channel_config.expanded_output_folder().to_owned(),
+            ffprobe_path: ffprobe_path.to_owned(),
         }
     }
 
@@ -51,10 +53,13 @@ impl PtsScanner {
                     ChannelError::PtsScannerPathNotUtf8(p.to_string_lossy().into_owned())
                 })?;
 
-            let output = Command::new("ffprobe")
+            let output = process::command(&self.ffprobe_path)
                 .args([
                     "-v",
                     "-0",
+                    // audio can end after video; the next video must start where this video ends
+                    "-select_streams",
+                    "v:0",
                     "-show_entries",
                     "packet=pts_time,duration_time",
                     "-of",

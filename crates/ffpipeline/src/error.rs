@@ -14,6 +14,8 @@ pub enum FFPipelineError {
     AudioInputIsRequired,
     #[error("video input is required")]
     VideoInputIsRequired,
+    #[error("error detecting amf capabilities: {0}")]
+    AmfCapabilitiesError(String),
     #[error("error detecting nvidia capabilities: {0}")]
     NvidiaCapabilitiesError(String),
     #[error("error detecting opencl capabilities: {0}")]
@@ -32,4 +34,8 @@ pub enum FFPipelineError {
     FailedToConvertSubtitle,
     #[error("failed to parse subtitle")]
     FailedToParseSubtitle,
+    #[error("keyframe search failed: {0}")]
+    KeyframeSearchFailed(String),
+    #[error("no keyframe {0}")]
+    NoKeyframe(String),
 }

@@ -28,6 +28,9 @@ pub const MFX_CODEC_VP8: u32 = u32::from_ne_bytes(*b"VP8 ");
 pub const MFX_CODEC_VP9: u32 = u32::from_ne_bytes(*b"VP9 ");
 pub const MFX_CODEC_AV1: u32 = u32::from_ne_bytes(*b"AV1 ");
 
+// mfxPlatform.CodeName (subset used for driver workarounds)
+pub const MFX_PLATFORM_HASWELL: u16 = 3;
+
 // H.264 profiles (subset used for bit-depth detection)
 pub const MFX_PROFILE_AVC_HIGH10: u32 = 110;
 
@@ -47,6 +50,60 @@ pub const MFX_FOURCC_RGB4: u32 = u32::from_ne_bytes(*b"RGB4");
 
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN: u32 = u32::from_ne_bytes(*b"VSII");
 pub const MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT: u32 = u32::from_ne_bytes(*b"VSIO");
+pub const MFX_EXTBUFF_VPP_ROTATION: u32 = u32::from_ne_bytes(*b"ROT ");
+pub const MFX_EXTBUFF_VPP_COMPOSITE: u32 = u32::from_ne_bytes(*b"VCMP");
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxExtBuffer {
+    pub BufferId: u32,
+    pub BufferSz: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxExtVPPRotation {
+    pub Header: mfxExtBuffer,
+    pub Angle: u16,
+    pub reserved: [u16; 11],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct mfxVPPCompInputStream {
+    pub DstX: u32,
+    pub DstY: u32,
+    pub DstW: u32,
+    pub DstH: u32,
+    pub LumaKeyEnable: u16,
+    pub LumaKeyMin: u16,
+    pub LumaKeyMax: u16,
+    pub GlobalAlphaEnable: u16,
+    pub GlobalAlpha: u16,
+    pub PixelAlphaEnable: u16,
+    pub TileId: u16,
+    pub reserved2: [u16; 17],
+}
+
+/// In the C header, Y/U/V are unions with R/G/B. Only the YUV names are here.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct mfxExtVPPComposite {
+    pub Header: mfxExtBuffer,
+    pub Y: u16,
+    pub U: u16,
+    pub V: u16,
+    pub NumTiles: u16,
+    pub reserved1: [u16; 23],
+    pub NumInputStream: u16,
+    pub InputStream: *mut mfxVPPCompInputStream,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(std::mem::size_of::<mfxVPPCompInputStream>() == 64);
+    assert!(std::mem::size_of::<mfxExtVPPComposite>() == 72);
+};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -216,6 +273,7 @@ pub const MFX_HANDLE_D3D11_DEVICE: u32 = 3;
 pub const MFX_HANDLE_VA_DISPLAY: u32 = 4;
 
 pub const MFX_IOPATTERN_IN_VIDEO_MEMORY: u16 = 0x01;
+pub const MFX_IOPATTERN_IN_SYSTEM_MEMORY: u16 = 0x02;
 pub const MFX_IOPATTERN_OUT_VIDEO_MEMORY: u16 = 0x10;
 
 pub const MFX_PICSTRUCT_PROGRESSIVE: u16 = 0x01;
@@ -345,6 +403,14 @@ mod layout_tests {
     use std::mem::{align_of, offset_of, size_of};
 
     use super::*;
+
+    #[test]
+    fn rotation_extension_matches_header() {
+        assert_eq!(size_of::<mfxExtBuffer>(), 8);
+        assert_eq!(size_of::<mfxExtVPPRotation>(), 32);
+        assert_eq!(align_of::<mfxExtVPPRotation>(), 4);
+        assert_eq!(offset_of!(mfxExtVPPRotation, Angle), 8);
+    }
 
     // values taken from the oneVPL headers with offsetof and sizeof on x86_64
     #[test]

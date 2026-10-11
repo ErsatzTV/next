@@ -1,11 +1,11 @@
 use std::borrow::Cow;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Formatter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::config::{ChannelConfig, NormalizationConfig, StreamMode};
 use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
@@ -13,6 +13,8 @@ use ersatztv_playout::playout::{
     ProbeHint, SubtitleHint, TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
+use ffpipeline::copy_decision::{CopyBlocker, CopyDecision};
+use ffpipeline::error::FFPipelineError;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
@@ -20,8 +22,14 @@ use ffpipeline::input::{
     FfmpegInputArgs, GraphicsInput, HttpInputOptions, HttpInputSource, InputSettings, InputSource,
     LavfiInputSource, LocalInputSource, ProbedInput, RtspInputOptions, RtspInputSource,
 };
-use ffpipeline::output_settings::{AudioOutputSettings, OutputSettings, SubtitleMode};
-use ffpipeline::pipeline::{AudioFormat, Hz, Kbps, PtsOffset, SEGMENT_SECONDS, VideoFormat};
+use ffpipeline::keyframe_seek::{
+    CopySeekRequest, InputStart, Keyframe, KeyframeLocator, plan_copy_seek,
+};
+use ffpipeline::output_settings::{
+    AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings, SubtitleMode,
+    VideoOutputSettings, VideoTranscodeSettings,
+};
+use ffpipeline::pipeline::{Hz, Kbps, PtsOffset, SEGMENT_SECONDS};
 use ffpipeline::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
     ProbeResultVideoStream, Probeable,
@@ -33,11 +41,15 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use time::OffsetDateTime;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::Mutex;
+use tracing::Instrument;
 
 use crate::dossier::DossierBuilder;
+use crate::dynamic_retry::{RetryPolicy, get_json, with_retry};
 use crate::fallback::{FallbackReason, error_card_subtitle};
 use crate::local_proxy::{LocalProxyServer, ScriptCommand};
-use crate::playlist_manager::{PlaylistManager, PlaylistManagerOutputFiles, SubtitleSource};
+use crate::playlist_manager::{
+    PlaylistManager, PlaylistManagerOutputFiles, SHORTFALL_TOLERANCE, SubtitleSource,
+};
 use crate::playout_loader::PlayoutLoader;
 use crate::pts_scanner::{PtsScanner, PtsTime};
 
@@ -45,6 +57,8 @@ const STDERR_RING_LINES: usize = 2_000;
 const STALL_THRESHOLD: Duration = Duration::from_secs(60);
 const PLAYLIST_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
 const PLAYLIST_UPDATE_INTERVAL_STARTUP: Duration = Duration::from_millis(200);
+const INPUT_START_CACHE_LIMIT: usize = 4_096;
+const WORK_AHEAD_LIMIT: Duration = Duration::from_secs(SEGMENT_SECONDS as u64 * 11);
 
 #[derive(Copy, Clone, PartialEq)]
 enum ChannelSessionState {
@@ -72,6 +86,20 @@ struct TimingResult {
     is_complete: bool,
 }
 
+enum FfmpegExit {
+    Exited(std::io::Result<std::process::ExitStatus>),
+    IdleTimeout,
+    Stalled,
+}
+
+/// The next chunk starts here. A new search from the schedule position could skip a GOP,
+/// because the item was shifted back.
+struct CopyResume {
+    item_id: String,
+    at: OffsetDateTime,
+    keyframe: Keyframe,
+}
+
 pub struct ChannelSession {
     channel_config: ChannelConfig,
     playout_loader: PlayoutLoader,
@@ -96,6 +124,11 @@ pub struct ChannelSession {
     timeout_notify: Arc<tokio::sync::Notify>,
 
     cached_subtitles: Option<(String, Arc<Vec<Cue>>)>,
+    // work-ahead runs one item as several chunks; warn once per item
+    copy_warned_item_id: Option<String>,
+    copy_resume: Option<CopyResume>,
+    ended_item_id: Option<String>,
+    input_starts: HashMap<(String, u32), Option<InputStart>>,
     dynamic_http_client: reqwest::Client,
 }
 
@@ -149,7 +182,6 @@ impl ChannelSession {
         let ready_file = output_folder.join(READY_FILE_NAME);
 
         let playout_loader = PlayoutLoader::new(&channel_config);
-        let pts_scanner = PtsScanner::new(&channel_config);
         let playlist_manager = PlaylistManager::new(
             now,
             SEGMENT_SECONDS,
@@ -178,6 +210,8 @@ impl ChannelSession {
             .clone()
             .unwrap_or(default_ffmpeg_path);
 
+        let pts_scanner = PtsScanner::new(&channel_config, &ffprobe_path);
+
         let local_proxy_server = LocalProxyServer::start().await?;
 
         let dynamic_http_client = reqwest::Client::builder()
@@ -202,6 +236,10 @@ impl ChannelSession {
             state: ChannelSessionState::SeekAndWorkAhead,
             timeout_notify: Arc::new(tokio::sync::Notify::new()),
             cached_subtitles: None,
+            copy_warned_item_id: None,
+            copy_resume: None,
+            ended_item_id: None,
+            input_starts: HashMap::new(),
             dynamic_http_client,
         })
     }
@@ -229,29 +267,48 @@ impl ChannelSession {
         let pm = self.playlist_manager.clone();
         let tn = self.timeout_notify.clone();
 
-        tokio::spawn(async move {
-            loop {
-                let mut playlist_manager = pm.lock().await;
-                let _ = playlist_manager.update().await;
-                if *playlist_manager.timeout() {
-                    tn.notify_one();
-                    break;
+        tokio::spawn(
+            async move {
+                loop {
+                    let mut playlist_manager = pm.lock().await;
+                    let _ = playlist_manager.update().await;
+                    // troubleshooting has no clients and ends on its own
+                    if !troubleshoot && *playlist_manager.timeout() {
+                        tn.notify_one();
+                        break;
+                    }
+                    let interval = if *playlist_manager.is_ready() {
+                        PLAYLIST_UPDATE_INTERVAL
+                    } else {
+                        PLAYLIST_UPDATE_INTERVAL_STARTUP
+                    };
+                    drop(playlist_manager);
+                    tokio::time::sleep(interval).await;
                 }
-                let interval = if *playlist_manager.is_ready() {
-                    PLAYLIST_UPDATE_INTERVAL
-                } else {
-                    PLAYLIST_UPDATE_INTERVAL_STARTUP
-                };
-                drop(playlist_manager);
-                tokio::time::sleep(interval).await;
             }
-        });
+            .in_current_span(),
+        );
 
         // always work ahead initially
         let realtime = false;
         self.transcode(realtime, troubleshoot).await?;
 
         if troubleshoot {
+            // a troubleshooting playout can have more than one item
+            while self
+                .playout_loader
+                .has_remaining(&self.transcoded_until)
+                .await?
+            {
+                let before = self.transcoded_until;
+                self.transcode(realtime, troubleshoot).await?;
+                if self.transcoded_until <= before {
+                    break;
+                }
+            }
+
+            self.playlist_manager.lock().await.finish().await?;
+
             log::debug!("troubleshooting complete; terminating.");
             return Ok(());
         }
@@ -280,13 +337,14 @@ impl ChannelSession {
                 let realtime = transcoded_buffer >= time::Duration::seconds(30);
                 self.transcode(realtime, troubleshoot).await?;
             } else {
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-                    _ = tn.notified() => {
-                        return Err(ChannelError::IdleTimeout(
-                            self.channel_config.number().to_owned()
-                        )                        );
-                    }
+                let idle = tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(5)) => false,
+                    () = tn.notified() => true,
+                };
+                if idle {
+                    return Err(ChannelError::IdleTimeout(
+                        self.channel_config.number().to_owned(),
+                    ));
                 }
             }
         }
@@ -368,13 +426,19 @@ impl ChannelSession {
             .get_current_item(&self.transcoded_until)
             .await;
 
+        // a fallback shorter than the retry budget drains the buffer
+        let mut min_fallback = Duration::ZERO;
         if let Ok(
             item @ PlayoutItem {
-                source: Some(PlayoutItemSource::Dynamic { .. }),
+                source:
+                    Some(PlayoutItemSource::Dynamic {
+                        retry_budget_ms, ..
+                    }),
                 ..
             },
         ) = current_item_result
         {
+            min_fallback = Duration::from_millis(retry_budget_ms.unwrap_or_default());
             current_item_result = self
                 .resolve_dynamic_item(&self.transcoded_until, &item)
                 .await;
@@ -382,7 +446,15 @@ impl ChannelSession {
 
         let mut is_fallback = false;
         let current_item = match current_item_result {
-            Ok(playout_item) => playout_item,
+            Ok(playout_item) if self.ended_item_id.as_ref() == Some(&playout_item.id) => {
+                is_fallback = true;
+                let reason = FallbackReason::source_ended(&playout_item, self.transcoded_until);
+                self.fallback_playout_item(&reason, Duration::ZERO).await
+            }
+            Ok(playout_item) => {
+                self.ended_item_id = None;
+                playout_item
+            }
             Err(err) => {
                 let reason = FallbackReason::from_selection_error(err);
                 if troubleshoot {
@@ -392,18 +464,11 @@ impl ChannelSession {
                 }
                 reason.log(&self.transcoded_until);
                 is_fallback = true;
-                self.fallback_playout_item(&reason).await
+                self.fallback_playout_item(&reason, min_fallback).await
             }
         };
 
         let pts_duration = pts_time.map(|p| p.duration);
-
-        let subtitle_mode = if is_fallback {
-            // the fallback message is only useful on screen
-            SubtitleMode::Burn
-        } else {
-            self.channel_config.normalization.subtitle.mode.into()
-        };
 
         let result = self
             .transcode_item(
@@ -411,7 +476,7 @@ impl ChannelSession {
                 realtime,
                 troubleshoot,
                 pts_duration,
-                subtitle_mode,
+                is_fallback,
             )
             .await;
 
@@ -421,17 +486,21 @@ impl ChannelSession {
             Err(e @ ChannelError::Stalled(_)) => return Err(e),
             Err(e) if troubleshoot => return Err(e),
             Err(e) => {
+                // an ended pass may still output a short tail
+                if let ChannelError::SourceEnded { reached, .. } = &e {
+                    self.transcoded_until = *reached;
+                    self.ended_item_id = Some(current_item.id.clone());
+                }
                 let reason = FallbackReason::from_transcode_error(&current_item, e);
                 reason.log(&self.transcoded_until);
-                let fallback_item = self.fallback_playout_item(&reason).await;
-                self.transcode_item(
-                    &fallback_item,
-                    realtime,
-                    troubleshoot,
-                    pts_duration,
-                    SubtitleMode::Burn,
-                )
-                .await?
+                let fallback_item = self.fallback_playout_item(&reason, Duration::ZERO).await;
+                // the failed pass may have output segments
+                let pts_duration = match self.pts_scanner.get_last_pts().await {
+                    Ok(scanned_pts_time) => Some(scanned_pts_time.duration),
+                    Err(_) => pts_duration,
+                };
+                self.transcode_item(&fallback_item, realtime, troubleshoot, pts_duration, true)
+                    .await?
             }
         };
 
@@ -449,8 +518,15 @@ impl ChannelSession {
         realtime: bool,
         troubleshoot: bool,
         pts_duration: Option<Duration>,
-        subtitle_mode: SubtitleMode,
+        is_fallback: bool,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
+        let subtitle_mode = if is_fallback {
+            // the fallback message is only useful on screen
+            SubtitleMode::Burn
+        } else {
+            self.channel_config.normalization.subtitle.mode.into()
+        };
+
         // prioritize source from audio tracks, then default source
         let audio_source = Self::resolve_source(current_item, |t| t.audio.as_ref())
             .ok_or(ChannelError::PlayoutJsonAudioSourceRequired)?;
@@ -550,46 +626,14 @@ impl ChannelSession {
             subtitle_probe_opt
         };
 
-        let audio_norm = &self.channel_config.normalization.audio;
-        let video_norm = &self.channel_config.normalization.video;
-
-        let video_size = match (video_norm.width, video_norm.height) {
-            (Some(width), Some(height)) => Some(FrameSize { width, height }),
-            _ => None,
-        };
-
         // consider an item to be live if any of its sources are live;
         // live sources can never seek or work ahead
         let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
 
-        // generate pipeline
+        let (audio, video) = stream_output_settings(&self.channel_config.normalization);
         let output_settings = OutputSettings {
-            audio: AudioOutputSettings {
-                format: audio_norm.format.clone().map(AudioFormat::from),
-                bitrate: audio_norm.bitrate_kbps.map(Kbps),
-                buffer: audio_norm.buffer_kbps.map(Kbps),
-                channels: audio_norm.channels,
-                sample_rate: audio_norm.sample_rate_hz.map(Hz),
-                loudness: if audio_norm.normalize_loudness {
-                    Some(
-                        audio_norm
-                            .loudness
-                            .as_ref()
-                            .map(|l| l.into())
-                            .unwrap_or_default(),
-                    )
-                } else {
-                    None
-                },
-            },
-            video_format: video_norm.format.clone().map(VideoFormat::from),
-            bit_depth: video_norm.bit_depth,
-            video_bitrate: video_norm.bitrate_kbps.map(Kbps),
-            video_buffer: video_norm.buffer_kbps.map(Kbps),
-            video_size,
-            scaling_mode: video_norm.scaling_mode.into(),
-            filter_options: video_norm.filters.clone().into(),
-            deinterlace: video_norm.deinterlace,
+            audio,
+            video,
             accel: self.hw_accel.clone(),
             format: ffpipeline::output_format::OutputFormat::Hls {
                 playlist: self.output_file.clone(),
@@ -599,11 +643,8 @@ impl ChannelSession {
             pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
             realtime,
             is_live,
-            frame_rate: if video_probe_result.is_still_image() {
-                Some(FrameRate::default())
-            } else {
-                None
-            },
+            frame_rate: target_frame_rate(&self.channel_config.normalization)
+                .or_else(|| video_probe_result.is_still_image().then(FrameRate::default)),
             subtitle_mode,
             fonts_folder: self
                 .channel_config
@@ -709,6 +750,26 @@ impl ChannelSession {
             subtitle_input,
             graphics_inputs,
             channel_number: Some(self.channel_config.number().to_owned()),
+            video_copy_seek: None,
+            video_copy_blockers: Vec::new(),
+        };
+
+        let copy_timing = if output_settings.video.copy.is_some()
+            && !is_live
+            && audio_source_is_video_source
+            && pipeline::predict_copy_decisions(&input_settings, &output_settings)
+                .is_ok_and(|d| d.video == Some(CopyDecision::Copy))
+        {
+            self.snap_copy_seek(
+                current_item,
+                &mut input_settings,
+                start_at_zero,
+                realtime,
+                &video_source,
+            )
+            .await
+        } else {
+            None
         };
 
         let mut subtitle_source: Option<SubtitleSource> = None;
@@ -756,14 +817,45 @@ impl ChannelSession {
         let envs = pipeline_result.envs();
         log::debug!("optimized pipeline: {}", args.join(" "));
 
+        let copy_note = pipeline_result
+            .copy_decisions()
+            .transcode_summary()
+            .map(|summary| {
+                if is_fallback {
+                    String::from("copy channel transcodes the fallback item")
+                } else {
+                    format!(
+                        "copy channel transcodes item {}: {summary}",
+                        current_item.id
+                    )
+                }
+            });
+        if let Some(note) = &copy_note {
+            // the fallback reason is already logged
+            if is_fallback {
+                log::debug!("{note}");
+            } else if self.copy_warned_item_id.as_ref() != Some(&current_item.id) {
+                log::warn!("{note}");
+                self.copy_warned_item_id = Some(current_item.id.clone());
+            }
+        }
+        let outcome = |text: &str| match &copy_note {
+            Some(note) => format!("{text}\n{note}"),
+            None => text.to_owned(),
+        };
+
         self.playlist_manager
             .lock()
             .await
-            .before_new_pipeline(pts_offset, subtitle_source)
+            .before_new_pipeline(
+                self.transcoded_until - self.start_time_offset,
+                pts_offset,
+                subtitle_source,
+            )
             .await?;
 
         // stream current item
-        let mut ffmpeg_child = tokio::process::Command::new(&self.ffmpeg_path)
+        let mut ffmpeg_child = ersatztv_core::process::command(&self.ffmpeg_path)
             .args(args.iter().map(Cow::as_ref))
             .envs(
                 envs.iter()
@@ -783,31 +875,44 @@ impl ChannelSession {
         )));
 
         let reader_ring = Arc::clone(&ring);
-        let reader_handle = tokio::spawn(async move {
-            let mut lines = tokio::io::BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("{line}");
-                if let Ok(mut buf) = reader_ring.lock() {
-                    if buf.len() == STDERR_RING_LINES {
-                        buf.pop_front();
+        let reader_handle = tokio::spawn(
+            async move {
+                let mut lines = tokio::io::BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    tracing::debug!(target: "ffmpeg", "{line}");
+                    if let Ok(mut buf) = reader_ring.lock() {
+                        if buf.len() == STDERR_RING_LINES {
+                            buf.pop_front();
+                        }
+                        buf.push_back(line);
                     }
-                    buf.push_back(line);
                 }
             }
-        });
+            .in_current_span(),
+        );
 
-        log::debug!("waiting for ffmpeg to terminate...");
+        log::debug!("waiting for ffmpeg to finish...");
 
-        tokio::select! {
-            status = ffmpeg_child.wait() => {
+        let exit = tokio::select! {
+            status = ffmpeg_child.wait() => FfmpegExit::Exited(status),
+            () = self.timeout_notify.notified() => FfmpegExit::IdleTimeout,
+            () = wait_for_stall(&self.playlist_manager) => FfmpegExit::Stalled,
+        };
+
+        match exit {
+            FfmpegExit::Exited(status) => {
                 let status = status.map_err(|e| ChannelError::StreamFailure(e.to_string()))?;
                 let _ = reader_handle.await;
                 if !status.success() {
-                    self.write_dossier(                        current_item,
-                        &video_probe_result,                        &audio_probe_result,
+                    self.write_dossier(
+                        current_item,
+                        &video_probe_result,
+                        &audio_probe_result,
                         subtitle_probe_result.as_ref(),
                         &ring,
-                        format!("ffmpeg exited with code {status}")).await;
+                        outcome(&format!("ffmpeg exited with code {status}")),
+                    )
+                    .await;
                     return Err(ChannelError::FfmpegFailed {
                         status: status
                             .code()
@@ -815,41 +920,195 @@ impl ChannelSession {
                         stderr_tail: Self::stderr_tail(&ring),
                     });
                 } else if troubleshoot {
-                    self.write_dossier(current_item, &video_probe_result,
-                        &audio_probe_result, subtitle_probe_result.as_ref(),
-                        &ring, "ffmpeg exited successfully".to_string()).await;
+                    self.write_dossier(
+                        current_item,
+                        &video_probe_result,
+                        &audio_probe_result,
+                        subtitle_probe_result.as_ref(),
+                        &ring,
+                        outcome("ffmpeg exited successfully"),
+                    )
+                    .await;
                 } else {
                     self.cleanup_old_report().await;
                 }
             }
-            _ = self.timeout_notify.notified() => {
+            FfmpegExit::IdleTimeout => {
                 ffmpeg_child.kill().await.ok();
                 let _ = reader_handle.await;
                 self.cleanup_old_report().await;
-                return Err(ChannelError::IdleTimeout(self.channel_config.number().to_owned()));
+                return Err(ChannelError::IdleTimeout(
+                    self.channel_config.number().to_owned(),
+                ));
             }
-            _ = async {
-                    loop {
-                        let playlist_manager = self.playlist_manager.lock().await;
-                        if OffsetDateTime::now_utc() - *playlist_manager.last_progress() > STALL_THRESHOLD {
-                            break;
-                        }
-                        drop(playlist_manager);
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                    }
-                } => {
+            FfmpegExit::Stalled => {
                 ffmpeg_child.kill().await.ok();
                 let _ = reader_handle.await;
-                self.write_dossier(current_item, &video_probe_result, &audio_probe_result,
-                    subtitle_probe_result.as_ref(), &ring, "ffmpeg stalled".to_string()).await;
-                return Err(ChannelError::Stalled(self.channel_config.number().to_owned()));
+                self.write_dossier(
+                    current_item,
+                    &video_probe_result,
+                    &audio_probe_result,
+                    subtitle_probe_result.as_ref(),
+                    &ring,
+                    outcome("ffmpeg stalled"),
+                )
+                .await;
+                return Err(ChannelError::Stalled(
+                    self.channel_config.number().to_owned(),
+                ));
             }
         }
 
-        let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
-        let is_complete = is_live || (audio_timing.is_complete && video_timing.is_complete);
+        let (finish, is_complete) = copy_timing.unwrap_or((
+            std::cmp::min(audio_timing.finish, video_timing.finish),
+            is_live || (audio_timing.is_complete && video_timing.is_complete),
+        ));
+
+        // ffmpeg exits 0 when a source ends early (short file, dropped live stream)
+        let produced = self.playlist_manager.lock().await.pipeline_output().await?;
+        if let Some(reached) = shortfall_end(self.transcoded_until, finish, produced) {
+            return Err(ChannelError::SourceEnded {
+                item_id: current_item.id.clone(),
+                reached,
+            });
+        }
 
         Ok((finish, is_complete))
+    }
+
+    /// Keeps the HLS timeline on schedule for copied video. `None` keeps the scheduled timing.
+    async fn snap_copy_seek(
+        &mut self,
+        current_item: &PlayoutItem,
+        input_settings: &mut InputSettings,
+        start_at_zero: bool,
+        realtime: bool,
+        video_source: &PlayoutItemSource,
+    ) -> Option<(OffsetDateTime, bool)> {
+        let resume = self.copy_resume.take().filter(|r| {
+            !start_at_zero && r.item_id == current_item.id && r.at == self.transcoded_until
+        });
+        let effective_now = if start_at_zero {
+            current_item.start
+        } else {
+            self.transcoded_until
+        };
+        let (in_point_ms, out_point_ms) = source_points_ms(current_item, video_source);
+        let floor = Duration::from_millis(in_point_ms);
+        let target = input_settings.video_input.in_point;
+        // same as `input_timing`: a source shorter than its slot ends early
+        let remaining = Duration::from_millis(
+            (current_item.finish - effective_now)
+                .whole_milliseconds()
+                .max(0) as u64,
+        )
+        .min(Duration::from_millis(out_point_ms).saturating_sub(target));
+
+        let video_index = input_settings.select_video_stream().ok()?.stream_index;
+        let audio_index = input_settings
+            .select_audio_stream()
+            .ok()
+            .map(|a| a.stream_index);
+        let locator = KeyframeLocator::new(
+            &self.ffmpeg_path,
+            &input_settings.video_input,
+            video_index,
+            audio_index,
+        );
+        let key = (
+            input_settings.video_input.probe_result.path.clone(),
+            video_index,
+        );
+        if target.is_zero()
+            && resume.is_none()
+            && let Some(blocker) =
+                input_start_blocker(&mut self.input_starts, &locator, key.clone(), current_item)
+                    .await
+        {
+            input_settings.video_copy_blockers.push(blocker);
+            return None;
+        }
+
+        let mut request = CopySeekRequest {
+            target,
+            floor,
+            remaining,
+            limit: (!realtime).then_some(WORK_AHEAD_LIMIT),
+            resume: resume.as_ref().map(|r| r.keyframe),
+        };
+        let mut result = plan_copy_seek(&locator, request).await;
+        // no keyframe before the target: the input starts between keyframes, or the target is
+        // before the first keyframe (ts audio often starts first)
+        if matches!(result, Err(FFPipelineError::NoKeyframe(_)))
+            && resume.is_none()
+            && !target.is_zero()
+        {
+            if let Some(blocker) =
+                input_start_blocker(&mut self.input_starts, &locator, key, current_item).await
+            {
+                input_settings.video_copy_blockers.push(blocker);
+                return None;
+            }
+            request.target = Duration::ZERO;
+            result = plan_copy_seek(&locator, request).await;
+        }
+        let plan = match result {
+            Ok(plan) => plan,
+            Err(FFPipelineError::NoKeyframe(_)) => {
+                input_settings
+                    .video_copy_blockers
+                    .push(CopyBlocker::NoKeyframes);
+                return None;
+            }
+            Err(e) => {
+                log::warn!(
+                    "copy of item {} will seek without keyframe alignment: {e}",
+                    current_item.id
+                );
+                return None;
+            }
+        };
+        log::debug!(
+            "copy seek for item {}: {request:?} => {plan:?}",
+            current_item.id
+        );
+        if plan.seek.start.is_none() && plan.seek.end.is_none() {
+            return None;
+        }
+
+        for input in [
+            &mut input_settings.video_input,
+            &mut input_settings.audio_input,
+        ] {
+            input.in_point = plan.in_point;
+            input.out_point = plan.in_point + plan.duration;
+        }
+        // sidecar subtitles must follow the shifted video
+        if let Some(subtitle_input) = input_settings.subtitle_input.as_mut() {
+            let shift = |t: Duration| {
+                if plan.in_point >= target {
+                    t + (plan.in_point - target)
+                } else {
+                    t.saturating_sub(target - plan.in_point)
+                }
+            };
+            subtitle_input.in_point = shift(subtitle_input.in_point);
+            subtitle_input.out_point = shift(subtitle_input.out_point);
+        }
+        input_settings.video_copy_seek = Some(plan.seek);
+
+        let finish = if plan.is_complete {
+            current_item.finish
+        } else {
+            effective_now + plan.duration
+        };
+        self.copy_resume = plan.seek.end.map(|keyframe| CopyResume {
+            item_id: current_item.id.clone(),
+            at: finish,
+            keyframe,
+        });
+
+        Some((finish, plan.is_complete))
     }
 
     fn next_state(state: ChannelSessionState, is_complete: bool) -> ChannelSessionState {
@@ -893,9 +1152,36 @@ impl ChannelSession {
         match src.probe_hint() {
             Some(hint) => {
                 let path = input.input_path().ok_or(ChannelError::ProbeHintFailure)?;
-                Ok(probe_hint_to_result(hint, path))
+                let mut result = probe_hint_to_result(hint, path);
+                self.fill_missing_rotation(&mut result, input).await;
+                Ok(result)
             }
             None => self.probe_source(input).await,
+        }
+    }
+
+    /// Media servers rarely know a stream's display rotation, so hints often omit it; read it
+    /// from the file header rather than treating the video as unrotated
+    async fn fill_missing_rotation(&self, result: &mut ProbeResult, input: &InputSource) {
+        let InputSource::Local(local) = input else {
+            return;
+        };
+
+        let probe_deps = probe::ProbeDeps {
+            ffprobe_path: &self.ffprobe_path,
+            ffmpeg_path: &self.ffmpeg_path,
+        };
+
+        for stream in result.streams.iter_mut() {
+            let ProbeResultStream::Video(video) = stream else {
+                continue;
+            };
+
+            if video.codec_type != CodecType::Video || video.rotation.is_some() {
+                continue;
+            }
+
+            video.rotation = probe::probe_rotation(&probe_deps, local, video.stream_index).await;
         }
     }
 
@@ -993,18 +1279,7 @@ impl ChannelSession {
 
         let item_start = current_item.start;
         let item_finish = current_item.finish;
-        let item_duration = current_item.finish - current_item.start;
-        let item_in_point_base_ms = match source {
-            PlayoutItemSource::Local { in_point_ms, .. }
-            | PlayoutItemSource::Http { in_point_ms, .. } => in_point_ms.unwrap_or(0),
-            _ => 0,
-        };
-        let item_out_point_ms = match source {
-            PlayoutItemSource::Local { out_point_ms, .. }
-            | PlayoutItemSource::Http { out_point_ms, .. } => out_point_ms
-                .unwrap_or(item_in_point_base_ms + item_duration.whole_milliseconds() as u64),
-            _ => item_in_point_base_ms + item_duration.whole_milliseconds() as u64,
-        };
+        let (item_in_point_base_ms, item_out_point_ms) = source_points_ms(current_item, source);
 
         let effective_now = if start_at_zero {
             item_start
@@ -1038,7 +1313,7 @@ impl ChannelSession {
         let limit = if realtime {
             Duration::ZERO
         } else {
-            Duration::from_secs(SEGMENT_SECONDS as u64 * 11u64)
+            WORK_AHEAD_LIMIT
         };
 
         let mut finish = item_finish;
@@ -1058,7 +1333,11 @@ impl ChannelSession {
         }
     }
 
-    async fn fallback_playout_item(&self, reason: &FallbackReason) -> PlayoutItem {
+    async fn fallback_playout_item(
+        &self,
+        reason: &FallbackReason,
+        min_duration: Duration,
+    ) -> PlayoutItem {
         let width = self
             .channel_config
             .normalization
@@ -1073,7 +1352,7 @@ impl ChannelSession {
             .height
             .unwrap_or(1080);
 
-        let duration = Duration::from_mins(1);
+        let duration = fallback_duration(self.channel_config.fallback.duration(), min_duration);
 
         let subtitle = if self.channel_config.fallback.show_error {
             self.write_error_card(reason, width, height, duration).await
@@ -1081,54 +1360,17 @@ impl ChannelSession {
             None
         };
 
-        PlayoutItem {
-            id: uuid::Uuid::new_v4().to_string(),
-            start: self.transcoded_until,
-            finish: reason
-                .fallback_until()
-                .unwrap_or(self.transcoded_until + duration),
-            source: None,
-            tracks: Some(PlayoutItemTracks {
-                audio: Some(TrackSelection {
-                    source: Some(PlayoutItemSource::Lavfi {
-                        params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
-                        probe_hint: Some(ProbeHint {
-                            video: Vec::new(),
-                            audio: vec![AudioHint {
-                                stream_index: 0,
-                                codec: String::from("pcm_s16le"),
-                                channels: 2,
-                            }],
-                            subtitle: Vec::new(),
-                            format_name: Some(String::from("mpegts")),
-                            duration_ms: Some(duration.as_millis() as u64),
-                        }),
-                    }),
-                    stream_index: None,
-                }),
-                video: Some(TrackSelection {
-                    source: Some(PlayoutItemSource::Lavfi {
-                        params: format!("color=c=black:s={}x{}", width, height),
-                        probe_hint: Some(ProbeHint {
-                            video: vec![VideoHint::new(
-                                String::from("rawvideo"),
-                                width,
-                                height,
-                                String::from("yuv420p"),
-                            )],
-                            audio: Vec::new(),
-                            subtitle: Vec::new(),
-                            format_name: Some(String::from("mpegts")),
-                            duration_ms: Some(duration.as_millis() as u64),
-                        }),
-                    }),
-                    stream_index: None,
-                }),
-                subtitle,
-            }),
-            watermark: None,
-            graphics: Vec::new(),
-        }
+        let finish = reason
+            .fallback_until()
+            .unwrap_or(self.transcoded_until + duration);
+        fallback_item(
+            self.transcoded_until,
+            finish,
+            FrameSize { width, height },
+            target_frame_rate(&self.channel_config.normalization).unwrap_or_default(),
+            duration,
+            subtitle,
+        )
     }
 
     async fn write_error_card(
@@ -1149,24 +1391,10 @@ impl ChannelSession {
             return None;
         }
 
-        Some(TrackSelection {
-            source: Some(PlayoutItemSource::Local {
-                path: path.to_string_lossy().into_owned(),
-                in_point_ms: None,
-                out_point_ms: None,
-                probe_hint: Some(ProbeHint {
-                    video: Vec::new(),
-                    audio: Vec::new(),
-                    subtitle: vec![SubtitleHint {
-                        codec: String::from("ass"),
-                        stream_index: 0,
-                    }],
-                    format_name: Some(String::from("ass")),
-                    duration_ms: Some(duration.as_millis() as u64),
-                }),
-            }),
-            stream_index: None,
-        })
+        Some(error_card_track(
+            path.to_string_lossy().into_owned(),
+            duration,
+        ))
     }
 
     async fn resolve_dynamic_item(
@@ -1179,6 +1407,8 @@ impl ChannelSession {
             headers,
             user_agent,
             timeout_us,
+            retry_budget_ms,
+            retry_backoff_ms,
         }) = &dynamic_item.source
         else {
             return Err(ChannelError::DynamicSourceRequired);
@@ -1243,23 +1473,17 @@ impl ChannelSession {
             .map_err(|e| ChannelError::DynamicSourceFailure(format!("bad time value: {e}")))?,
         );
 
-        let timeout = timeout_us
-            .map(Duration::from_micros)
-            .unwrap_or_else(|| Duration::from_secs(10));
-
-        let mut item: PlayoutItem = self
-            .dynamic_http_client
-            .get(&expanded_uri)
-            .headers(header_map)
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?
-            .json()
-            .await
-            .map_err(|e| ChannelError::DynamicSourceFailure(e.to_string()))?;
+        let policy = RetryPolicy::new(*timeout_us, *retry_budget_ms, *retry_backoff_ms);
+        let mut item: PlayoutItem = with_retry(&policy, |timeout| {
+            get_json(
+                &self.dynamic_http_client,
+                &expanded_uri,
+                &header_map,
+                timeout,
+            )
+        })
+        .await
+        .map_err(ChannelError::DynamicSourceFailure)?;
 
         // always start at the requested time
         if item.start != *start {
@@ -1451,6 +1675,16 @@ impl ChannelSession {
     }
 }
 
+async fn wait_for_stall(playlist_manager: &Mutex<PlaylistManager>) {
+    loop {
+        let last_progress = *playlist_manager.lock().await.last_progress();
+        if OffsetDateTime::now_utc() - last_progress > STALL_THRESHOLD {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
 fn playout_location_to_pipeline(value: &WatermarkLocation) -> ffpipeline::input::WatermarkLocation {
     match value {
         WatermarkLocation::TopLeft => ffpipeline::input::WatermarkLocation::TopLeft,
@@ -1506,6 +1740,239 @@ fn playout_timing_to_pipeline(
     })
 }
 
+fn fallback_duration(configured: Duration, min_duration: Duration) -> Duration {
+    if configured >= min_duration {
+        return configured;
+    }
+    log::warn!(
+        "fallback duration {}s is shorter than the dynamic source retry budget; using {}s",
+        configured.as_secs_f64(),
+        min_duration.as_secs_f64()
+    );
+    min_duration
+}
+
+fn fallback_item(
+    start: OffsetDateTime,
+    finish: OffsetDateTime,
+    size: FrameSize,
+    frame_rate: FrameRate,
+    duration: Duration,
+    subtitle: Option<TrackSelection>,
+) -> PlayoutItem {
+    // lavfi defaults to 25fps, but the gop comes from the hinted rate; they must agree
+    // for keyframes (and segments) to land on the 2s/4s grid
+    let frame_rate = frame_rate.r_frame_rate;
+    PlayoutItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        start,
+        finish,
+        source: None,
+        tracks: Some(PlayoutItemTracks {
+            audio: Some(TrackSelection {
+                source: Some(PlayoutItemSource::Lavfi {
+                    params: String::from("anullsrc=channel_layout=stereo:sample_rate=48000"),
+                    probe_hint: Some(ProbeHint {
+                        video: Vec::new(),
+                        audio: vec![AudioHint {
+                            stream_index: 0,
+                            codec: String::from("pcm_s16le"),
+                            channels: 2,
+                        }],
+                        subtitle: Vec::new(),
+                        format_name: Some(String::from("mpegts")),
+                        duration_ms: Some(duration.as_millis() as u64),
+                    }),
+                }),
+                stream_index: None,
+            }),
+            video: Some(TrackSelection {
+                source: Some(PlayoutItemSource::Lavfi {
+                    params: format!(
+                        "color=c=black:s={}x{}:r={frame_rate}",
+                        size.width, size.height
+                    ),
+                    probe_hint: Some(ProbeHint {
+                        video: vec![VideoHint {
+                            frame_rate: Some(frame_rate),
+                            ..VideoHint::new(
+                                String::from("rawvideo"),
+                                size.width,
+                                size.height,
+                                String::from("yuv420p"),
+                            )
+                        }],
+                        audio: Vec::new(),
+                        subtitle: Vec::new(),
+                        format_name: Some(String::from("mpegts")),
+                        duration_ms: Some(duration.as_millis() as u64),
+                    }),
+                }),
+                stream_index: None,
+            }),
+            subtitle,
+        }),
+        watermark: None,
+        graphics: Vec::new(),
+    }
+}
+
+fn error_card_track(path: String, duration: Duration) -> TrackSelection {
+    TrackSelection {
+        source: Some(PlayoutItemSource::Local {
+            path,
+            in_point_ms: None,
+            out_point_ms: None,
+            probe_hint: Some(ProbeHint {
+                video: Vec::new(),
+                audio: Vec::new(),
+                subtitle: vec![SubtitleHint {
+                    codec: String::from("ass"),
+                    stream_index: 0,
+                }],
+                format_name: Some(String::from("ass")),
+                duration_ms: Some(duration.as_millis() as u64),
+            }),
+        }),
+        stream_index: None,
+    }
+}
+
+fn target_frame_rate(normalization: &NormalizationConfig) -> Option<FrameRate> {
+    normalization
+        .video
+        .frame_rate
+        .as_deref()
+        .and_then(FrameRate::parse_target)
+}
+
+fn stream_output_settings(
+    normalization: &NormalizationConfig,
+) -> (AudioOutputSettings, VideoOutputSettings) {
+    let audio_norm = &normalization.audio;
+    let video_norm = &normalization.video;
+
+    let video_size = match (video_norm.width, video_norm.height) {
+        (Some(width), Some(height)) => Some(FrameSize { width, height }),
+        _ => None,
+    };
+
+    let audio = AudioOutputSettings {
+        copy: (audio_norm.mode == StreamMode::Copy).then(|| {
+            audio_norm
+                .copy_formats
+                .as_ref()
+                .map_or_else(CopyPolicy::default, |formats| CopyPolicy {
+                    formats: formats
+                        .iter()
+                        .map(|f| String::from(f.codec_name()))
+                        .collect(),
+                })
+        }),
+        transcode: AudioTranscodeSettings {
+            format: audio_norm.format.clone().into(),
+            bitrate: audio_norm.bitrate_kbps.map(Kbps),
+            buffer: audio_norm.buffer_kbps.map(Kbps),
+            channels: audio_norm.channels,
+            sample_rate: audio_norm.sample_rate_hz.map(Hz),
+            loudness: if audio_norm.normalize_loudness {
+                Some(
+                    audio_norm
+                        .loudness
+                        .as_ref()
+                        .map(|l| l.into())
+                        .unwrap_or_default(),
+                )
+            } else {
+                None
+            },
+        },
+    };
+
+    let video = VideoOutputSettings {
+        copy: (video_norm.mode == StreamMode::Copy).then(|| {
+            video_norm
+                .copy_formats
+                .as_ref()
+                .map_or_else(CopyPolicy::default, |formats| CopyPolicy {
+                    formats: formats.iter().map(|&f| f.into()).collect(),
+                })
+        }),
+        transcode: VideoTranscodeSettings {
+            format: video_norm.format.into(),
+            bit_depth: video_norm.bit_depth,
+            bitrate: video_norm.bitrate_kbps.map(Kbps),
+            buffer: video_norm.buffer_kbps.map(Kbps),
+            size: video_size,
+            scaling_mode: video_norm.scaling_mode.into(),
+            deinterlace: video_norm.deinterlace,
+            filter_options: video_norm.filters.clone().into(),
+        },
+    };
+
+    (audio, video)
+}
+
+/// Cached because cut files (commercials) play many times. A failed check returns `None` and
+/// keeps the copy.
+async fn input_start_blocker(
+    cache: &mut HashMap<(String, u32), Option<InputStart>>,
+    locator: &KeyframeLocator<'_>,
+    key: (String, u32),
+    item: &PlayoutItem,
+) -> Option<CopyBlocker> {
+    let input_start = match cache.get(&key) {
+        Some(cached) => *cached,
+        None => match locator.input_start().await {
+            Ok(input_start) => {
+                if cache.len() >= INPUT_START_CACHE_LIMIT {
+                    cache.clear();
+                }
+                cache.insert(key, input_start);
+                input_start
+            }
+            Err(e) => {
+                log::warn!("failed to check how item {} starts: {e}", item.id);
+                return None;
+            }
+        },
+    };
+    input_start.map_or(Some(CopyBlocker::NoKeyframes), |s| s.copy_blocker())
+}
+
+fn shortfall_end(
+    start: OffsetDateTime,
+    finish: OffsetDateTime,
+    produced: time::Duration,
+) -> Option<OffsetDateTime> {
+    let reached = start + produced;
+    (finish - reached > SHORTFALL_TOLERANCE).then_some(reached)
+}
+
+/// Without an out point, the source runs for the scheduled duration.
+fn source_points_ms(item: &PlayoutItem, source: &PlayoutItemSource) -> (u64, u64) {
+    let item_duration_ms = (item.finish - item.start).whole_milliseconds() as u64;
+    match source {
+        PlayoutItemSource::Local {
+            in_point_ms,
+            out_point_ms,
+            ..
+        }
+        | PlayoutItemSource::Http {
+            in_point_ms,
+            out_point_ms,
+            ..
+        } => {
+            let in_point = in_point_ms.unwrap_or(0);
+            (
+                in_point,
+                out_point_ms.unwrap_or(in_point + item_duration_ms),
+            )
+        }
+        _ => (0, item_duration_ms),
+    }
+}
+
 fn source_is_live(source: &PlayoutItemSource) -> bool {
     matches!(
         source,
@@ -1538,6 +2005,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
                 has_hdr10_metadata: v.has_hdr10_metadata.unwrap_or(false),
             },
             field_order: v.field_order.clone(),
+            rotation: v.rotation,
             frame_rate: v
                 .frame_rate
                 .as_deref()
@@ -1568,6 +2036,7 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
             pix_fmt: String::new(),
             color_params: ProbeResultColorParams::default(),
             field_order: None,
+            rotation: None,
             frame_rate: FrameRate::default(),
             sample_aspect_ratio: None,
             display_aspect_ratio: None,
@@ -1579,5 +2048,225 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ffpipeline::copy_decision::{CopyBlocker, CopyDecision, CopyDecisions};
+    use ffpipeline::output_format::OutputFormat;
+    use serde_json::json;
+    use time::macros::datetime;
+
+    use super::*;
+
+    fn hinted_input(track: Option<&TrackSelection>, duration: Duration) -> ProbedInput {
+        let source = track.and_then(|t| t.source.as_ref()).expect("no source");
+        let input_source = match source {
+            PlayoutItemSource::Local { path, .. } => {
+                InputSource::Local(LocalInputSource { path: path.clone() })
+            }
+            PlayoutItemSource::Lavfi { params, .. } => InputSource::Lavfi(LavfiInputSource {
+                params: params.clone(),
+            }),
+            other => panic!("unexpected fallback source {other:?}"),
+        };
+        let hint = source
+            .probe_hint()
+            .expect("fallback sources carry probe hints");
+        ProbedInput {
+            probe_result: probe_hint_to_result(hint, input_source.input_path().unwrap()),
+            input_source,
+            in_point: Duration::ZERO,
+            out_point: duration,
+            stream_index: None,
+        }
+    }
+
+    #[test]
+    fn fallback_duration_is_at_least_the_retry_budget() {
+        let minute = Duration::from_mins(1);
+        assert_eq!(fallback_duration(minute, Duration::ZERO), minute);
+        assert_eq!(fallback_duration(minute, Duration::from_secs(25)), minute);
+        assert_eq!(
+            fallback_duration(Duration::from_secs(10), Duration::from_secs(25)),
+            Duration::from_secs(25)
+        );
+    }
+
+    /// Copied lavfi streams mux as `bin_data` and ffmpeg exits 0, so a copied fallback is a
+    /// dead stream with no second fallback.
+    #[test]
+    fn fallback_card_transcodes_on_copy_channel() {
+        let normalization: NormalizationConfig = serde_json::from_value(json!({
+            "audio": { "mode": "copy" },
+            "video": { "mode": "copy" }
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&normalization);
+        assert!(audio.copy.is_some() && video.copy.is_some());
+
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let duration = Duration::from_mins(1);
+        let item = fallback_item(
+            start,
+            start + duration,
+            FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            FrameRate::default(),
+            duration,
+            Some(error_card_track(String::from("fallback.ass"), duration)),
+        );
+        let tracks = item.tracks.as_ref().unwrap();
+        let input = InputSettings {
+            start,
+            playout_offset: Duration::ZERO,
+            audio_input: hinted_input(tracks.audio.as_ref(), duration),
+            video_input: hinted_input(tracks.video.as_ref(), duration),
+            subtitle_input: Some(hinted_input(tracks.subtitle.as_ref(), duration)),
+            graphics_inputs: Vec::new(),
+            channel_number: None,
+            video_copy_seek: None,
+            video_copy_blockers: Vec::new(),
+        };
+        let output = OutputSettings {
+            audio,
+            video,
+            accel: None,
+            format: OutputFormat::Hls {
+                playlist: String::from("ffmpeg.m3u8"),
+                segment_template: String::from("live%06d.ts"),
+                troubleshoot: false,
+            },
+            pts_offset: None,
+            realtime: false,
+            is_live: false,
+            frame_rate: None,
+            subtitle_mode: SubtitleMode::Burn,
+            fonts_folder: None,
+            subtitle_force_style: None,
+            reports_folder: None,
+            report_id: None,
+        };
+
+        let mut pipeline =
+            pipeline::generate_pipeline(&FfmpegInfo::default(), input, output).unwrap();
+        assert_eq!(
+            pipeline.copy_decisions(),
+            &CopyDecisions {
+                video: Some(CopyDecision::Transcode(vec![
+                    CopyBlocker::GeneratedSource,
+                    CopyBlocker::CodecNotAllowed(String::from("rawvideo")),
+                    CopyBlocker::BurnedSubtitle,
+                ])),
+                audio: Some(CopyDecision::Transcode(vec![
+                    CopyBlocker::GeneratedSource,
+                    CopyBlocker::CodecNotAllowed(String::from("pcm_s16le")),
+                ])),
+            }
+        );
+
+        pipeline.optimize();
+        let args = pipeline.args();
+        for (option, value) in [("-vcodec", "libx264"), ("-acodec", "aac")] {
+            let index = args.iter().rposition(|a| a == option).expect(option);
+            assert_eq!(args[index + 1], value, "{args:?}");
+        }
+        assert!(
+            args.iter().any(|a| a.contains("subtitles=")),
+            "error card is not burned in: {args:?}"
+        );
+    }
+
+    #[test]
+    fn shortfall_within_tolerance_is_ignored() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let finish = start + Duration::from_secs(44);
+
+        assert_eq!(
+            shortfall_end(start, finish, time::Duration::seconds_f64(43.9)),
+            None
+        );
+        assert_eq!(
+            shortfall_end(start, finish, time::Duration::seconds(20)),
+            Some(start + time::Duration::seconds(20))
+        );
+    }
+
+    #[test]
+    fn stream_output_settings_maps_modes() {
+        let transcode: NormalizationConfig = serde_json::from_value(json!({
+            "audio": {},
+            "video": {}
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&transcode);
+        assert_eq!((audio.copy, video.copy), (None, None));
+
+        let default_copy: NormalizationConfig = serde_json::from_value(json!({
+            "audio": { "mode": "copy" },
+            "video": { "mode": "copy" }
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&default_copy);
+        assert_eq!(audio.copy, Some(CopyPolicy::default()));
+        assert_eq!(video.copy, Some(CopyPolicy::default()));
+
+        let listed_copy: NormalizationConfig = serde_json::from_value(json!({
+            "audio": { "mode": "copy", "copy_formats": ["eac3", "mp2"] },
+            "video": { "mode": "copy", "copy_formats": ["mpeg2video"], "format": "hevc" }
+        }))
+        .unwrap();
+        let (audio, video) = stream_output_settings(&listed_copy);
+        assert_eq!(
+            audio.copy,
+            Some(CopyPolicy {
+                formats: vec![String::from("eac3"), String::from("mp2")]
+            })
+        );
+        assert_eq!(
+            video.copy,
+            Some(CopyPolicy {
+                formats: vec![ffpipeline::pipeline::VideoFormat::Mpeg2Video]
+            })
+        );
+        assert_eq!(
+            video.transcode.format,
+            ffpipeline::pipeline::EncodeFormat::Hevc
+        );
+    }
+
+    #[test]
+    fn fallback_video_rate_matches_hint() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+        for (frame_rate, expected) in [
+            (FrameRate::default(), "24"),
+            (FrameRate::parse_target("30000/1001").unwrap(), "30000/1001"),
+        ] {
+            let item = fallback_item(
+                start,
+                start + Duration::from_mins(1),
+                FrameSize {
+                    width: 1920,
+                    height: 1080,
+                },
+                frame_rate,
+                Duration::from_mins(1),
+                None,
+            );
+            let video = item.tracks.unwrap().video.unwrap().source.unwrap();
+            let PlayoutItemSource::Lavfi {
+                params,
+                probe_hint: Some(hint),
+            } = video
+            else {
+                panic!("fallback video should be hinted lavfi")
+            };
+            let rate = hint.video[0].frame_rate.clone().expect("hinted frame rate");
+            assert_eq!(rate, expected);
+            assert!(params.ends_with(&format!(":r={rate}")));
+        }
     }
 }

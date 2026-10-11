@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use ersatztv_core::process;
 use tempfile::NamedTempFile;
-use tokio::process::Command;
 
 use crate::ArgVec;
 use crate::error::FFPipelineError;
@@ -58,7 +58,7 @@ pub async fn convert_to_vtt(
         file_name
     ]);
 
-    let mut ffmpeg = Command::new(ffmpeg_path)
+    let mut ffmpeg = process::command(ffmpeg_path)
         .args(args.iter().map(Cow::as_ref))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

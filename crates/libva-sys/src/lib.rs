@@ -17,6 +17,10 @@ pub type VAProcColorStandardType = c_int;
 
 pub const VA_CONFIG_ATTRIB_RATE_CONTROL: VAConfigAttribType = 5;
 
+pub const VA_ROTATION_90: c_uint = 1;
+pub const VA_ROTATION_180: c_uint = 2;
+pub const VA_ROTATION_270: c_uint = 3;
+
 pub const VA_RC_NONE: c_uint = 0x00000000;
 pub const VA_RC_CBR: c_uint = 0x00000002;
 pub const VA_RC_VBR: c_uint = 0x00000004;

@@ -126,6 +126,7 @@ impl VaapiCapabilities {
         let mut can_hdr_to_hdr_tonemap: HashSet<u32> = HashSet::new();
         let mut can_hdr_to_sdr_tonemap: HashSet<u32> = HashSet::new();
         let mut can_overlay: Option<bool> = None;
+        let mut rotation_flags = 0;
 
         if supported.contains(&(VA_PROFILE_NONE, VA_ENTRYPOINT_VIDEO_PROC)) {
             let mut config_id: VAConfigID = 0;
@@ -245,6 +246,7 @@ impl VaapiCapabilities {
 
                             if status == VA_STATUS_SUCCESS {
                                 can_overlay = Some(proc_caps.blend_flags > 0);
+                                rotation_flags = proc_caps.rotation_flags;
                                 log::trace!("can_overlay: {can_overlay:?}");
                             }
                         }
@@ -329,6 +331,7 @@ impl VaapiCapabilities {
             can_hdr_to_hdr_tonemap,
             can_hdr_to_sdr_tonemap,
             can_overlay: can_overlay.unwrap_or_default(),
+            rotation_flags,
             rate_control,
         })
     }

@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use ersatztv_core::{SchemaVersion, VersionedSchema};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::{Iso8601, iso8601};
@@ -13,27 +14,10 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 4,
+    compatible: 6,
 };
-const VERSION_URI_PREFIX: &str = "https://ersatztv.org/playout/version/0.";
-
-// TODO: support major version post-1.0
-#[derive(Debug, Clone, Copy)]
-pub struct SchemaVersion {
-    pub breaking: u32,
-    pub compatible: u32,
-}
-
-impl SchemaVersion {
-    pub fn parse(uri: &str) -> Option<SchemaVersion> {
-        let rest = uri.strip_prefix(VERSION_URI_PREFIX)?;
-        let (b, a) = rest.split_once('.')?;
-        Some(SchemaVersion {
-            breaking: b.parse().ok()?,
-            compatible: a.parse().ok()?,
-        })
-    }
-}
+pub const SCHEMA: VersionedSchema =
+    VersionedSchema::new("https://ersatztv.org/playout/version/", SUPPORTED_SCHEMA);
 
 /// A playout schedule for a single time window.
 ///
@@ -50,10 +34,7 @@ pub struct Playout {
 impl Playout {
     pub fn new(items: Vec<PlayoutItem>) -> Self {
         Playout {
-            version: format!(
-                "{}{}.{}",
-                VERSION_URI_PREFIX, SUPPORTED_SCHEMA.breaking, SUPPORTED_SCHEMA.compatible
-            ),
+            version: SCHEMA.uri(),
             items,
         }
     }
@@ -298,6 +279,12 @@ pub enum PlayoutItemSource {
         /// Socket timeout in microseconds
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_us: Option<u64>,
+        /// Absent or 0: no retry
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_budget_ms: Option<u64>,
+        /// Default 250; doubles after each retry
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_backoff_ms: Option<u64>,
     },
 }
 
@@ -355,6 +342,8 @@ pub struct VideoHint {
     pub dv_profile: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_hdr10_metadata: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 impl VideoHint {
@@ -405,19 +394,7 @@ pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
     let version_only: PlayoutVersion = serde_json::from_str(&contents)
         .map_err(|e| PlayoutError::PlayoutJsonLoadError(e.to_string()))?;
 
-    let found = SchemaVersion::parse(&version_only.version)
-        .ok_or_else(|| PlayoutError::UnrecognizedSchemaVersion(version_only.version.clone()))?;
-
-    if found.breaking != SUPPORTED_SCHEMA.breaking || found.compatible > SUPPORTED_SCHEMA.compatible
-    {
-        return Err(PlayoutError::UnsupportedSchemaVersion(
-            version_only.version,
-            format!(
-                "{}{}.{}",
-                VERSION_URI_PREFIX, SUPPORTED_SCHEMA.breaking, SUPPORTED_SCHEMA.compatible
-            ),
-        ));
-    }
+    SCHEMA.check(&version_only.version)?;
 
     let playout: Playout = serde_json::from_str(&contents)
         .map_err(|e| PlayoutError::PlayoutJsonLoadError(e.to_string()))?;
@@ -459,6 +436,8 @@ fn parse_unix_timestamp(timestamp: &str) -> Option<OffsetDateTime> {
 
 #[cfg(test)]
 mod tests {
+    use ersatztv_core::SchemaVersionError;
+
     use super::*;
 
     fn layer(path: &str) -> serde_json::Value {
@@ -528,10 +507,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schema_003_and_004_files_load() {
+    async fn schema_003_to_006_files_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        for version in ["0.0.3", "0.0.4"] {
+        for version in ["0.0.3", "0.0.4", "0.0.5", "0.0.6"] {
             let mut item = item_json();
             let mut graphics = layer("canvas.nut");
             if version == "0.0.4" {
@@ -547,6 +526,39 @@ mod tests {
                 .unwrap();
             let loaded = from_file(path.to_str().unwrap()).await.unwrap().playout;
             assert_eq!(serde_json::to_value(loaded).unwrap(), value);
+        }
+    }
+
+    #[tokio::test]
+    async fn example_loads_at_current_version() {
+        let example =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/playout/playout.json");
+        let raw: serde_json::Value =
+            serde_json::from_str(&tokio::fs::read_to_string(&example).await.unwrap()).unwrap();
+        assert_eq!(raw["version"], SCHEMA.uri());
+
+        from_file(example.to_str().unwrap()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn newer_schema_is_rejected_with_supported_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playout.json");
+        let newer = "https://ersatztv.org/playout/version/0.0.7";
+        let value = serde_json::json!({ "version": newer, "items": [] });
+        tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
+            .await
+            .unwrap();
+
+        match from_file(path.to_str().unwrap()).await {
+            Err(PlayoutError::SchemaVersion(SchemaVersionError::Unsupported {
+                found,
+                supported,
+            })) => {
+                assert_eq!(found, newer);
+                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.6");
+            }
+            other => panic!("expected Unsupported, got {:?}", other.err()),
         }
     }
 }

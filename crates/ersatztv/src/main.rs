@@ -5,6 +5,7 @@ mod xmltv;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
@@ -13,9 +14,11 @@ use axum::response::IntoResponse;
 use axum::{Router, routing::get};
 use clap::{Parser, Subcommand};
 use ersatztv::error::LineupError;
-use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_TIMEOUT, empty_folder};
-use tokio::signal;
+use ersatztv_core::process::{kill_descendants_on_exit, shutdown_signal};
+use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_TIMEOUT, SHUTDOWN_DEADLINE, empty_folder};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 
@@ -53,37 +56,32 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-pub async fn main() {
+pub fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+    kill_descendants_on_exit();
 
-    if let Err(err) = run().await {
-        log::error!("{err}");
-        std::process::exit(1);
-    }
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install ctrl+c handler");
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            log::error!("failed to start runtime: {err}");
+            return ExitCode::FAILURE;
+        }
     };
 
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await
-    };
+    let result = runtime.block_on(run());
 
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    // process::exit skips drops, so kill_on_drop children would outlive us
+    runtime.shutdown_timeout(SHUTDOWN_DEADLINE);
 
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            log::error!("{err}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -136,6 +134,8 @@ async fn run() -> Result<(), LineupError> {
                 channels,
                 xmltv_folder: lineup_config.xmltv.map(|c| c.folder),
                 active: Arc::new(Mutex::new(HashMap::new())),
+                shutdown: CancellationToken::new(),
+                tracker: TaskTracker::new(),
             });
 
             let addr = format!(
@@ -160,11 +160,35 @@ async fn run() -> Result<(), LineupError> {
                 )
                 .layer(axum::middleware::from_fn(fix_content_types))
                 .layer(CorsLayer::permissive())
-                .with_state(state);
+                .with_state(Arc::clone(&state));
 
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal())
-                .await?;
+            let shutdown = state.shutdown.clone();
+            tokio::spawn(async move {
+                let signal = shutdown_signal().await;
+                log::info!("received {signal}; shutting down");
+                shutdown.cancel();
+            });
+
+            // stop channels during the drain, not after: a request waiting on .ready blocks it
+            let serve = axum::serve(listener, app)
+                .with_graceful_shutdown(state.shutdown.clone().cancelled_owned());
+
+            // a client that stops reading holds its response, and so the drain, open forever
+            let drain_deadline = async {
+                state.shutdown.cancelled().await;
+                tokio::time::sleep(SHUTDOWN_DEADLINE).await;
+                log::warn!(
+                    "connections still open {SHUTDOWN_DEADLINE:?} after shutdown; closing them"
+                );
+            };
+
+            tokio::select! {
+                result = serve => result?,
+                () = drain_deadline => {}
+            }
+
+            state.tracker.close();
+            state.tracker.wait().await;
 
             Ok(())
         }
@@ -192,7 +216,12 @@ async fn stream(
         if let Some(channel_session) = active.get(number) {
             channel_session.subscribe_ready()
         } else {
-            let channel_session = ChannelSession::spawn(channel, Arc::clone(&state.active))?;
+            let channel_session = ChannelSession::spawn(
+                channel,
+                Arc::clone(&state.active),
+                state.shutdown.clone(),
+                &state.tracker,
+            )?;
             let ready_receiver = channel_session.subscribe_ready();
             active.insert(number.to_owned(), channel_session);
             ready_receiver
@@ -221,6 +250,8 @@ struct LineupState {
     channels: Vec<ChannelModel>,
     xmltv_folder: Option<String>,
     active: Arc<Mutex<HashMap<String, ChannelSession>>>,
+    shutdown: CancellationToken,
+    tracker: TaskTracker,
 }
 
 async fn fix_content_types(

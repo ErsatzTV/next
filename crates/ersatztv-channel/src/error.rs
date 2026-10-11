@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use ersatztv_core::SchemaVersionError;
 use ersatztv_playout::error::PlayoutError;
 use ffpipeline::error::FFPipelineError;
 use thiserror::Error;
@@ -9,6 +10,12 @@ use time::OffsetDateTime;
 pub enum ChannelError {
     #[error("unable to load channel config: {0}")]
     ChannelConfigFailure(String),
+
+    #[error("unable to load channel config {config}: {error}")]
+    ChannelConfigSchemaVersion {
+        config: String,
+        error: SchemaVersionError,
+    },
 
     /// An io failure, named by what was being done and to what.
     ///
@@ -83,6 +90,12 @@ pub enum ChannelError {
 
     #[error("channel {0} terminated after ffmpeg stall")]
     Stalled(String),
+
+    #[error("item {item_id} source ended at {reached}")]
+    SourceEnded {
+        item_id: String,
+        reached: OffsetDateTime,
+    },
 
     #[error("failed to capture ffmpeg stderr")]
     CaptureFFmpegStderrFailure,

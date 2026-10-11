@@ -1,10 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
-use libvpl_sys::{
-    MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN, MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT, MFX_FOURCC_NV12,
-    MFX_FOURCC_P010, MFX_FOURCC_RGB4,
-};
+use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4};
 use serde::Serialize;
 
 use crate::pipeline::{PixelFormat, VideoFormat};
@@ -31,17 +28,84 @@ pub(crate) mod stub;
 pub struct QsvCapabilities {
     pub(crate) supported_decoders: HashMap<VideoFormat, Vec<u8>>,
     pub(crate) supported_encoders: HashMap<VideoFormat, Vec<u8>>,
-    pub(crate) vpp_pixel_formats: HashSet<QsvFourCC>,
+    /// formats hwupload can copy into video memory, keeping the format
+    pub(crate) upload_formats: HashSet<QsvFourCC>,
+    /// (input, output) pairs vpp_qsv can convert between in video memory
+    pub(crate) convert_pairs: HashSet<(QsvFourCC, QsvFourCC)>,
     pub(crate) vpp_filters: HashSet<QsvFourCC>,
+    pub(crate) rotation_formats: HashSet<QsvFourCC>,
+    /// (input, output) composite pairs. the patched vpp_qsv pads with a composite
+    pub(crate) composite_pairs: HashSet<(QsvFourCC, QsvFourCC)>,
     pub(crate) runtime_api: Option<(u16, u16)>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize)]
-pub struct QsvFourCC(u32);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub struct QsvFourCC(pub(crate) u32);
 
 impl Debug for QsvFourCC {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", String::from_utf8_lossy(&self.0.to_ne_bytes()))
+    }
+}
+
+impl QsvFourCC {
+    fn name(&self) -> String {
+        String::from_utf8_lossy(&self.0.to_ne_bytes())
+            .trim_end()
+            .to_owned()
+    }
+}
+
+/// Summary for logs: format sets are limited to the fourccs ffpipeline maps to,
+/// since a full probe produces hundreds of pairs.
+impl Display for QsvCapabilities {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        const RELEVANT: [u32; 3] = [MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4];
+
+        fn codecs(map: &HashMap<VideoFormat, Vec<u8>>) -> String {
+            let mut entries: Vec<String> = map
+                .iter()
+                .map(|(format, depths)| {
+                    let mut depths = depths.clone();
+                    depths.sort();
+                    let depths: Vec<String> = depths.iter().map(u8::to_string).collect();
+                    format!("{format} {}", depths.join("/"))
+                })
+                .collect();
+            entries.sort();
+            entries.join(", ")
+        }
+
+        let formats = |set: &HashSet<QsvFourCC>| {
+            RELEVANT
+                .iter()
+                .filter(|c| set.contains(&QsvFourCC(**c)))
+                .map(|c| QsvFourCC(*c).name())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        let pairs = |set: &HashSet<(QsvFourCC, QsvFourCC)>| {
+            RELEVANT
+                .iter()
+                .flat_map(|i| RELEVANT.iter().map(move |o| (QsvFourCC(*i), QsvFourCC(*o))))
+                .filter(|pair| set.contains(pair))
+                .map(|(i, o)| format!("{}>{}", i.name(), o.name()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        match self.runtime_api {
+            Some((major, minor)) => write!(f, "api {major}.{minor}")?,
+            None => write!(f, "api unknown")?,
+        }
+        write!(f, "; decode {}", codecs(&self.supported_decoders))?;
+        write!(f, "; encode {}", codecs(&self.supported_encoders))?;
+        write!(f, "; upload {}", formats(&self.upload_formats))?;
+        write!(f, "; convert {}", pairs(&self.convert_pairs))?;
+        write!(f, "; pad {}", pairs(&self.composite_pairs))?;
+        write!(f, "; rotate {}", formats(&self.rotation_formats))?;
+        write!(f, "; vpp {}", self.vpp_filters().join(" "))
     }
 }
 
@@ -58,7 +122,19 @@ impl QsvCapabilities {
             .is_some_and(|bit_depths| bit_depths.contains(&bit_depth))
     }
 
-    pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
+    pub fn can_upload(&self, pixel_format: &PixelFormat) -> bool {
+        Self::fourcc(pixel_format).is_some_and(|c| self.upload_formats.contains(&c))
+    }
+
+    pub fn can_convert(&self, input: &PixelFormat, output: &PixelFormat) -> bool {
+        Self::pair(input, output).is_some_and(|pair| self.convert_pairs.contains(&pair))
+    }
+
+    fn pair(input: &PixelFormat, output: &PixelFormat) -> Option<(QsvFourCC, QsvFourCC)> {
+        Self::fourcc(input).zip(Self::fourcc(output))
+    }
+
+    fn fourcc(pixel_format: &PixelFormat) -> Option<QsvFourCC> {
         let fourcc = match pixel_format {
             PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(MFX_FOURCC_NV12),
             PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(MFX_FOURCC_P010),
@@ -66,32 +142,37 @@ impl QsvCapabilities {
             _ => None,
         };
 
-        fourcc.is_some_and(|c| self.vpp_pixel_formats.contains(&QsvFourCC(c)))
+        fourcc.map(QsvFourCC)
     }
 
-    // this is just a heuristic; and p010 support could mean input or output to any filter
-    // something to tighten up if we encounter tonemapping failures
+    // ffmpeg vpp_qsv ignores rotation on api versions before 1.17
+    pub fn can_rotate(&self, pixel_format: &PixelFormat) -> bool {
+        self.runtime_api.is_some_and(|version| version >= (1, 17))
+            && Self::fourcc(pixel_format).is_some_and(|c| self.rotation_formats.contains(&c))
+    }
+
+    pub fn can_pad(&self, input: &PixelFormat, output: &PixelFormat) -> bool {
+        Self::pair(input, output).is_some_and(|pair| self.composite_pairs.contains(&pair))
+    }
+
+    // ffmpeg vpp_qsv sends hdr metadata only on api 2.0 or later.
+    // the signal info filters in the vpl tree do not show tonemap support. Query and Init
+    // also do not show it. do not use them.
     pub fn can_tonemap(&self) -> bool {
         self.runtime_api.is_some_and(|(major, _)| major >= 2)
-            && self
-                .vpp_filters
-                .contains(&QsvFourCC(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN))
-            && self
-                .vpp_filters
-                .contains(&QsvFourCC(MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT))
-            && self.vpp_supports_format(&PixelFormat::P010le)
+            && self.can_convert(&PixelFormat::P010le, &PixelFormat::Nv12)
     }
 
     pub fn runtime_api(&self) -> Option<(u16, u16)> {
         self.runtime_api
     }
 
+    pub fn requires_fixed_pool(&self) -> bool {
+        self.runtime_api.is_none_or(|api| api < (2, 9))
+    }
+
     pub fn vpp_filters(&self) -> Vec<String> {
-        let mut filters: Vec<String> = self
-            .vpp_filters
-            .iter()
-            .map(|f| String::from_utf8_lossy(&f.0.to_ne_bytes()).into_owned())
-            .collect();
+        let mut filters: Vec<String> = self.vpp_filters.iter().map(QsvFourCC::name).collect();
         filters.sort();
         filters
     }
@@ -105,48 +186,50 @@ impl QsvCapabilities {
 mod tests {
     use super::*;
 
-    fn caps(runtime_api: Option<(u16, u16)>, filters: &[u32], formats: &[u32]) -> QsvCapabilities {
+    fn caps(runtime_api: Option<(u16, u16)>, formats: &[u32]) -> QsvCapabilities {
         QsvCapabilities {
             supported_decoders: HashMap::new(),
             supported_encoders: HashMap::new(),
-            vpp_pixel_formats: formats.iter().map(|f| QsvFourCC(*f)).collect(),
-            vpp_filters: filters.iter().map(|f| QsvFourCC(*f)).collect(),
+            upload_formats: formats.iter().map(|f| QsvFourCC(*f)).collect(),
+            convert_pairs: formats
+                .iter()
+                .flat_map(|input| {
+                    formats
+                        .iter()
+                        .map(|output| (QsvFourCC(*input), QsvFourCC(*output)))
+                })
+                .collect(),
+            vpp_filters: HashSet::new(),
+            rotation_formats: HashSet::new(),
+            composite_pairs: HashSet::new(),
             runtime_api,
         }
     }
 
-    const VSI: &[u32] = &[
-        MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN,
-        MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT,
-    ];
-
     #[test]
-    fn can_tonemap_on_vpl_runtime_with_signal_info_and_p010() {
-        assert!(caps(Some((2, 17)), VSI, &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
+    fn can_tonemap_on_vpl_runtime_with_p010() {
+        assert!(caps(Some((2, 17)), &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
     }
 
     #[test]
     fn cannot_tonemap_on_legacy_runtime() {
-        assert!(!caps(Some((1, 35)), VSI, &[MFX_FOURCC_P010]).can_tonemap());
-        assert!(!caps(Some((1, 35)), &[], &[MFX_FOURCC_P010]).can_tonemap());
-        assert!(!caps(None, VSI, &[MFX_FOURCC_P010]).can_tonemap());
-    }
-
-    #[test]
-    fn cannot_tonemap_without_both_signal_info_filters() {
-        assert!(
-            !caps(
-                Some((2, 17)),
-                &[MFX_EXTBUFF_VIDEO_SIGNAL_INFO_IN],
-                &[MFX_FOURCC_P010]
-            )
-            .can_tonemap()
-        );
-        assert!(!caps(Some((2, 17)), &[], &[MFX_FOURCC_P010]).can_tonemap());
+        assert!(!caps(Some((1, 35)), &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
+        assert!(!caps(None, &[MFX_FOURCC_NV12, MFX_FOURCC_P010]).can_tonemap());
     }
 
     #[test]
     fn cannot_tonemap_without_p010_vpp_support() {
-        assert!(!caps(Some((2, 17)), VSI, &[MFX_FOURCC_NV12]).can_tonemap());
+        assert!(!caps(Some((2, 17)), &[MFX_FOURCC_NV12]).can_tonemap());
+    }
+
+    #[test]
+    fn display_limits_formats_to_mapped_fourccs() {
+        const MFX_FOURCC_Y410: u32 = u32::from_ne_bytes(*b"Y410");
+        let caps = caps(Some((2, 17)), &[MFX_FOURCC_NV12, MFX_FOURCC_Y410]);
+        let summary = caps.to_string();
+        assert!(summary.starts_with("api 2.17; "));
+        assert!(summary.contains("; upload NV12;"));
+        assert!(summary.contains("; convert NV12>NV12;"));
+        assert!(!summary.contains("Y410"));
     }
 }

@@ -132,7 +132,65 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::color::FrameColor;
     use crate::pipeline::{FrameSurface, HdrFormat, PixelFormat};
+
+    #[rstest]
+    #[case(Some("32:27"), Some("16:9"))]
+    #[case(None, Some("16:9"))]
+    #[case(Some("0:1"), Some("1.7777777777777777"))]
+    #[case(Some("32:27"), None)]
+    fn rotated_anamorphic_geometry(
+        #[case] sar: Option<&str>,
+        #[case] dar: Option<&str>,
+        #[values(90, 270)] rotation: i32,
+    ) {
+        let mut state = FrameState {
+            size: FrameSize {
+                width: 720,
+                height: 480,
+            },
+            is_anamorphic: true,
+            is_interlaced: false,
+            sample_aspect_ratio: sar.map(String::from),
+            display_aspect_ratio: dar.map(String::from),
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: Some(rotation),
+        };
+        state.apply_rotation();
+        assert_eq!(
+            state.size,
+            FrameSize {
+                width: 480,
+                height: 720
+            }
+        );
+        assert!(state.is_anamorphic);
+        let target = FrameSize {
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(
+            target.square_pixel_size_contain(&state),
+            FrameSize {
+                width: 608,
+                height: 1080
+            }
+        );
+        let size = target.square_pixel_size_cover(&state);
+        assert_eq!(
+            size,
+            FrameSize {
+                width: 1920,
+                height: 3412
+            }
+        );
+        state.apply_rotation();
+        assert_eq!(target.square_pixel_size_cover(&state), size);
+    }
 
     #[test]
     fn anamorphic_square_pixels_1280x720() {
@@ -147,7 +205,9 @@ mod tests {
             display_aspect_ratio: Some(String::from("16:9")),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -171,7 +231,9 @@ mod tests {
             display_aspect_ratio: Some(String::from("16:9")),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -205,7 +267,9 @@ mod tests {
             display_aspect_ratio: display_aspect_ratio.map(String::from),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -237,7 +301,9 @@ mod tests {
             display_aspect_ratio: display_aspect_ratio.map(String::from),
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -285,7 +351,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {
@@ -315,7 +383,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::System,
             pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::None,
+            rotation: None,
         };
 
         let target = FrameSize {

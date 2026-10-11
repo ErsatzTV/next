@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
@@ -15,6 +15,10 @@ const MIN_SEGMENTS: usize = 4;
 // 12s
 const PUBLISH_LEAD: Duration =
     Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 3);
+
+// smaller gaps are frame rounding
+pub const SHORTFALL_TOLERANCE: Duration =
+    Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64);
 
 #[derive(Clone)]
 pub struct SubtitleSource {
@@ -32,6 +36,7 @@ pub struct PlaylistManager {
     generated_subtitle_playlist_file: String,
     ffmpeg_playlist_file: String,
     ready: bool,
+    ready_at: Option<Instant>,
 
     segments: VecDeque<Segment>,
     discontinuity_before: HashSet<String>,
@@ -83,6 +88,7 @@ impl PlaylistManager {
             ffmpeg_playlist_file: output_files.ffmpeg_playlist_file,
             generated_subtitle_playlist_file: output_files.generated_subtitle_playlist_file,
             ready: false,
+            ready_at: None,
 
             segments: VecDeque::new(),
             discontinuity_before: HashSet::new(),
@@ -118,6 +124,7 @@ impl PlaylistManager {
 
     pub async fn before_new_pipeline(
         &mut self,
+        scheduled_start: OffsetDateTime,
         new_pts_offset: Option<PtsOffset>,
         new_subtitle_source: Option<SubtitleSource>,
     ) -> Result<(), ChannelError> {
@@ -125,6 +132,20 @@ impl PlaylistManager {
         self.pts_offset = new_pts_offset;
         self.subtitle_source = new_subtitle_source;
         self.pending_discontinuity = true;
+
+        // pacing follows the schedule, not segment output; a short source would leave
+        // program date times behind for good, and new segments would be trimmed on arrival.
+        // never move back: program date times must only increase
+        if scheduled_start > self.last_segment_end {
+            let lag = scheduled_start - self.last_segment_end;
+            if lag > SHORTFALL_TOLERANCE {
+                log::warn!(
+                    "hls timeline is {:.3}s behind schedule; jumping ahead to {scheduled_start}",
+                    lag.as_seconds_f64()
+                );
+            }
+            self.last_segment_end = scheduled_start;
+        }
         self.current_session_start = self.last_segment_end;
 
         self.last_progress = OffsetDateTime::now_utc();
@@ -148,6 +169,11 @@ impl PlaylistManager {
         }
 
         Ok(())
+    }
+
+    pub async fn pipeline_output(&mut self) -> Result<time::Duration, ChannelError> {
+        self.update().await?;
+        Ok(self.last_segment_end - self.current_session_start)
     }
 
     pub async fn update(&mut self) -> Result<(), ChannelError> {
@@ -179,15 +205,24 @@ impl PlaylistManager {
 
         // add new segments
         for file in sorted_new_segments {
-            if self.pending_discontinuity {
-                self.discontinuity_before.insert(file.to_owned());
-                self.pending_discontinuity = false;
-            }
-
             let duration = new_segment_durations
                 .get(&file)
                 .map(|f| f.to_owned())
                 .unwrap_or(self.target_duration_f64);
+
+            // ffmpeg writes an empty segment after seeking past the end of the input
+            if duration <= 0.0 {
+                let path = self.output_folder.join(&file);
+                tokio::fs::remove_file(&path)
+                    .await
+                    .io_context("delete the empty segment", &path)?;
+                continue;
+            }
+
+            if self.pending_discontinuity {
+                self.discontinuity_before.insert(file.to_owned());
+                self.pending_discontinuity = false;
+            }
 
             // rfc8216bis 6.2.1 requires EXT-X-TARGETDURATION to stay constant,
             // and 4.4.3.1 only requires it to cover segment durations rounded
@@ -276,9 +311,62 @@ impl PlaylistManager {
             }
         }
 
-        // generate and atomically save playlist
-        let (generated_playlist, playlist_segment_count) =
-            self.generate_playlist(|s| s.to_owned(), Some(10))?;
+        let playlist_segment_count = self.write_playlists(Some(10), false).await?;
+
+        if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
+            tokio::fs::write(&self.ready_file, b"")
+                .await
+                .io_context("publish the ready signal", &self.ready_file)?;
+            self.ready = true;
+            self.ready_at = Some(Instant::now());
+        }
+
+        let idle = match tokio::fs::metadata(&self.heartbeat_file).await {
+            Ok(metadata) => Some(
+                metadata
+                    .modified()
+                    .io_context(
+                        "read the modified time of the heartbeat file",
+                        &self.heartbeat_file,
+                    )?
+                    .elapsed()
+                    .unwrap_or(Duration::MAX),
+            ),
+            // no client ever arrived
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.ready_at.map(|t| t.elapsed())
+            }
+            Err(e) => return Err(e).io_context("stat the heartbeat file", &self.heartbeat_file),
+        };
+        self.timeout = idle.is_some_and(|i| i > HEARTBEAT_FILE_TIMEOUT);
+
+        Ok(())
+    }
+
+    /// A session that stops (troubleshooting) must publish segments after the publish horizon.
+    pub async fn finish(&mut self) -> Result<(), ChannelError> {
+        self.update().await?;
+        self.write_playlists(None, true).await?;
+        Ok(())
+    }
+
+    async fn write_playlists(
+        &mut self,
+        max_segments: Option<usize>,
+        end: bool,
+    ) -> Result<usize, ChannelError> {
+        let (mut generated_playlist, playlist_segment_count) =
+            self.generate_playlist(|s| s.to_owned(), max_segments)?;
+        let (mut generated_subtitle_playlist, _) = self.generate_playlist(
+            |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
+            max_segments,
+        )?;
+
+        if end {
+            generated_playlist.push_str("#EXT-X-ENDLIST\n");
+            generated_subtitle_playlist.push_str("#EXT-X-ENDLIST\n");
+        }
+
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
             "create a temp file for the served playlist",
             &self.generated_playlist_file,
@@ -293,11 +381,6 @@ impl PlaylistManager {
             .await
             .io_context("publish the served playlist", &self.generated_playlist_file)?;
 
-        // generate and atomically save subtitle playlist
-        let (generated_subtitle_playlist, _) = self.generate_playlist(
-            |s| format!("{}.vtt", s.strip_suffix(".ts").unwrap_or(s)),
-            Some(10),
-        )?;
         let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
             "create a temp file for the subtitle playlist",
             &self.generated_subtitle_playlist_file,
@@ -315,25 +398,7 @@ impl PlaylistManager {
                 &self.generated_subtitle_playlist_file,
             )?;
 
-        if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
-            tokio::fs::write(&self.ready_file, b"")
-                .await
-                .io_context("publish the ready signal", &self.ready_file)?;
-            self.ready = true;
-        }
-
-        if self.heartbeat_file.exists() {
-            let metadata = tokio::fs::metadata(&self.heartbeat_file)
-                .await
-                .io_context("stat the heartbeat file", &self.heartbeat_file)?;
-            let modified = metadata.modified().io_context(
-                "read the modified time of the heartbeat file",
-                &self.heartbeat_file,
-            )?;
-            self.timeout = modified.elapsed().unwrap_or(Duration::MAX) > HEARTBEAT_FILE_TIMEOUT;
-        }
-
-        Ok(())
+        Ok(playlist_segment_count)
     }
 
     fn generate_playlist(
@@ -343,7 +408,7 @@ impl PlaylistManager {
     ) -> Result<(String, usize), ChannelError> {
         let mut playlist = String::new();
         playlist.push_str("#EXTM3U\n");
-        playlist.push_str("#EXT-X-VERSION:7\n");
+        playlist.push_str("#EXT-X-VERSION:6\n");
         playlist.push_str(&format!("#EXT-X-TARGETDURATION:{}\n", self.target_duration));
 
         let (skip, limit) = match max_segments {
@@ -415,22 +480,25 @@ impl PlaylistManager {
             let contents = tokio::fs::read_to_string(&path)
                 .await
                 .io_context("read the ffmpeg playlist", path)?;
-            let lines: Vec<&str> = contents.split('\n').collect();
-            let mut i: usize = 0;
-            while i < lines.len() {
-                if lines[i].starts_with("#EXTINF:")
-                    && i + 2 < lines.len()
-                    && lines[i + 2].ends_with(".ts")
-                {
-                    let segment_name = lines[i + 2];
-                    let inf_split: Vec<&str> =
-                        lines[i].split(':').map(|s| s.trim_matches(',')).collect();
-                    if let Ok(duration) = inf_split[1].parse::<f64>() {
-                        result.insert(segment_name.to_owned(), duration);
-                    }
-                }
+            let mut lines = contents.lines();
+            while let Some(line) = lines.next() {
+                let Some(inf) = line.strip_prefix("#EXTINF:") else {
+                    continue;
+                };
 
-                i += 1;
+                // tags such as EXT-X-PROGRAM-DATE-TIME (absent when troubleshooting) may precede the uri
+                let Some(segment_name) = lines
+                    .by_ref()
+                    .find(|l| !l.is_empty() && !l.starts_with('#'))
+                else {
+                    break;
+                };
+
+                if segment_name.ends_with(".ts")
+                    && let Some(Ok(duration)) = inf.split(',').next().map(str::parse::<f64>)
+                {
+                    result.insert(segment_name.to_owned(), duration);
+                }
             }
         }
 
@@ -485,22 +553,201 @@ fn render_subtitle_segment(
 mod tests {
     use super::*;
 
-    /// A manager writing into a real folder, so `update` reaches the disk.
-    fn manager_in(folder: &Path) -> PlaylistManager {
+    fn playlist_manager(folder: &Path, channel_start_time: OffsetDateTime) -> PlaylistManager {
+        let file = |name: &str| folder.join(name).to_string_lossy().into_owned();
         PlaylistManager::new(
-            OffsetDateTime::UNIX_EPOCH,
-            4,
+            channel_start_time,
+            ffpipeline::pipeline::SEGMENT_SECONDS,
             folder.to_path_buf(),
-            folder.join(".ready"),
+            folder.join(ersatztv_core::READY_FILE_NAME),
             PlaylistManagerOutputFiles {
-                generated_playlist_file: folder.join("live.m3u8").display().to_string(),
-                ffmpeg_playlist_file: folder.join("ffmpeg.m3u8").display().to_string(),
-                generated_subtitle_playlist_file: folder
-                    .join("live_sub.m3u8")
-                    .display()
-                    .to_string(),
+                generated_playlist_file: file("live.m3u8"),
+                ffmpeg_playlist_file: file("ffmpeg.m3u8"),
+                generated_subtitle_playlist_file: file("live_sub.m3u8"),
             },
         )
+    }
+
+    async fn write_ffmpeg_segments(folder: &Path, names: &[&str]) {
+        let mut playlist = String::from("#EXTM3U\n");
+        for name in names {
+            tokio::fs::write(folder.join(name), b"").await.unwrap();
+            playlist.push_str(&format!(
+                "#EXTINF:4.000000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00.000+0000\n{name}\n"
+            ));
+        }
+        tokio::fs::write(folder.join("ffmpeg.m3u8"), playlist)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn idle_clock_starts_at_ready_without_heartbeat_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now - Duration::from_mins(1));
+        pm.update().await.unwrap();
+        assert!(!pm.ready);
+        assert!(!pm.timeout);
+
+        let names = [
+            "live000000.ts",
+            "live000001.ts",
+            "live000002.ts",
+            "live000003.ts",
+        ];
+        write_ffmpeg_segments(folder.path(), &names).await;
+        pm.update().await.unwrap();
+        assert!(pm.ready);
+        assert!(!pm.timeout);
+
+        pm.ready_at = Instant::now().checked_sub(HEARTBEAT_FILE_TIMEOUT + Duration::from_secs(1));
+        pm.update().await.unwrap();
+        assert!(pm.timeout);
+
+        tokio::fs::write(folder.path().join(HEARTBEAT_FILE_NAME), b"")
+            .await
+            .unwrap();
+        pm.update().await.unwrap();
+        assert!(!pm.timeout);
+    }
+
+    #[tokio::test]
+    async fn segments_after_shortfall_are_not_trimmed_on_arrival() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        // 10 minute shortfall
+        let mut pm = playlist_manager(folder.path(), now - Duration::from_mins(10));
+        pm.before_new_pipeline(now - Duration::from_secs(8), None, None)
+            .await
+            .unwrap();
+
+        let names = ["live000000.ts", "live000001.ts", "live000002.ts"];
+        write_ffmpeg_segments(folder.path(), &names).await;
+        pm.update().await.unwrap();
+
+        assert_eq!(pm.segments.len(), names.len());
+        assert_eq!(pm.media_sequence, 0);
+        let live = tokio::fs::read_to_string(folder.path().join("live.m3u8"))
+            .await
+            .unwrap();
+        for name in names {
+            assert!(folder.path().join(name).exists());
+            assert!(live.contains(name));
+        }
+    }
+
+    #[tokio::test]
+    async fn finish_publishes_past_the_horizon_and_ends_playlists() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+
+        // longer than the publish horizon
+        let names: Vec<String> = (0..8).map(|i| format!("live{i:06}.ts")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        write_ffmpeg_segments(folder.path(), &names).await;
+
+        pm.update().await.unwrap();
+        let live = tokio::fs::read_to_string(folder.path().join("live.m3u8"))
+            .await
+            .unwrap();
+        assert!(!live.contains(names[7]));
+
+        pm.finish().await.unwrap();
+        for file in ["live.m3u8", "live_sub.m3u8"] {
+            let playlist = tokio::fs::read_to_string(folder.path().join(file))
+                .await
+                .unwrap();
+            assert_eq!(playlist.matches("#EXTINF").count(), names.len());
+            assert!(playlist.ends_with("#EXT-X-ENDLIST\n"));
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_segments_are_dropped() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+
+        tokio::fs::write(folder.path().join("live000000.ts"), b"")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            folder.path().join("ffmpeg.m3u8"),
+            "#EXTM3U\n#EXTINF:0.000000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00.000+0000\nlive000000.ts\n",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(pm.pipeline_output().await.unwrap(), time::Duration::ZERO);
+        assert!(pm.segments.is_empty());
+        assert!(!folder.path().join("live000000.ts").exists());
+    }
+
+    #[tokio::test]
+    async fn pipeline_output_counts_only_the_current_pipeline() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now - Duration::from_secs(8));
+        write_ffmpeg_segments(folder.path(), &["live000000.ts"]).await;
+        pm.update().await.unwrap();
+
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+        write_ffmpeg_segments(folder.path(), &["live000001.ts", "live000002.ts"]).await;
+
+        assert_eq!(
+            pm.pipeline_output().await.unwrap(),
+            time::Duration::seconds(8)
+        );
+    }
+
+    #[tokio::test]
+    async fn segments_without_program_date_time_are_counted() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now, None, None).await.unwrap();
+
+        // troubleshooting omits the program_date_time hls flag
+        for name in ["live000000.ts", "live000001.ts"] {
+            tokio::fs::write(folder.path().join(name), b"")
+                .await
+                .unwrap();
+        }
+        tokio::fs::write(
+            folder.path().join("ffmpeg.m3u8"),
+            "#EXTM3U\n#EXT-X-DISCONTINUITY\n#EXTINF:4.004000,\nlive000000.ts\n#EXTINF:3.128333,\nlive000001.ts\n#EXT-X-ENDLIST\n",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            pm.pipeline_output().await.unwrap(),
+            time::Duration::seconds_f64(4.004 + 3.128333)
+        );
+    }
+
+    #[tokio::test]
+    async fn timeline_ahead_of_schedule_is_not_moved_back() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+
+        let mut pm = playlist_manager(folder.path(), now);
+        pm.before_new_pipeline(now - Duration::from_mins(1), None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(pm.last_segment_end, now);
+        assert_eq!(pm.current_session_start, now);
     }
 
     fn segment(path: &str, start_offset_secs: i64) -> Segment {
@@ -521,7 +768,7 @@ mod tests {
     async fn scanning_a_missing_segment_folder_names_the_folder() {
         let folder = tempfile::tempdir().unwrap();
         let missing = folder.path().join("gone");
-        let mut manager = manager_in(&missing);
+        let mut manager = playlist_manager(&missing, OffsetDateTime::UNIX_EPOCH);
 
         let message = manager.update().await.unwrap_err().to_string();
 
@@ -545,7 +792,7 @@ mod tests {
     #[tokio::test]
     async fn trimming_a_segment_whose_file_is_gone_names_the_segment() {
         let folder = tempfile::tempdir().unwrap();
-        let mut manager = manager_in(folder.path());
+        let mut manager = playlist_manager(folder.path(), OffsetDateTime::UNIX_EPOCH);
 
         // one held segment, aged past the retention window, with no file on
         // disk behind it

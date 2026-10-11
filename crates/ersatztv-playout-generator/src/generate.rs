@@ -220,6 +220,7 @@ async fn build_items(
                                     sample_aspect_ratio: v.sample_aspect_ratio.clone(),
                                     dv_profile: v.dv_profile,
                                     has_hdr10_metadata: Some(v.color_params.has_hdr10_metadata),
+                                    rotation: v.rotation,
                                 })
                             } else {
                                 None

@@ -1,4 +1,5 @@
 {
+  "version": "https://ersatztv.org/channel/version/0.1.2",
   "playout": {
     "folder": "./playout"
   },
@@ -9,6 +10,7 @@
   },
   "normalization": {
     "audio": {
+      "mode": "transcode",
       "format": "aac",
       "bitrate_kbps": 192,
       "buffer_kbps": 384,
@@ -22,16 +24,16 @@
       }
     },
     "video": {
+      "mode": "transcode",
       "format": "h264",
       "bit_depth": 8,
       "width": 1920,
       "height": 1080,
       "bitrate_kbps": 2000,
       "buffer_kbps": 4000,
-      "accel": "",
-      "tonemap_algorithm": "linear",
+      "accel": null,
       "vaapi_device": "/dev/dri/renderD128",
-      "vaapi_driver": "iHD"
+      "vaapi_driver": "ihd"
     },
     "subtitle": {
       "mode": "burn"

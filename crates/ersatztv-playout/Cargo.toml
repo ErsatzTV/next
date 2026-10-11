@@ -1,9 +1,11 @@
 [package]
 name = "ersatztv-playout"
-version = "0.1.0"
+version.workspace = true
+publish.workspace = true
 edition = "2024"
 
 [dependencies]
+ersatztv-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -4,7 +4,9 @@ use enum_dispatch::enum_dispatch;
 use time::OffsetDateTime;
 
 use crate::accel;
+use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
+use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
@@ -40,9 +42,11 @@ pub enum VideoFilter {
     Scale(ScaleFilter),
     Pad(PadFilter),
     Loop(LoopFilter),
+    Fps(FpsFilter),
     Format(FormatFilter),
     ToneMap(ToneMapFilter),
     Deinterlace(DeinterlaceFilter),
+    Transpose(TransposeFilter),
     HwMap(HwMapFilter),
     Subtitles(SubtitlesFilter),
     SubtitleImageScale(SubtitleImageScaleFilter),
@@ -50,6 +54,9 @@ pub enum VideoFilter {
     Fade(FadeFilter),
     Crop(CropFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
+    EnsureAlpha(EnsureAlphaFilter),
+    // AMF hardware filters
+    VppAmf(accel::amf::VppAmf),
     // CUDA hardware filters
     ScaleCuda(accel::cuda::ScaleCuda),
     PadCuda(accel::cuda::PadCuda),
@@ -57,12 +64,14 @@ pub enum VideoFilter {
     HwUploadCudaWorkaround(accel::cuda::HwUploadCudaWorkaround),
     LibplaceboCuda(accel::cuda::LibplaceboCuda),
     DeinterlaceCuda(accel::cuda::DeinterlaceCuda),
+    TransposeCuda(accel::cuda::TransposeCuda),
     // VAAPI hardware filters
     DeinterlaceVaapi(accel::vaapi::DeinterlaceVaapi),
     ScaleVaapi(accel::vaapi::ScaleVaapi),
     PadVaapi(accel::vaapi::PadVaapi),
     FormatVaapi(accel::vaapi::FormatVaapi),
     TonemapVaapi(accel::vaapi::TonemapVaapi),
+    TransposeVaapi(accel::vaapi::TransposeVaapi),
     // OpenCL hardware filters
     PadOpencl(accel::opencl::PadOpencl),
     TonemapOpencl(accel::opencl::TonemapOpencl),
@@ -96,8 +105,10 @@ impl VideoFilterOp for HwUploadFilter {
         state.surface = self.target_surface;
         state.pixel_format = match &state.pixel_format {
             PixelFormat::Yuv420p10le => PixelFormat::P010le,
-            PixelFormat::Yuv420p => PixelFormat::Nv12,
-            PixelFormat::Bgra if state.surface == FrameSurface::Cuda => PixelFormat::Yuva420p,
+            PixelFormat::Yuv420p | PixelFormat::Unknown => PixelFormat::Nv12,
+            PixelFormat::Bgra | PixelFormat::Rgba if state.surface == FrameSurface::Cuda => {
+                PixelFormat::Yuva420p
+            }
             other => *other,
         }
     }
@@ -126,6 +137,7 @@ impl VideoFilterOp for HwUploadFilter {
         };
 
         match &self.target_surface {
+            FrameSurface::Amf => Some(format!("{format_filter}hwupload")),
             FrameSurface::Cuda => Some(format!("{format_filter}hwupload_cuda")),
             FrameSurface::Rkmpp => Some(format!("{format_filter}hwupload")),
 
@@ -167,11 +179,20 @@ impl VideoFilterOp for HwDownloadFilter {
     }
 }
 
+/// Not `fast_bilinear`: it aliases when it downscales. `bicubic` adds less than 1% to a software
+/// transcode.
+pub const DEFAULT_SCALE_FLAGS: &str = "bicubic";
+
+fn scale_flags(flags: Option<&str>) -> &str {
+    flags.unwrap_or(DEFAULT_SCALE_FLAGS)
+}
+
 #[derive(Debug, Clone)]
 pub struct ScaleFilter {
     pub size: Option<FrameSize>,
     pub scaling_mode: ScalingMode,
     pub input_is_anamorphic: bool,
+    pub flags: Option<String>,
 }
 
 impl VideoFilterOp for ScaleFilter {
@@ -200,6 +221,7 @@ impl VideoFilterOp for ScaleFilter {
                 size: Some(size),
                 scaling_mode: self.scaling_mode,
                 input_is_anamorphic: state.is_anamorphic,
+                flags: self.flags.clone(),
             }
             .into(),
         )
@@ -222,8 +244,10 @@ impl VideoFilterOp for ScaleFilter {
         // force_original_aspect_ratio must not be used because it ignores sar
         self.size.map(|size| {
             format!(
-                "scale={}:{}:flags=fast_bilinear,setsar=1",
-                size.width, size.height
+                "scale={}:{}:flags={},setsar=1",
+                size.width,
+                size.height,
+                scale_flags(self.flags.as_deref())
             )
         })
     }
@@ -268,6 +292,19 @@ impl VideoFilterOp for PadFilter {
 #[derive(Debug, Clone)]
 pub struct LoopFilter {
     pub is_still_image: bool,
+    /// `None` loops forever
+    pub loops: Option<u32>,
+}
+
+impl LoopFilter {
+    /// Enough frames to cover `duration` at `frame_rate`.
+    pub fn bounded(is_still_image: bool, duration: Duration, frame_rate: &FrameRate) -> Self {
+        let frames = (duration.as_secs_f64() * frame_rate.parsed_frame_rate).ceil();
+        LoopFilter {
+            is_still_image,
+            loops: Some(frames.min(i32::MAX as f64) as u32),
+        }
+    }
 }
 
 impl VideoFilterOp for LoopFilter {
@@ -286,7 +323,34 @@ impl VideoFilterOp for LoopFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        Some(String::from("loop=-1:1"))
+        match self.loops {
+            Some(loops) => Some(format!("loop={loops}:1")),
+            None => Some(String::from("loop=-1:1")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FpsFilter {
+    pub frame_rate: Option<FrameRate>,
+}
+
+impl VideoFilterOp for FpsFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        self.frame_rate.as_ref().map(|_| self.clone().into())
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {}
+
+    // fps only changes timing, so any surface works
+    fn required_surface(&self) -> Option<FrameSurface> {
+        None
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        self.frame_rate
+            .as_ref()
+            .map(|frame_rate| format!("fps={}", frame_rate.r_frame_rate))
     }
 }
 
@@ -334,7 +398,7 @@ impl VideoFilterOp for ToneMapFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.pixel_format = self.output_format;
-        state.hdr_format = HdrFormat::None;
+        state.apply_tonemap();
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -421,6 +485,59 @@ impl VideoFilterOp for DeinterlaceFilter {
                 Some(format!("w3fdif=mode={mode}"))
             }
         }
+    }
+}
+
+/// Discriminants are the `dir`/`transpose` option values shared by ffmpeg's transpose filters
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransposeDir {
+    Clock = 1,
+    CClock = 2,
+    Reversal = 4,
+}
+
+impl TransposeDir {
+    /// ffprobe reports `av_display_rotation_get` (counter-clockwise positive) while ffmpeg's
+    /// autorotate applies the negated angle, so a probed 270 is a clockwise quarter turn
+    pub fn from_rotation(degrees: i32) -> Option<TransposeDir> {
+        match degrees {
+            270 => Some(TransposeDir::Clock),
+            90 => Some(TransposeDir::CClock),
+            180 => Some(TransposeDir::Reversal),
+            _ => None,
+        }
+    }
+
+    pub fn is_quarter_turn(&self) -> bool {
+        matches!(self, TransposeDir::Clock | TransposeDir::CClock)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TransposeFilter {
+    pub dir: Option<TransposeDir>,
+}
+
+impl VideoFilterOp for TransposeFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        let dir = TransposeDir::from_rotation(state.rotation?)?;
+        Some(TransposeFilter { dir: Some(dir) }.into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.apply_rotation();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        // the software transpose filter has no half-turn direction
+        self.dir.map(|dir| match dir {
+            TransposeDir::Reversal => String::from("hflip,vflip"),
+            dir => format!("transpose={}", dir as u32),
+        })
     }
 }
 
@@ -513,6 +630,7 @@ impl VideoFilterOp for SubtitlesFilter {
 #[derive(Debug, Clone)]
 pub struct SubtitleImageScaleFilter {
     pub size: FrameSize,
+    pub flags: Option<String>,
 }
 
 impl VideoFilterOp for SubtitleImageScaleFilter {
@@ -534,8 +652,10 @@ impl VideoFilterOp for SubtitleImageScaleFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!(
-            "scale={}:{}:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1",
-            self.size.width, self.size.height,
+            "scale={}:{}:flags={}:force_original_aspect_ratio=decrease,setsar=1",
+            self.size.width,
+            self.size.height,
+            scale_flags(self.flags.as_deref()),
         ))
     }
 }
@@ -554,8 +674,11 @@ impl VideoFilterOp for ColorChannelMixerFilter {
         }
     }
 
-    fn apply_to(&self, _state: &mut FrameState) {
-        // no change to state
+    // colorchannelmixer only accepts rgb, so ffmpeg converts other input to rgba
+    fn apply_to(&self, state: &mut FrameState) {
+        if !matches!(state.pixel_format, PixelFormat::Bgra | PixelFormat::Rgba) {
+            state.pixel_format = PixelFormat::Rgba;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -811,16 +934,43 @@ impl VideoFilterOp for Dv5WorkaroundFilter {
         }
     }
 
-    fn apply_to(&self, _state: &mut FrameState) {}
+    fn apply_to(&self, state: &mut FrameState) {
+        state.color = FrameColor::hdr10();
+    }
 
     fn required_surface(&self) -> Option<FrameSurface> {
         None
     }
 
     fn as_arg(&self) -> Option<String> {
-        Some(String::from(
-            "setparams=color_trc=smpte2084:colorspace=bt2020nc:color_primaries=bt2020",
-        ))
+        FrameColor::hdr10().to_setparams()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnsureAlphaFilter {
+    pub format: PixelFormat,
+}
+
+impl VideoFilterOp for EnsureAlphaFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        if state.pixel_format.has_alpha() {
+            None
+        } else {
+            Some(self.clone().into())
+        }
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = self.format;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("format={}", self.format.as_arg()))
     }
 }
 
@@ -829,6 +979,94 @@ mod tests {
     use time::{Date, Month, Time, UtcOffset};
 
     use super::*;
+
+    fn scale_filter(flags: Option<&str>) -> VideoFilter {
+        ScaleFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+            input_is_anamorphic: false,
+            flags: flags.map(str::to_owned),
+        }
+        .into()
+    }
+
+    fn subtitle_image_scale_filter(flags: Option<&str>) -> VideoFilter {
+        SubtitleImageScaleFilter {
+            size: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            flags: flags.map(str::to_owned),
+        }
+        .into()
+    }
+
+    #[test]
+    fn scale_as_arg_defaults_to_bicubic() {
+        assert_eq!(
+            scale_filter(None).as_arg().as_deref(),
+            Some("scale=1920:1080:flags=bicubic,setsar=1")
+        );
+    }
+
+    #[test]
+    fn scale_as_arg_uses_flags() {
+        assert_eq!(
+            scale_filter(Some("lanczos+accurate_rnd"))
+                .as_arg()
+                .as_deref(),
+            Some("scale=1920:1080:flags=lanczos+accurate_rnd,setsar=1")
+        );
+    }
+
+    #[test]
+    fn scale_evaluate_keeps_flags() {
+        let state = FrameState {
+            size: FrameSize {
+                width: 640,
+                height: 480,
+            },
+            is_anamorphic: false,
+            is_interlaced: false,
+            sample_aspect_ratio: None,
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        };
+        let evaluated = scale_filter(Some("spline"))
+            .evaluate(&state, &FfmpegInfo::default())
+            .unwrap();
+        assert!(
+            evaluated.as_arg().unwrap().contains("flags=spline,"),
+            "{evaluated:?}"
+        );
+    }
+
+    #[test]
+    fn subtitle_image_scale_as_arg_defaults_to_bicubic() {
+        assert_eq!(
+            subtitle_image_scale_filter(None).as_arg().as_deref(),
+            Some("scale=1920:1080:flags=bicubic:force_original_aspect_ratio=decrease,setsar=1")
+        );
+    }
+
+    #[test]
+    fn subtitle_image_scale_as_arg_uses_flags() {
+        assert_eq!(
+            subtitle_image_scale_filter(Some("fast_bilinear"))
+                .as_arg()
+                .as_deref(),
+            Some(
+                "scale=1920:1080:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1"
+            )
+        );
+    }
 
     #[test]
     fn hw_map_as_arg_produces_derive_device() {
@@ -882,7 +1120,9 @@ mod tests {
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
             pixel_format: PixelFormat::P010le,
+            color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
+            rotation: None,
         };
 
         let filter: VideoFilter = HwMapFilter {
