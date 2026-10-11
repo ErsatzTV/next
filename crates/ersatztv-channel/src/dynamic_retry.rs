@@ -269,7 +269,8 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let uri = format!("http://{}/", listener.local_addr().unwrap());
         drop(listener);
-        let err = fetch(&uri, policy(1000, 500, 10)).await.unwrap_err();
+        // windows retries a refused connect for about 2s, so attempts end by timeout there
+        let err = fetch(&uri, policy(300, 1500, 10)).await.unwrap_err();
         assert!(!err.contains("after 1 attempt)"), "{err}");
     }
 }
