@@ -82,6 +82,30 @@ fn detached_survives_killed_parent() {
     );
 }
 
+#[test]
+#[ignore = "requires ffmpeg"]
+fn unwatched_channel_reaps_itself() {
+    let fixture = Fixture::new();
+    let mut channel = fixture.channel(&[]).spawn().unwrap();
+    let ready = fixture
+        .dir
+        .path()
+        .join("out")
+        .join(ersatztv_core::READY_FILE_NAME);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !ready.exists() {
+        assert!(Instant::now() < deadline, "channel never became ready");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // no client ever touches .heartbeat; the clock runs from ready
+    let status = wait_exit(
+        &mut channel,
+        ersatztv_core::HEARTBEAT_FILE_TIMEOUT + Duration::from_secs(10),
+    );
+    assert!(status.success());
+}
+
 struct Fixture {
     dir: tempfile::TempDir,
 }
