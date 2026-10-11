@@ -29,15 +29,21 @@ pub const PATH_FIELDS: &[&str] = &[
 
 const DEFAULT_VAAPI_DEVICE: &str = "/dev/dri/renderD128";
 
+/// Settings for one channel: where its playout is, which ffmpeg to use, and the output format.
+/// A relative path in any of these settings is relative to the file that sets it.
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ChannelConfig {
     /// Schema version URI, e.g. "https://ersatztv.org/channel/version/0.1.0". Missing means 0.0.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub version: Option<String>,
+    /// Where to find the channel's playout files.
     pub playout: PlayoutConfig,
+    /// ffmpeg and ffprobe settings.
     pub ffmpeg: FfmpegConfig,
+    /// Output format for audio, video and subtitles.
     pub normalization: NormalizationConfig,
+    /// What plays when nothing is scheduled or an item fails.
     #[serde(default)]
     pub fallback: FallbackConfig,
 
@@ -53,8 +59,10 @@ pub struct ChannelConfig {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct PlayoutConfig {
+    /// Folder of playout files, named `{start}_{finish}.json`.
     pub folder: String,
-    /// RFC3339 formatted date/time, e.g. 2026-04-13T00:24:21.527-05:00
+    /// Play the playout as if the channel started at this time instead of now. RFC 3339, e.g.
+    /// `2026-04-13T00:24:21.527-05:00`. For testing.
     #[serde(default, with = "time::serde::rfc3339::option")]
     #[schemars(with = "Option<String>")]
     pub virtual_start: Option<OffsetDateTime>,
@@ -62,14 +70,22 @@ pub struct PlayoutConfig {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct FfmpegConfig {
+    /// Path to the ffmpeg executable. Unset or empty uses `ffmpeg` from `PATH`.
     #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub ffmpeg_path: Option<PathBuf>,
+    /// Path to the ffprobe executable. Unset or empty uses `ffprobe` from `PATH`.
     #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub ffprobe_path: Option<PathBuf>,
+    /// ffmpeg video filters to never use, even when the ffmpeg build has them, e.g.
+    /// `["scale_cuda"]`. Pipelines that need one use another filter or software instead.
     #[serde(default)]
     pub disabled_filters: Vec<String>,
+    /// ffmpeg video filters in order of preference, used when more than one filter can do the
+    /// same step, e.g. `["tonemap_vaapi", "tonemap_opencl"]`.
     #[serde(default)]
     pub preferred_filters: Vec<String>,
+    /// Folder for troubleshooting reports. When set, each failed item or fallback writes a
+    /// subfolder with the ffmpeg output, the channel config and media info. Unset writes none.
     #[serde(default)]
     pub reports_folder: Option<String>,
 }
@@ -98,8 +114,11 @@ impl FallbackConfig {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct NormalizationConfig {
+    /// Audio output settings.
     pub audio: AudioNormalizationConfig,
+    /// Video output settings.
     pub video: VideoNormalizationConfig,
+    /// Subtitle output settings.
     #[serde(default)]
     pub subtitle: SubtitleNormalizationConfig,
 }
@@ -108,8 +127,10 @@ pub struct NormalizationConfig {
 #[serde(rename_all = "lowercase")]
 #[schemars(title = "StreamMode")]
 pub enum StreamMode {
+    /// Transcode every item.
     #[default]
     Transcode,
+    /// Copy items with a source codec in `copy_formats`. Transcode all other items.
     Copy,
 }
 
@@ -123,12 +144,20 @@ pub struct AudioNormalizationConfig {
     /// Codec for transcoded items. When `mode` is `copy`, used only for items that are not copied.
     #[serde(default)]
     pub format: AudioFormat,
+    /// Bitrate in kbit/s. Unset leaves it to the encoder.
     pub bitrate_kbps: Option<u32>,
+    /// Rate control buffer size (`-bufsize`) in kbit/s. Unset leaves it to the encoder.
     pub buffer_kbps: Option<u32>,
+    /// Number of channels, e.g. `2` for stereo. Unset keeps the source channel count.
     pub channels: Option<u32>,
+    /// Sample rate in Hz, e.g. `48000`. Unset keeps the source rate, or 48000 when
+    /// `normalize_loudness` is on.
     pub sample_rate_hz: Option<u32>,
+    /// Normalize loudness with the ffmpeg `loudnorm` filter to the `loudness` targets.
+    /// Not allowed when `mode` is `copy`.
     #[serde(default)]
     pub normalize_loudness: bool,
+    /// Targets for `normalize_loudness`.
     pub loudness: Option<AudioLoudnessConfig>,
 }
 
@@ -136,8 +165,10 @@ pub struct AudioNormalizationConfig {
 #[serde(rename_all = "lowercase")]
 #[schemars(title = "AudioFormat")]
 pub enum AudioFormat {
+    /// AAC.
     #[default]
     Aac,
+    /// Dolby Digital (AC-3).
     Ac3,
 }
 
@@ -146,10 +177,15 @@ pub enum AudioFormat {
 #[serde(rename_all = "lowercase")]
 #[schemars(title = "AudioCopyFormat")]
 pub enum AudioCopyFormat {
+    /// AAC.
     Aac,
+    /// Dolby Digital (AC-3).
     Ac3,
+    /// Dolby Digital Plus (E-AC-3).
     Eac3,
+    /// MPEG-1 Audio Layer II.
     Mp2,
+    /// MPEG-1 Audio Layer III.
     Mp3,
 }
 
@@ -176,8 +212,11 @@ impl From<AudioFormat> for ffpipeline::pipeline::AudioFormat {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct AudioLoudnessConfig {
+    /// Integrated loudness target in LUFS (`loudnorm` `I`). Unset is -16.
     pub integrated_target: Option<f64>,
+    /// Loudness range target in LU (`loudnorm` `LRA`). Unset is 11.
     pub range_target: Option<f64>,
+    /// Maximum true peak in dBTP (`loudnorm` `TP`). Unset is -1.5.
     pub true_peak: Option<f64>,
 }
 
@@ -198,7 +237,8 @@ impl From<&AudioLoudnessConfig> for ffpipeline::output_settings::AudioLoudnessSe
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct VideoNormalizationConfig {
     /// `copy`: copy items with a source codec in `copy_formats`. Transcode all other items, and
-    /// items with graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI sources.
+    /// items with graphics, burned-in subtitles, still images, Dolby Vision profile 5 or AVI
+    /// sources.
     #[serde(default)]
     pub mode: StreamMode,
     /// Source codecs to copy when `mode` is `copy`. Default: h264, hevc.
@@ -207,13 +247,19 @@ pub struct VideoNormalizationConfig {
     /// only to items that are not copied.
     #[serde(default)]
     pub format: VideoFormat,
+    /// Bit depth, `8` or `10`. `mpeg2video` always uses 8.
     #[serde(
         default = "default_bit_depth",
         deserialize_with = "deserialize_bit_depth"
     )]
     pub bit_depth: u8,
+    /// Width in pixels. Applies only when `height` is also set; otherwise the source size is kept.
+    /// The fallback uses 1920 when unset.
     pub width: Option<u32>,
+    /// Height in pixels. Applies only when `width` is also set; otherwise the source size is kept.
+    /// The fallback uses 1080 when unset.
     pub height: Option<u32>,
+    /// How a source with a different aspect ratio fits `width` and `height`.
     #[serde(default)]
     pub scaling_mode: ScalingMode,
     /// Output frame rate, `N` or `N/D` (e.g. `25`, `30000/1001`).
@@ -222,18 +268,25 @@ pub struct VideoNormalizationConfig {
     #[serde(default, deserialize_with = "deserialize_frame_rate")]
     #[schemars(pattern(r"^[1-9][0-9]*(/[1-9][0-9]*)?$"))]
     pub frame_rate: Option<String>,
+    /// Bitrate in kbit/s. Required for `mpeg2video`. Unset leaves it to the encoder.
     pub bitrate_kbps: Option<u32>,
+    /// Rate control buffer size (`-bufsize`) in kbit/s. Unset leaves it to the encoder.
     pub buffer_kbps: Option<u32>,
+    /// Hardware acceleration for decoding, filtering and encoding. Steps the device can't do use
+    /// software. If the device can't be probed, the whole channel uses software. Unset or empty
+    /// uses software.
     #[serde(default, deserialize_with = "deserialize_optional_accel")]
     pub accel: Option<HardwareAccel>,
-    /// Windows only. Unset picks the discrete AMD adapter.
+    /// AMF adapter index. Windows only. Unset picks the discrete AMD adapter.
     pub amf_device: Option<u32>,
-    /// Unset uses `/dev/dri/renderD128`.
+    /// VAAPI render node. Unset uses `/dev/dri/renderD128`.
     pub vaapi_device: Option<PathBuf>,
-    /// Unset lets libva select the driver for `vaapi_device`.
+    /// VAAPI driver. Unset lets libva select the driver for `vaapi_device`.
     pub vaapi_driver: Option<VaapiDriver>,
+    /// Deinterlace interlaced sources. Progressive sources are not changed.
     #[serde(default)]
     pub deinterlace: bool,
+    /// Options for individual ffmpeg filters. Unset options use the filter's default.
     #[serde(default)]
     pub filters: VideoFilterOptionsConfig,
 }
@@ -241,22 +294,46 @@ pub struct VideoNormalizationConfig {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct VideoFilterOptionsConfig {
+    /// Options for the [`bwdif`](https://ffmpeg.org/ffmpeg-filters.html#bwdif-1) filter, used for
+    /// software deinterlacing.
     pub bwdif: Option<BwdifOptions>,
+    /// Options for the [`bwdif_cuda`](https://ffmpeg.org/ffmpeg-filters.html#bwdif_005fcuda)
+    /// filter, used for CUDA deinterlacing.
     pub bwdif_cuda: Option<BwdifCudaOptions>,
+    /// Options for the `deinterlace_qsv` filter, used for QSV deinterlacing. Run
+    /// `ffmpeg -h filter=deinterlace_qsv` for its options.
     pub deinterlace_qsv: Option<DeinterlaceQsvOptions>,
+    /// Options for the `deinterlace_vaapi` filter, used for VAAPI deinterlacing. Run
+    /// `ffmpeg -h filter=deinterlace_vaapi` for its options.
     pub deinterlace_vaapi: Option<DeinterlaceVaapiOptions>,
+    /// Options for the [`libplacebo`](https://ffmpeg.org/ffmpeg-filters.html#libplacebo) filter,
+    /// used for CUDA and Vulkan tonemapping.
     pub libplacebo: Option<LibplaceboOptions>,
+    /// Options for the [`scale`](https://ffmpeg.org/ffmpeg-filters.html#scale-1) filter, used for
+    /// software scaling.
     pub scale: Option<ScaleOptions>,
+    /// Options for the [`tonemap`](https://ffmpeg.org/ffmpeg-filters.html#tonemap-1) filter, used
+    /// for software tonemapping.
     pub tonemap: Option<TonemapOptions>,
+    /// Options for the
+    /// [`tonemap_opencl`](https://ffmpeg.org/ffmpeg-filters.html#tonemap_005fopencl) filter, used
+    /// for VAAPI tonemapping.
     pub tonemap_opencl: Option<TonemapOpenclOptions>,
+    /// Options for the [`w3fdif`](https://ffmpeg.org/ffmpeg-filters.html#w3fdif) filter, used for
+    /// software deinterlacing.
     pub w3fdif: Option<W3fdifOptions>,
+    /// Options for the [`yadif`](https://ffmpeg.org/ffmpeg-filters.html#yadif-1) filter, used for
+    /// software deinterlacing.
     pub yadif: Option<YadifOptions>,
+    /// Options for the [`yadif_cuda`](https://ffmpeg.org/ffmpeg-filters.html#yadif_005fcuda)
+    /// filter, used for CUDA deinterlacing.
     pub yadif_cuda: Option<YadifCudaOptions>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BwdifOptions {
+    /// Value for the `bwdif` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -265,6 +342,7 @@ pub struct BwdifOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BwdifCudaOptions {
+    /// Value for the `bwdif_cuda` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -273,6 +351,8 @@ pub struct BwdifCudaOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeinterlaceQsvOptions {
+    /// Value for the `deinterlace_qsv` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`,
+    /// `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -281,6 +361,8 @@ pub struct DeinterlaceQsvOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeinterlaceVaapiOptions {
+    /// Value for the `deinterlace_vaapi` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`,
+    /// `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -289,6 +371,8 @@ pub struct DeinterlaceVaapiOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LibplaceboOptions {
+    /// Value for the `libplacebo` `tonemapping` option. Allowed characters: a-z, 0-9, `_`, `.`,
+    /// `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub tonemapping: Option<String>,
@@ -308,6 +392,7 @@ pub struct ScaleOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TonemapOptions {
+    /// Value for the `tonemap` `tonemap` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub tonemap: Option<String>,
@@ -316,6 +401,8 @@ pub struct TonemapOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TonemapOpenclOptions {
+    /// Value for the `tonemap_opencl` `tonemap` option. Allowed characters: a-z, 0-9, `_`, `.`,
+    /// `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub tonemap: Option<String>,
@@ -324,6 +411,7 @@ pub struct TonemapOpenclOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct W3fdifOptions {
+    /// Value for the `w3fdif` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -332,6 +420,7 @@ pub struct W3fdifOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct YadifOptions {
+    /// Value for the `yadif` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -340,6 +429,7 @@ pub struct YadifOptions {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct YadifCudaOptions {
+    /// Value for the `yadif_cuda` `mode` option. Allowed characters: a-z, 0-9, `_`, `.`, `+`, `-`.
     #[serde(default, deserialize_with = "deserialize_filter_option")]
     #[schemars(regex(pattern = r"^[a-z0-9_.+-]+$"))]
     pub mode: Option<String>,
@@ -388,11 +478,14 @@ impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilter
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ScalingMode {
+    /// Scale to fit inside the frame and pad the rest with black.
     #[default]
     #[serde(alias = "scale_and_pad")]
     ScaleAndPad,
+    /// Scale to fill the frame, ignoring the aspect ratio.
     #[serde(alias = "stretch")]
     Stretch,
+    /// Scale to cover the frame and crop the overflow.
     #[serde(alias = "crop")]
     Crop,
 }
@@ -410,10 +503,13 @@ impl From<ScalingMode> for ffpipeline::output_settings::ScalingMode {
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VaapiDriver {
+    /// Intel media driver, for Broadwell and newer.
     #[serde(alias = "ihd", alias = "iHD")]
     Ihd,
+    /// Legacy Intel driver, for older Intel GPUs.
     #[serde(alias = "i965")]
     I965,
+    /// Mesa driver for AMD GPUs.
     #[serde(alias = "radeonsi", alias = "RadeonSI")]
     RadeonSI,
 }
@@ -432,21 +528,31 @@ impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
 #[serde(rename_all = "lowercase")]
 #[schemars(title = "VideoFormat")]
 pub enum VideoFormat {
+    /// H.264 (AVC).
     #[default]
     H264,
+    /// H.265 (HEVC).
     Hevc,
+    /// MPEG-2 video. Requires `bitrate_kbps`.
     Mpeg2Video,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HardwareAccel {
+    /// AMD AMF. Windows only.
     Amf,
+    /// NVIDIA NVENC/NVDEC.
     Cuda,
+    /// Intel Quick Sync Video.
     Qsv,
+    /// Rockchip MPP. Linux only.
     Rkmpp,
+    /// VA-API. Linux only.
     Vaapi,
+    /// Apple VideoToolbox. macOS only.
     VideoToolbox,
+    /// Vulkan Video.
     Vulkan,
 }
 
@@ -637,10 +743,14 @@ impl From<VideoFormat> for ffpipeline::pipeline::EncodeFormat {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
 pub struct SubtitleNormalizationConfig {
+    /// What to do with the selected text subtitle track. Image subtitles are always burned in.
     #[serde(default)]
     pub mode: SubtitleMode,
+    /// Folder of fonts for burned-in text subtitles.
     #[serde(default)]
     pub fonts_folder: Option<String>,
+    /// ASS style overrides for burned-in text subtitles, e.g. `FontName=Arial,FontSize=24`
+    /// (the `subtitles` filter's `force_style` option).
     #[serde(default)]
     pub force_style: Option<String>,
 }
@@ -649,8 +759,10 @@ pub struct SubtitleNormalizationConfig {
 #[serde(rename_all = "lowercase")]
 #[schemars(title = "SubtitleMode")]
 pub enum SubtitleMode {
+    /// Burn subtitles into the video.
     #[default]
     Burn,
+    /// Convert text subtitles to a WebVTT track in the HLS stream.
     Convert,
 }
 

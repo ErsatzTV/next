@@ -273,6 +273,15 @@ Loading fails if the file's `breaking` differs or its `compatible` is newer than
 Rule: **any change to a schema bumps `compatible`**, including optional additive fields. Renames, removals, or
 semantic changes to existing fields bump `breaking` and reset `compatible` to 0.
 
+Exception: a change that only touches annotations (`description`, `title`, `examples`, or a `default` that records
+existing behavior) does not bump. In Rust that means editing `///` doc comments on schema types. Regenerate the schema
+and commit it, but leave `SUPPORTED_SCHEMA`, `$id` and the example `version`s alone.
+
+Every property and every enum value needs a description: a `///` comment on the field or variant, or in
+`schema/playout.json` a `description` (for a plain `enum`, one on the enum that covers its values).
+`crates/ersatztv-core/tests/schema_descriptions.rs` fails otherwise. The docs site generates its reference from these
+descriptions, so write them for users.
+
 Differences between the contracts:
 
 - Playout files must carry `version`. Channel and lineup configs may omit it: a missing version reads as 0.0.0, so

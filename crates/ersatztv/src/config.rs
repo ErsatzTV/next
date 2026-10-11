@@ -16,50 +16,72 @@ pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/lineup/version/", SUPPORTED_SCHEMA);
 
+/// Server settings: where to listen, where to write HLS output, and which channels to serve.
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct LineupConfig {
     /// Schema version URI, e.g. "https://ersatztv.org/lineup/version/0.0.1"; missing is 0.0.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub version: Option<String>,
+    /// HTTP server settings.
     #[serde(default = "server_config_default")]
     pub server: ServerConfig,
+    /// Where channels write their HLS output.
     pub output: OutputConfig,
+    /// Where to find guide data for `/xmltv.xml`. Unset serves channels without programmes.
     pub xmltv: Option<XmltvConfig>,
+    /// The channels to serve, in playlist order.
     pub channels: Vec<ChannelConfig>,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ServerConfig {
+    /// IP address to listen on. `0.0.0.0` listens on all IPv4 interfaces.
     #[serde(default = "bind_address_default")]
     pub bind_address: String,
+    /// TCP port to listen on.
     #[serde(default = "port_default")]
     pub port: u16,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct OutputConfig {
+    /// Folder for HLS output. Each channel writes to a subfolder named after its `number`.
+    /// A relative path is relative to the lineup file.
     pub folder: String,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct XmltvConfig {
+    /// Folder of per-channel guide files named `{tvg_id}.xml`. Their `programme` elements are
+    /// copied into `/xmltv.xml`; a missing file is skipped. A relative path is relative to the
+    /// lineup file.
     pub folder: String,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema)]
 pub struct ChannelConfig {
+    /// Channel number, e.g. `1` or `2.1`. Used in URLs (`/channel/{number}.m3u8`) and as the
+    /// name of the channel's output subfolder, so it must be unique.
     pub number: String,
+    /// Channel name shown in the M3U playlist and XMLTV guide.
     pub name: String,
-    /// Base configuration path
+    /// Path to the channel's `channel.json`. A relative path is relative to the lineup file.
     pub config: String,
-    /// Optional configuration overlay paths; values will be merged with base config, nulls will remove keys from base config
+    /// Paths to channel config overlays, merged over `config` in order. An overlay value replaces
+    /// the base value, and `null` removes the key. Each overlay must carry its own `version`.
+    /// A relative path is relative to the lineup file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overlays: Vec<String>,
+    /// Guide ID that links the playlist entry to its XMLTV channel and names its guide file.
+    /// Unset is `ersatztv.{number}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tvg_id: Option<String>,
+    /// Logo URL, sent as `tvg-logo` in the playlist and `icon` in the guide.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
+    /// Channel group in the M3U playlist (`/channels.m3u`), sent as `group-title`. Not used in
+    /// the XMLTV guide.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
 }
