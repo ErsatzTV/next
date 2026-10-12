@@ -43,16 +43,13 @@ impl Drop for LocalProxyServer {
 
 impl LocalProxyServer {
     pub async fn start() -> Result<Self, ChannelError> {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .io_context_named("bind the local script proxy to", "127.0.0.1:0")?;
-        let port = listener
-            .local_addr()
-            .io_context_named(
-                "read the local address of the script proxy bound to",
-                "127.0.0.1:0",
-            )?
-            .port();
+        let (listener, port) = async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let port = listener.local_addr()?.port();
+            Ok((listener, port))
+        }
+        .await
+        .io_context_named("start the local script proxy on", "127.0.0.1:0")?;
         let state = ServerState {
             registry: Default::default(),
         };

@@ -272,19 +272,13 @@ impl PlaylistManager {
                 }
 
                 let path = self.output_folder.join(&removed.path);
-                tokio::fs::remove_file(&path)
-                    .await
-                    .io_context("delete the trimmed segment", &path)?;
+                remove_trimmed(&path, "delete the trimmed segment").await?;
 
                 let vtt_path = self.output_folder.join(format!(
                     "{}.vtt",
                     removed.path.strip_suffix(".ts").unwrap_or(&removed.path)
                 ));
-                if vtt_path.exists() {
-                    tokio::fs::remove_file(&vtt_path)
-                        .await
-                        .io_context("delete the trimmed subtitle segment", &vtt_path)?;
-                }
+                remove_trimmed(&vtt_path, "delete the trimmed subtitle segment").await?;
             }
         }
 
@@ -463,6 +457,16 @@ impl PlaylistManager {
         }
 
         Ok(result)
+    }
+}
+
+async fn remove_trimmed(path: &Path, operation: &'static str) -> Result<(), ChannelError> {
+    match tokio::fs::remove_file(path).await {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!("trimmed segment {} was already gone", path.display());
+            Ok(())
+        }
+        result => result.io_context(operation, path),
     }
 }
 
@@ -762,16 +766,25 @@ mod tests {
         );
     }
 
-    /// The incident's signature: a trimmed segment whose file is already gone
-    /// aborts `update`, fails the item, and airs black. The line has to name
-    /// the segment, or the only way to reach it is to read this module.
     #[tokio::test]
-    async fn trimming_a_segment_whose_file_is_gone_names_the_segment() {
+    async fn trimming_a_segment_whose_file_is_gone_succeeds() {
         let folder = tempfile::tempdir().unwrap();
         let mut manager = playlist_manager(folder.path(), OffsetDateTime::UNIX_EPOCH);
+        manager.segments.push_back(segment("live000042.ts", 0));
 
-        // one held segment, aged past the retention window, with no file on
-        // disk behind it
+        manager.update().await.unwrap();
+
+        assert!(manager.segments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn trimming_a_segment_that_cannot_be_deleted_names_the_segment() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut manager = playlist_manager(folder.path(), OffsetDateTime::UNIX_EPOCH);
+        // remove_file fails on a directory on every platform, and never with NotFound
+        tokio::fs::create_dir(folder.path().join("live000042.ts"))
+            .await
+            .unwrap();
         manager.segments.push_back(segment("live000042.ts", 0));
 
         let message = manager.update().await.unwrap_err().to_string();
