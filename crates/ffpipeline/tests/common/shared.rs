@@ -403,6 +403,25 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Sources larger than the output must still scale before the crop.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn crop(
+            #[values(
+                "1080p_h264.ts",
+                "720p_h264.ts",
+                "480p_h264.ts",
+                "480p_h264_anamorphic.ts"
+            )]
+            src: &'static str,
+            #[values("1280x720", "640x480")] res: ::ffpipeline::frame_size::FrameSize,
+            #[values(("h264", 8), ("hevc", 10))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run($accel().await, $crate::common::shared::crop(src, res, vf))
+                .await;
+        }
+
         /// A 1080p source has a coded height of 1088, so 1920x1080 output catches overlays
         /// that blend into the padded surface and leak it to the encoder, e.g. overlay_cuda
         /// (trac #11674), via the height assertion in `assert_video`.
@@ -822,6 +841,12 @@ pub fn deinterlace(
 ) -> TestCase {
     let mut test_case = transcode(src, res, vf, af);
     test_case.params.deinterlace = deinterlace;
+    test_case
+}
+
+pub fn crop(src: &'static str, res: FrameSize, vf: (&str, u8)) -> TestCase {
+    let mut test_case = transcode(src, res, vf, AudioFormat::Aac);
+    test_case.params.scaling_mode = ScalingMode::Crop;
     test_case
 }
 

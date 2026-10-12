@@ -202,19 +202,15 @@ impl VideoFilterOp for ScaleFilter {
             return None;
         }
 
-        // no need to scale "cropped" content that is already large enough
-        if self.scaling_mode == ScalingMode::Crop
-            && state.size.height >= target.height
-            && state.size.width >= target.width
-        {
-            return None;
-        }
-
         let size = match self.scaling_mode {
             ScalingMode::ScaleAndPad => target.square_pixel_size_contain(state),
             ScalingMode::Stretch => target,
             ScalingMode::Crop => target.square_pixel_size_cover(state),
         };
+
+        if self.scaling_mode == ScalingMode::Crop && size == state.size && !state.is_anamorphic {
+            return None;
+        }
 
         Some(
             ScaleFilter {
@@ -1045,6 +1041,124 @@ mod tests {
         assert!(
             evaluated.as_arg().unwrap().contains("flags=spline,"),
             "{evaluated:?}"
+        );
+    }
+
+    fn crop_state(width: u32, height: u32, sar: Option<&str>) -> FrameState {
+        FrameState {
+            size: FrameSize { width, height },
+            is_anamorphic: sar.is_some(),
+            is_interlaced: false,
+            sample_aspect_ratio: sar.map(str::to_owned),
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+        }
+    }
+
+    fn crop_args(state: &FrameState, target: FrameSize) -> (Option<String>, Option<String>) {
+        let ffmpeg_info = FfmpegInfo::default();
+        let mut state = state.clone();
+
+        let scale = ScaleFilter {
+            size: Some(target),
+            scaling_mode: ScalingMode::Crop,
+            input_is_anamorphic: state.is_anamorphic,
+            flags: None,
+        }
+        .evaluate(&state, &ffmpeg_info);
+        if let Some(scale) = &scale {
+            scale.apply_to(&mut state);
+        }
+
+        let crop = CropFilter {
+            size: Some(target),
+            scaling_mode: ScalingMode::Crop,
+        }
+        .evaluate(&state, &ffmpeg_info);
+
+        (
+            scale.and_then(|f| f.as_arg()),
+            crop.and_then(|f| f.as_arg()),
+        )
+    }
+
+    const HD: FrameSize = FrameSize {
+        width: 1920,
+        height: 1080,
+    };
+
+    #[test]
+    fn crop_downscales_same_aspect_source() {
+        assert_eq!(
+            crop_args(&crop_state(3840, 2160, None), HD),
+            (
+                Some(String::from("scale=1920:1080:flags=bicubic,setsar=1")),
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn crop_downscales_wide_source_to_cover() {
+        assert_eq!(
+            crop_args(&crop_state(3840, 1600, None), HD),
+            (
+                Some(String::from("scale=2592:1080:flags=bicubic,setsar=1")),
+                Some(String::from("crop=1920:1080"))
+            )
+        );
+    }
+
+    #[test]
+    fn crop_skips_scale_when_source_already_covers() {
+        assert_eq!(
+            crop_args(&crop_state(2560, 1080, None), HD),
+            (None, Some(String::from("crop=1920:1080")))
+        );
+    }
+
+    #[test]
+    fn crop_upscales_small_source_to_cover() {
+        assert_eq!(
+            crop_args(&crop_state(1920, 800, None), HD),
+            (
+                Some(String::from("scale=2592:1080:flags=bicubic,setsar=1")),
+                Some(String::from("crop=1920:1080"))
+            )
+        );
+    }
+
+    #[test]
+    fn crop_squares_large_anamorphic_source() {
+        let target = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+        assert_eq!(
+            crop_args(&crop_state(1440, 1080, Some("4:3")), target),
+            (
+                Some(String::from("scale=1280:720:flags=bicubic,setsar=1")),
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn crop_squares_anamorphic_source_before_cropping() {
+        let target = FrameSize {
+            width: 640,
+            height: 480,
+        };
+        assert_eq!(
+            crop_args(&crop_state(720, 480, Some("32:27")), target),
+            (
+                Some(String::from("scale=852:480:flags=bicubic,setsar=1")),
+                Some(String::from("crop=640:480"))
+            )
         );
     }
 
