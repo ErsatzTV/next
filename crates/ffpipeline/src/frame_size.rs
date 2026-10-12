@@ -159,6 +159,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: Some(rotation),
+            decoder_frames: false,
         };
         state.apply_rotation();
         assert_eq!(
@@ -208,6 +209,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let target = FrameSize {
@@ -234,6 +236,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let target = FrameSize {
@@ -270,6 +273,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let target = FrameSize {
@@ -304,6 +308,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let target = FrameSize {
@@ -354,6 +359,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let target = FrameSize {
@@ -386,6 +392,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let target = FrameSize {

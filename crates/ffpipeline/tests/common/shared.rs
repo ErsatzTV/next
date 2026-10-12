@@ -422,6 +422,18 @@ macro_rules! shared_tests {
                 .await;
         }
 
+        /// Correcting SAR without resizing must not leave legacy QSV encoders reading
+        /// decoder surfaces: vpp_qsv passes through when dimensions and format match.
+        #[::tokio::test]
+        #[ignore]
+        async fn stretch_anamorphic_same_size() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::stretch_anamorphic_same_size(),
+            )
+            .await;
+        }
+
         /// A 1080p source has a coded height of 1088, so 1920x1080 output catches overlays
         /// that blend into the padded surface and leak it to the encoder, e.g. overlay_cuda
         /// (trac #11674), via the height assertion in `assert_video`.
@@ -847,6 +859,20 @@ pub fn deinterlace(
 pub fn crop(src: &'static str, res: FrameSize, vf: (&str, u8)) -> TestCase {
     let mut test_case = transcode(src, res, vf, AudioFormat::Aac);
     test_case.params.scaling_mode = ScalingMode::Crop;
+    test_case
+}
+
+pub fn stretch_anamorphic_same_size() -> TestCase {
+    let mut test_case = transcode(
+        "480p_h264_anamorphic.ts",
+        FrameSize {
+            width: 720,
+            height: 480,
+        },
+        ("h264", 8),
+        AudioFormat::Aac,
+    );
+    test_case.params.scaling_mode = ScalingMode::Stretch;
     test_case
 }
 

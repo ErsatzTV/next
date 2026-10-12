@@ -32,6 +32,10 @@ pub trait VideoFilterOp {
     fn apply_to(&self, state: &mut FrameState);
     fn required_surface(&self) -> Option<FrameSurface>;
     fn as_arg(&self) -> Option<String>;
+    /// Whether the filter (including hardware replacements) may preserve input surfaces.
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +84,7 @@ pub enum VideoFilter {
     ScaleRkrga(accel::rkmpp::ScaleRkrga),
     // QSV hardware filters
     VppQsv(accel::qsv::VppQsv),
+    CopyQsv(accel::qsv::CopyQsv),
     // Vulkan hardware filters
     ScaleVulkan(accel::vulkan::ScaleVulkan),
     FormatVulkan(accel::vulkan::FormatVulkan),
@@ -196,6 +201,11 @@ pub struct ScaleFilter {
 }
 
 impl VideoFilterOp for ScaleFilter {
+    fn passes_frames_through(&self, state: &FrameState) -> bool {
+        // A SAR-only correction becomes a passthrough vpp_qsv followed by setsar.
+        self.size.is_none_or(|size| size == state.size)
+    }
+
     fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         let target = self.size?;
         if state.size == target && !state.is_anamorphic {
@@ -347,6 +357,10 @@ impl VideoFilterOp for FpsFilter {
         self.frame_rate
             .as_ref()
             .map(|frame_rate| format!("fps={}", frame_rate.r_frame_rate))
+    }
+
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        true
     }
 }
 
@@ -941,6 +955,11 @@ impl VideoFilterOp for Dv5WorkaroundFilter {
     fn as_arg(&self) -> Option<String> {
         FrameColor::hdr10().to_setparams()
     }
+
+    // setparams changes only metadata
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1034,6 +1053,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
         let evaluated = scale_filter(Some("spline"))
             .evaluate(&state, &FfmpegInfo::default())
@@ -1056,6 +1076,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         }
     }
 
@@ -1237,6 +1258,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
+            decoder_frames: false,
         };
 
         let filter: VideoFilter = HwMapFilter {

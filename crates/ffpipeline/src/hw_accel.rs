@@ -66,6 +66,9 @@ pub trait HwAccel {
     fn metadata_bsf(&self, _codec: &VideoCodec) -> Option<MetadataBsf> {
         None
     }
+    fn encoder_filters(&self, _codec: &VideoCodec) -> Vec<VideoFilter> {
+        Vec::new()
+    }
     fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
