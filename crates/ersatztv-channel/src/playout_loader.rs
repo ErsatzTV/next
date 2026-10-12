@@ -1,5 +1,5 @@
 use ersatztv_channel::config::ChannelConfig;
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_playout::playout::{PlayoutItem, PlayoutLoadResult, parse_playout_filename};
 use time::OffsetDateTime;
 
@@ -59,28 +59,25 @@ impl PlayoutLoader {
     }
 
     async fn playout_file_for_time(&self, now: &OffsetDateTime) -> Result<String, ChannelError> {
-        let folder_error = |e: std::io::Error| {
-            ChannelError::ChannelConfigFailure(format!(
-                "{}: {:?}",
-                e,
-                self.channel_config.expanded_playout_folder()
-            ))
-        };
-
         // resolve the link once; it can be swapped before the file is read
         let folder = tokio::fs::canonicalize(self.channel_config.expanded_playout_folder())
             .await
-            .map_err(folder_error)?;
-        let mut entries = tokio::fs::read_dir(&folder).await.map_err(folder_error)?;
+            .io_context(
+                "resolve the playout folder",
+                self.channel_config.expanded_playout_folder(),
+            )?;
+        let mut entries = tokio::fs::read_dir(&folder)
+            .await
+            .io_context("scan the playout folder", &folder)?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path =
-                entry.path().into_os_string().into_string().map_err(|_| {
-                    ChannelError::ChannelConfigFailure(String::from("os string error"))
+                entry.path().into_os_string().into_string().map_err(|p| {
+                    ChannelError::PlayoutPathNotUtf8(p.to_string_lossy().into_owned())
                 })?;
 
             if let Some(file_name_os) = entry.path().file_stem() {
-                let file_name = file_name_os.to_os_string().into_string().map_err(|_| {
-                    ChannelError::ChannelConfigFailure(String::from("os string error"))
+                let file_name = file_name_os.to_os_string().into_string().map_err(|p| {
+                    ChannelError::PlayoutPathNotUtf8(p.to_string_lossy().into_owned())
                 })?;
 
                 if let Some((start, finish)) = parse_playout_filename(file_name.as_str())
@@ -235,6 +232,53 @@ mod tests {
                 .has_remaining(&(t0 + Duration::seconds(30)))
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_playout_folder_is_not_reported_as_a_config_failure() {
+        let folder = tempfile::tempdir().unwrap();
+        let config_path = folder.path().join("channel.json");
+        let config = json!({
+            "version": ersatztv_channel::config::SCHEMA.uri(),
+            "playout": { "folder": "no-such-playout-folder" },
+            "ffmpeg": {},
+            "normalization": {
+                "audio": { "format": "aac" },
+                "video": { "format": "h264", "bit_depth": 8 }
+            }
+        });
+        tokio::fs::write(&config_path, serde_json::to_vec(&config).unwrap())
+            .await
+            .unwrap();
+
+        let channel_config =
+            ChannelConfig::from_sources(&[config_path], &folder.path().join("out"), "5")
+                .await
+                .unwrap();
+        let expected = channel_config
+            .expanded_playout_folder()
+            .display()
+            .to_string();
+        let loader = PlayoutLoader::new(&channel_config);
+
+        let message = loader
+            .get_current_item(&OffsetDateTime::UNIX_EPOCH)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            message.contains("resolve the playout folder"),
+            "message does not name the operation: {message}"
+        );
+        assert!(
+            message.contains(&expected),
+            "message does not name the folder: {message}"
+        );
+        assert!(
+            !message.contains("channel config"),
+            "message blames the channel config: {message}"
         );
     }
 }
