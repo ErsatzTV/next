@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix CUDA streams failing with a watermark in `yuva420p` (e.g. lossy WebP with transparency) and opacity below 100%
 - Fix CUDA streams with a watermark failing when encoding with software (e.g. `mpeg2video`)
 - Fix VideoToolbox `h264` streams failing on content with embedded (A53) closed captions
+- Fix VAAPI `hevc` streams hanging on content with embedded (A53) closed captions with Mesa before 26.2.3
+  - Captions are left out of `hevc` output on those Mesa versions; update Mesa to keep them
 - Reject `normalization.video.filters` options that contain filter graph syntax when the channel config loads, instead of failing every item
 - Fix `crop` scaling mode cropping a zoomed-in window from content that is at least as large as the output (e.g. 4K on a 1080p channel) instead of scaling it to cover the output first
   - Anamorphic content is also converted to square pixels before the crop

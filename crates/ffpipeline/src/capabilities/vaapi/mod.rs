@@ -156,6 +156,21 @@ impl VaapiCapabilities {
         self.vendor.starts_with("Intel iHD driver")
     }
 
+    /// Mesa before 26.2.3 loops forever parsing an HEVC A53 CC SEI (mesa#16267).
+    pub fn hevc_a53cc_hangs(&self) -> bool {
+        self.mesa_version().is_some_and(|v| v < (26, 2, 3))
+    }
+
+    fn mesa_version(&self) -> Option<(u32, u32, u32)> {
+        let version = self
+            .vendor
+            .strip_prefix("Mesa Gallium driver ")?
+            .split([' ', '-'])
+            .next()?;
+        let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+        Some((parts.next()??, parts.next()??, parts.next()??))
+    }
+
     /// Returns Some(Cqp) when the only available RC mode is CQP and we must force it.
     /// Returns None when VBR/CBR is available (driver default is fine) or nothing is known.
     pub fn rate_control_mode_for(
