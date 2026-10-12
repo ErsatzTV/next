@@ -158,6 +158,16 @@ impl HwAccel for Qsv {
         }
     }
 
+    fn encoder_filters(&self, codec: &VideoCodec) -> Vec<VideoFilter> {
+        if codec.preferred_surface == FrameSurface::Qsv
+            && self.capabilities.requires_vpp_before_encode()
+        {
+            vec![CopyQsv.into()]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
         if pixel_format.has_alpha() {
             None
@@ -431,6 +441,29 @@ impl VideoFilterOp for VppQsv {
     }
 }
 
+/// Not vpp_qsv: it skips frames that need no change.
+#[derive(Debug, Clone)]
+pub struct CopyQsv;
+
+impl VideoFilterOp for CopyQsv {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        state.decoder_frames.then(|| self.clone().into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.surface = FrameSurface::Qsv;
+        state.decoder_frames = false;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Qsv)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("scale_qsv"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -509,6 +542,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         }
     }
 

@@ -171,6 +171,12 @@ impl QsvCapabilities {
         self.runtime_api.is_none_or(|api| api < (2, 9))
     }
 
+    /// Legacy encoders read decoder surfaces as zeros (green). VPP output is fine.
+    /// Seen on Haswell, api 1.20, d3d11.
+    pub fn requires_vpp_before_encode(&self) -> bool {
+        self.runtime_api.is_none_or(|(major, _)| major < 2)
+    }
+
     pub fn vpp_filters(&self) -> Vec<String> {
         let mut filters: Vec<String> = self.vpp_filters.iter().map(QsvFourCC::name).collect();
         filters.sort();

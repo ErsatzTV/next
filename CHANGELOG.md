@@ -41,6 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - e.g. `failed to scan the segment folder .../5: No such file or directory`
   - A missing playout folder is no longer reported as a channel config problem
 - No longer fail to black when an old segment that `ersatztv-channel` was trimming was already deleted from disk
+- Fix green output with legacy Intel QSV encoders
 
 ## [0.2.0] - 2026-10-07
 ### Breaking

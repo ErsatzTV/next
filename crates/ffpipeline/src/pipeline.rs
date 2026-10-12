@@ -273,6 +273,7 @@ pub struct FrameState {
     pub(crate) color: FrameColor,
     pub(crate) hdr_format: HdrFormat,
     pub(crate) rotation: Option<i32>,
+    pub(crate) decoder_frames: bool,
 }
 
 impl FrameState {
@@ -527,6 +528,7 @@ impl Pipeline {
             color: FrameColor::from(&video_stream.color_params),
             hdr_format: hdr,
             rotation: video_stream.rotation,
+            decoder_frames: video_decoder.output_surface() != FrameSurface::System,
         };
 
         // copy can't change the rate; only items already at the target are copied
@@ -696,6 +698,7 @@ impl Pipeline {
                     color: FrameColor::from(&subtitle_stream.color_params),
                     hdr_format: HdrFormat::None,
                     rotation: None,
+                    decoder_frames: false,
                 };
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
@@ -843,6 +846,7 @@ impl Pipeline {
                 color: FrameColor::from(&graphics_stream.color_params),
                 hdr_format: HdrFormat::None,
                 rotation: None,
+                decoder_frames: false,
             };
 
             let video_size = video_transcode.size.as_ref().unwrap_or(&initial_state.size);
@@ -1000,6 +1004,17 @@ impl Pipeline {
                     value: format!("file={file}:level=32"),
                 }]
             }
+        }
+
+        if let VideoEncoder::Encode(codec) = &video_encoder
+            && let Some(accel) = &final_output_settings.accel
+        {
+            filters.extend(
+                accel
+                    .encoder_filters(codec)
+                    .into_iter()
+                    .map(PipelineFilter::Video),
+            );
         }
 
         let input_request_context = FfmpegInputRequestContext {
@@ -2579,5 +2594,82 @@ mod tests {
             filter_complex(&args).contains("loop=900:1,fade="),
             "{args:?}"
         );
+    }
+
+    fn qsv_h264_args(runtime_api: (u16, u16), size: FrameSize) -> ArgVec {
+        qsv_h264_args_with_geometry(runtime_api, size, ScalingMode::ScaleAndPad, None)
+    }
+
+    fn qsv_h264_args_with_geometry(
+        runtime_api: (u16, u16),
+        size: FrameSize,
+        scaling_mode: ScalingMode,
+        sample_aspect_ratio: Option<&str>,
+    ) -> ArgVec {
+        let mut accel = qsv_with_runtime(runtime_api);
+        if let HardwareAccel::Qsv(qsv) = &mut accel {
+            qsv.capabilities.supported_decoders = [(VideoFormat::H264, vec![8])].into();
+            qsv.capabilities.supported_encoders = [(VideoFormat::H264, vec![8])].into();
+        }
+        let mut output = stereo_output();
+        output.video.transcode.size = Some(size);
+        output.video.transcode.scaling_mode = scaling_mode;
+        output.accel = Some(accel);
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::Qsv.to_string()].into(),
+            video_filters: [crate::ffmpeg_info::KnownVideoFilter::VppQsv.to_string()].into(),
+            ..FfmpegInfo::default()
+        };
+        let mut input = multichannel_ac3_input("main.mkv");
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut input.video_input.probe_result.streams[0]
+        {
+            video.sample_aspect_ratio = sample_aspect_ratio.map(str::to_owned);
+        }
+        let mut pipeline = Pipeline::full(&ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        pipeline.args()
+    }
+
+    #[test]
+    fn legacy_qsv_copies_decoder_surfaces_before_encode() {
+        let source_size = FrameSize {
+            width: 720,
+            height: 480,
+        };
+
+        let filter = filter_complex(&qsv_h264_args((1, 20), source_size));
+        assert!(filter.contains("scale_qsv"), "{filter}");
+
+        let filter = filter_complex(&qsv_h264_args((2, 9), source_size));
+        assert!(!filter.contains("scale_qsv"), "{filter}");
+    }
+
+    #[test]
+    fn legacy_qsv_copies_decoder_surfaces_after_anamorphic_stretch_without_resize() {
+        let filter = filter_complex(&qsv_h264_args_with_geometry(
+            (1, 20),
+            FrameSize {
+                width: 720,
+                height: 480,
+            },
+            ScalingMode::Stretch,
+            Some("32:27"),
+        ));
+        // A same-size vpp_qsv plus setsar only changes metadata, not the surfaces.
+        assert!(filter.contains("scale_qsv"), "{filter}");
+    }
+
+    #[test]
+    fn legacy_qsv_skips_copy_after_vpp() {
+        let filter = filter_complex(&qsv_h264_args(
+            (1, 20),
+            FrameSize {
+                width: 1280,
+                height: 720,
+            },
+        ));
+        assert!(filter.contains("vpp_qsv="), "{filter}");
+        assert!(!filter.contains("scale_qsv"), "{filter}");
     }
 }

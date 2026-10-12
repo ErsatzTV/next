@@ -161,6 +161,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     // copied video keeps the source HDR, so skip the SDR check
     let source_is_hdr =
         !video_copied && (source_video.color_params.is_hdr() || source_video.dv_profile == Some(5));
+    let frame_rate_normalized = test_case.params.frame_rate.is_some();
     // without frame rate normalization, output must keep the source frame rate
     let expected_frame_rate = test_case
         .params
@@ -249,11 +250,20 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    // reference is only the scaled source. without bars, nothing else catches green output.
+    let plain_picture = scaling_mode == ScalingMode::Crop
+        || (!source_is_hdr
+            && !has_watermark
+            && test_case.subtitle_fixture.is_none()
+            && !source_video.is_quarter_turn()
+            && !(deinterlace && source_video.is_interlaced())
+            && in_point.is_zero()
+            && !frame_rate_normalized);
     if !video_copied
-        && scaling_mode == ScalingMode::Crop
+        && plain_picture
         && let Some(size) = video_size
     {
-        assert_matches_cover_crop(&test_env.ffmpeg, &segment, &source, size).await;
+        assert_matches_source(&test_env.ffmpeg, &segment, &source, size, scaling_mode).await;
     }
     if !video_copied
         && scaling_mode == ScalingMode::ScaleAndPad
@@ -730,9 +740,29 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
     );
 }
 
-/// A crop without the scale, or with non-square pixels, scores about 0.7.
-pub async fn assert_matches_cover_crop(ffmpeg: &Path, path: &Path, source: &Path, size: FrameSize) {
+/// Wrong scale or non-square pixels score about 0.7. Green output scores 0.
+pub async fn assert_matches_source(
+    ffmpeg: &Path,
+    path: &Path,
+    source: &Path,
+    size: FrameSize,
+    scaling_mode: ScalingMode,
+) {
     let (w, h) = (size.width, size.height);
+    let (fit, description) = match scaling_mode {
+        ScalingMode::Crop => (
+            format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+            "a cover-and-crop",
+        ),
+        ScalingMode::ScaleAndPad => (
+            format!(
+                "scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
+                 pad={w}:{h}:-1:-1:black"
+            ),
+            "a scale-and-pad",
+        ),
+        ScalingMode::Stretch => (format!("scale={w}:{h}"), "a stretch"),
+    };
     let output = tokio::time::timeout(
         Duration::from_secs(30),
         ersatztv_core::process::command(ffmpeg)
@@ -743,8 +773,7 @@ pub async fn assert_matches_cover_crop(ffmpeg: &Path, path: &Path, source: &Path
             .arg("-filter_complex")
             .arg(format!(
                 "[0:v]setsar=1,format=yuv420p,setpts=PTS-STARTPTS[out];\
-                 [1:v]scale=iw*sar:ih,setsar=1,\
-                 scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},\
+                 [1:v]scale=iw*sar:ih,setsar=1,{fit},\
                  format=yuv420p,setpts=PTS-STARTPTS[ref];\
                  [out][ref]ssim=shortest=1"
             ))
@@ -763,7 +792,7 @@ pub async fn assert_matches_cover_crop(ffmpeg: &Path, path: &Path, source: &Path
         .unwrap_or_else(|| panic!("no ssim in output:\n{stderr}"));
     assert!(
         ssim > 0.9,
-        "cropped output does not match a cover-and-crop of the source: ssim {ssim:.3}"
+        "output does not match {description} of the source: ssim {ssim:.3}"
     );
 }
 
