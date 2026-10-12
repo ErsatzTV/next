@@ -153,19 +153,12 @@ impl PlaylistManager {
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
             let (generated_playlist, _) = self.generate_playlist(|s| s.to_owned(), None)?;
-            let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
-                "create a temp file for the ffmpeg playlist",
+            write_atomic(
+                &self.output_folder,
                 &self.ffmpeg_playlist_file,
-            )?;
-            tokio::fs::write(temp.path(), generated_playlist)
-                .await
-                .io_context(
-                    "write the ffmpeg playlist body for",
-                    &self.ffmpeg_playlist_file,
-                )?;
-            tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file)
-                .await
-                .io_context("publish the ffmpeg playlist", &self.ffmpeg_playlist_file)?;
+                generated_playlist,
+            )
+            .await?;
         }
 
         Ok(())
@@ -257,30 +250,14 @@ impl PlaylistManager {
                     duration,
                     mpegts_90khz,
                 );
-                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)
-                    .io_context("create a temp file for the subtitle segment", &vtt_full)?;
-                tokio::fs::write(temp.path(), body)
-                    .await
-                    .io_context("write the subtitle segment body for", &vtt_full)?;
-                tokio::fs::rename(temp.path(), &vtt_full)
-                    .await
-                    .io_context("publish the subtitle segment", &vtt_full)?;
+                write_atomic(&self.output_folder, &vtt_full, body).await?;
                 src.next_segment_source_offset += Duration::from_secs_f64(duration);
             } else {
                 let body = format!(
                     "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
                     mpegts_90khz
                 );
-                let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
-                    "create a temp file for the empty subtitle segment",
-                    &vtt_full,
-                )?;
-                tokio::fs::write(temp.path(), body)
-                    .await
-                    .io_context("write the empty subtitle segment body for", &vtt_full)?;
-                tokio::fs::rename(temp.path(), &vtt_full)
-                    .await
-                    .io_context("publish the empty subtitle segment", &vtt_full)?;
+                write_atomic(&self.output_folder, &vtt_full, body).await?;
             }
         }
 
@@ -367,36 +344,19 @@ impl PlaylistManager {
             generated_subtitle_playlist.push_str("#EXT-X-ENDLIST\n");
         }
 
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
-            "create a temp file for the served playlist",
+        write_atomic(
+            &self.output_folder,
             &self.generated_playlist_file,
-        )?;
-        tokio::fs::write(temp.path(), generated_playlist)
-            .await
-            .io_context(
-                "write the served playlist body for",
-                &self.generated_playlist_file,
-            )?;
-        tokio::fs::rename(temp.path(), &self.generated_playlist_file)
-            .await
-            .io_context("publish the served playlist", &self.generated_playlist_file)?;
+            generated_playlist,
+        )
+        .await?;
 
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder).io_context(
-            "create a temp file for the subtitle playlist",
+        write_atomic(
+            &self.output_folder,
             &self.generated_subtitle_playlist_file,
-        )?;
-        tokio::fs::write(temp.path(), generated_subtitle_playlist)
-            .await
-            .io_context(
-                "write the subtitle playlist body for",
-                &self.generated_subtitle_playlist_file,
-            )?;
-        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file)
-            .await
-            .io_context(
-                "publish the subtitle playlist",
-                &self.generated_subtitle_playlist_file,
-            )?;
+            generated_subtitle_playlist,
+        )
+        .await?;
 
         Ok(playlist_segment_count)
     }
@@ -504,6 +464,22 @@ impl PlaylistManager {
 
         Ok(result)
     }
+}
+
+async fn write_atomic(
+    folder: &Path,
+    dest: impl AsRef<Path>,
+    contents: impl AsRef<[u8]>,
+) -> Result<(), ChannelError> {
+    let dest = dest.as_ref();
+    let temp =
+        tempfile::NamedTempFile::new_in(folder).io_context("create a temp file for", dest)?;
+    tokio::fs::write(temp.path(), contents)
+        .await
+        .io_context("write a temp file for", dest)?;
+    tokio::fs::rename(temp.path(), dest)
+        .await
+        .io_context("rename a temp file onto", dest)
 }
 
 fn render_subtitle_segment(
