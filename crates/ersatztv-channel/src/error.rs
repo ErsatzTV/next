@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ersatztv_core::SchemaVersionError;
 use ersatztv_playout::error::PlayoutError;
 use ffpipeline::error::FFPipelineError;
@@ -15,17 +17,23 @@ pub enum ChannelError {
         error: SchemaVersionError,
     },
 
-    #[error("unable to load channel config (io): {0}")]
-    ChannelConfigIoFailure(#[from] std::io::Error),
+    // no #[from]: a bare io error does not say which file or operation failed
+    #[error("failed to {operation} {subject}: {source}")]
+    Io {
+        operation: &'static str,
+        subject: String,
+        #[source]
+        source: std::io::Error,
+    },
 
-    #[error("failed to expand playout folder")]
-    ChannelConfigExpandPlayoutFolder,
+    #[error("failed to expand output folder {0}")]
+    ChannelConfigExpandOutputFolder(String),
 
-    #[error("failed to expand output folder")]
-    ChannelConfigExpandOutputFolder,
+    #[error("output path for {file} is not valid UTF-8: {path}")]
+    OutputPathNotUtf8 { file: &'static str, path: String },
 
-    #[error("channel config output folder is required")]
-    ChannelConfigOutputFolderRequired,
+    #[error("playout folder contains a non-UTF-8 path: {0}")]
+    PlayoutPathNotUtf8(String),
 
     #[error("channel startup error: {0}")]
     ChannelStartup(String),
@@ -52,7 +60,7 @@ pub enum ChannelError {
     #[error("audio source is required for playout item")]
     PlayoutJsonAudioSourceRequired,
 
-    #[error("vudei source is required for playout item")]
+    #[error("video source is required for playout item")]
     PlayoutJsonVideoSourceRequired,
 
     #[error("{0}")]
@@ -67,8 +75,8 @@ pub enum ChannelError {
         stderr_tail: Vec<String>,
     },
 
-    #[error("failed to scan for last pts")]
-    PtsScannerFailure,
+    #[error("last segment path is not valid UTF-8: {0}")]
+    PtsScannerPathNotUtf8(String),
 
     #[error("channel {0} terminated after idle timeout")]
     IdleTimeout(String),
@@ -109,5 +117,37 @@ fn format_stderr_tail(stderr_tail: &[String]) -> String {
         String::new()
     } else {
         format!("\n\n{}", stderr_tail.join("\n"))
+    }
+}
+
+pub trait IoContext<T> {
+    fn io_context(
+        self,
+        operation: &'static str,
+        subject: impl AsRef<Path>,
+    ) -> Result<T, ChannelError>;
+
+    fn io_context_named(self, operation: &'static str, subject: &str) -> Result<T, ChannelError>;
+}
+
+impl<T> IoContext<T> for std::io::Result<T> {
+    fn io_context(
+        self,
+        operation: &'static str,
+        subject: impl AsRef<Path>,
+    ) -> Result<T, ChannelError> {
+        self.map_err(|source| ChannelError::Io {
+            operation,
+            subject: subject.as_ref().display().to_string(),
+            source,
+        })
+    }
+
+    fn io_context_named(self, operation: &'static str, subject: &str) -> Result<T, ChannelError> {
+        self.map_err(|source| ChannelError::Io {
+            operation,
+            subject: subject.to_owned(),
+            source,
+        })
     }
 }

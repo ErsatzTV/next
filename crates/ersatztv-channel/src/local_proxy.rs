@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::process;
 use futures_core::Stream;
 use tokio::net::TcpListener;
@@ -43,8 +43,13 @@ impl Drop for LocalProxyServer {
 
 impl LocalProxyServer {
     pub async fn start() -> Result<Self, ChannelError> {
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let port = listener.local_addr()?.port();
+        let (listener, port) = async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let port = listener.local_addr()?.port();
+            Ok((listener, port))
+        }
+        .await
+        .io_context_named("start the local script proxy on", "127.0.0.1:0")?;
         let state = ServerState {
             registry: Default::default(),
         };

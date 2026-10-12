@@ -33,6 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `ersatztv-channel` now stops after 90 seconds without a client even when `.heartbeat` was never created, and counts from when the channel became ready
   - Previously a worker spawned directly (not by `ersatztv`) whose client never requested a segment transcoded forever
   - Troubleshooting runs no longer stop on a stale `.heartbeat`
+- Disk errors in `ersatztv-channel` now name what failed and which file, instead of all reading `unable to load channel config (io)`
+  - e.g. `failed to scan the segment folder .../5: No such file or directory`
+  - A missing playout folder is no longer reported as a channel config problem
+- No longer fail to black when an old segment that `ersatztv-channel` was trimming was already deleted from disk
 
 ## [0.2.0] - 2026-10-07
 ### Breaking

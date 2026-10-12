@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ersatztv_channel::error::ChannelError;
+use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
 use ffpipeline::pipeline::PtsOffset;
 use ffpipeline::web_vtt::{Cue, format_vtt_ts};
@@ -153,9 +153,12 @@ impl PlaylistManager {
         // overwrite ffmpeg's playlist with a generated playlist (containing *all* segments)
         if Path::new(&self.generated_playlist_file).exists() {
             let (generated_playlist, _) = self.generate_playlist(|s| s.to_owned(), None)?;
-            let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-            tokio::fs::write(temp.path(), generated_playlist).await?;
-            tokio::fs::rename(temp.path(), &self.ffmpeg_playlist_file).await?;
+            write_atomic(
+                &self.output_folder,
+                &self.ffmpeg_playlist_file,
+                generated_playlist,
+            )
+            .await?;
         }
 
         Ok(())
@@ -169,7 +172,9 @@ impl PlaylistManager {
     pub async fn update(&mut self) -> Result<(), ChannelError> {
         // scan for segments on disk
         let mut new_segment_files: VecDeque<String> = VecDeque::new();
-        let mut entries = tokio::fs::read_dir(&self.output_folder).await?;
+        let mut entries = tokio::fs::read_dir(&self.output_folder)
+            .await
+            .io_context("scan the segment folder", &self.output_folder)?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             if let Some(file_name) = entry.file_name().to_str()
                 && file_name.ends_with(".ts")
@@ -200,7 +205,10 @@ impl PlaylistManager {
 
             // ffmpeg writes an empty segment after seeking past the end of the input
             if duration <= 0.0 {
-                tokio::fs::remove_file(self.output_folder.join(&file)).await?;
+                let path = self.output_folder.join(&file);
+                tokio::fs::remove_file(&path)
+                    .await
+                    .io_context("delete the empty segment", &path)?;
                 continue;
             }
 
@@ -242,18 +250,14 @@ impl PlaylistManager {
                     duration,
                     mpegts_90khz,
                 );
-                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-                tokio::fs::write(temp.path(), body).await?;
-                tokio::fs::rename(temp.path(), &vtt_full).await?;
+                write_atomic(&self.output_folder, &vtt_full, body).await?;
                 src.next_segment_source_offset += Duration::from_secs_f64(duration);
             } else {
                 let body = format!(
                     "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
                     mpegts_90khz
                 );
-                let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-                tokio::fs::write(temp.path(), body).await?;
-                tokio::fs::rename(temp.path(), &vtt_full).await?;
+                write_atomic(&self.output_folder, &vtt_full, body).await?;
             }
         }
 
@@ -268,33 +272,42 @@ impl PlaylistManager {
                 }
 
                 let path = self.output_folder.join(&removed.path);
-                tokio::fs::remove_file(&path).await?;
+                remove_trimmed(&path, "delete the trimmed segment").await?;
 
                 let vtt_path = self.output_folder.join(format!(
                     "{}.vtt",
                     removed.path.strip_suffix(".ts").unwrap_or(&removed.path)
                 ));
-                if vtt_path.exists() {
-                    tokio::fs::remove_file(&vtt_path).await?;
-                }
+                remove_trimmed(&vtt_path, "delete the trimmed subtitle segment").await?;
             }
         }
 
         let playlist_segment_count = self.write_playlists(Some(10), false).await?;
 
         if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
-            tokio::fs::write(&self.ready_file, b"").await?;
+            tokio::fs::write(&self.ready_file, b"")
+                .await
+                .io_context("publish the ready signal", &self.ready_file)?;
             self.ready = true;
             self.ready_at = Some(Instant::now());
         }
 
         let idle = match tokio::fs::metadata(&self.heartbeat_file).await {
-            Ok(metadata) => Some(metadata.modified()?.elapsed().unwrap_or(Duration::MAX)),
+            Ok(metadata) => Some(
+                metadata
+                    .modified()
+                    .io_context(
+                        "read the modified time of the heartbeat file",
+                        &self.heartbeat_file,
+                    )?
+                    .elapsed()
+                    .unwrap_or(Duration::MAX),
+            ),
             // no client ever arrived
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 self.ready_at.map(|t| t.elapsed())
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e).io_context("stat the heartbeat file", &self.heartbeat_file),
         };
         self.timeout = idle.is_some_and(|i| i > HEARTBEAT_FILE_TIMEOUT);
 
@@ -325,13 +338,19 @@ impl PlaylistManager {
             generated_subtitle_playlist.push_str("#EXT-X-ENDLIST\n");
         }
 
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-        tokio::fs::write(temp.path(), generated_playlist).await?;
-        tokio::fs::rename(temp.path(), &self.generated_playlist_file).await?;
+        write_atomic(
+            &self.output_folder,
+            &self.generated_playlist_file,
+            generated_playlist,
+        )
+        .await?;
 
-        let temp = tempfile::NamedTempFile::new_in(&self.output_folder)?;
-        tokio::fs::write(temp.path(), generated_subtitle_playlist).await?;
-        tokio::fs::rename(temp.path(), &self.generated_subtitle_playlist_file).await?;
+        write_atomic(
+            &self.output_folder,
+            &self.generated_subtitle_playlist_file,
+            generated_subtitle_playlist,
+        )
+        .await?;
 
         Ok(playlist_segment_count)
     }
@@ -412,7 +431,9 @@ impl PlaylistManager {
 
         let path = Path::new(&self.ffmpeg_playlist_file);
         if path.exists() {
-            let contents = tokio::fs::read_to_string(&path).await?;
+            let contents = tokio::fs::read_to_string(&path)
+                .await
+                .io_context("read the ffmpeg playlist", path)?;
             let mut lines = contents.lines();
             while let Some(line) = lines.next() {
                 let Some(inf) = line.strip_prefix("#EXTINF:") else {
@@ -437,6 +458,32 @@ impl PlaylistManager {
 
         Ok(result)
     }
+}
+
+async fn remove_trimmed(path: &Path, operation: &'static str) -> Result<(), ChannelError> {
+    match tokio::fs::remove_file(path).await {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!("trimmed segment {} was already gone", path.display());
+            Ok(())
+        }
+        result => result.io_context(operation, path),
+    }
+}
+
+async fn write_atomic(
+    folder: &Path,
+    dest: impl AsRef<Path>,
+    contents: impl AsRef<[u8]>,
+) -> Result<(), ChannelError> {
+    let dest = dest.as_ref();
+    let temp =
+        tempfile::NamedTempFile::new_in(folder).io_context("create a temp file for", dest)?;
+    tokio::fs::write(temp.path(), contents)
+        .await
+        .io_context("write a temp file for", dest)?;
+    tokio::fs::rename(temp.path(), dest)
+        .await
+        .io_context("rename a temp file onto", dest)
 }
 
 fn render_subtitle_segment(
@@ -681,5 +728,73 @@ mod tests {
 
         assert_eq!(pm.last_segment_end, now);
         assert_eq!(pm.current_session_start, now);
+    }
+
+    fn segment(path: &str, start_offset_secs: i64) -> Segment {
+        Segment {
+            path: path.to_owned(),
+            duration: 4.0,
+            program_date_time: OffsetDateTime::UNIX_EPOCH
+                + Duration::from_secs(start_offset_secs as u64),
+        }
+    }
+
+    #[tokio::test]
+    async fn scanning_a_missing_segment_folder_names_the_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        let missing = folder.path().join("gone");
+        let mut manager = playlist_manager(&missing, OffsetDateTime::UNIX_EPOCH);
+
+        let message = manager.update().await.unwrap_err().to_string();
+
+        assert!(
+            message.contains("scan the segment folder"),
+            "message does not name the operation: {message}"
+        );
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "message does not name the folder: {message}"
+        );
+        assert!(
+            !message.contains("channel config"),
+            "message blames the channel config: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn trimming_a_segment_whose_file_is_gone_succeeds() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut manager = playlist_manager(folder.path(), OffsetDateTime::UNIX_EPOCH);
+        manager.segments.push_back(segment("live000042.ts", 0));
+
+        manager.update().await.unwrap();
+
+        assert!(manager.segments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn trimming_a_segment_that_cannot_be_deleted_names_the_segment() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut manager = playlist_manager(folder.path(), OffsetDateTime::UNIX_EPOCH);
+        // remove_file fails on a directory, but not with NotFound
+        tokio::fs::create_dir(folder.path().join("live000042.ts"))
+            .await
+            .unwrap();
+        manager.segments.push_back(segment("live000042.ts", 0));
+
+        let message = manager.update().await.unwrap_err().to_string();
+
+        assert!(
+            message.contains("delete the trimmed segment"),
+            "message does not name the operation: {message}"
+        );
+        assert!(
+            message.contains("live000042.ts"),
+            "message does not name the segment: {message}"
+        );
+        assert!(
+            !message.contains("channel config"),
+            "message blames the channel config: {message}"
+        );
     }
 }
