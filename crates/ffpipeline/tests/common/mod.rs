@@ -146,6 +146,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     let video_format = test_case.params.video_format;
     let bit_depth = test_case.params.bit_depth;
     let video_size = test_case.params.video_size;
+    let scaling_mode = test_case.params.scaling_mode;
     let disabled_filters = std::mem::take(&mut test_case.params.disabled_filters);
     let source_video = probe
         .streams
@@ -248,7 +249,16 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
-    if !video_copied && let Some(size) = video_size {
+    if !video_copied
+        && scaling_mode == ScalingMode::Crop
+        && let Some(size) = video_size
+    {
+        assert_matches_cover_crop(&test_env.ffmpeg, &segment, &source, size).await;
+    }
+    if !video_copied
+        && scaling_mode == ScalingMode::ScaleAndPad
+        && let Some(size) = video_size
+    {
         assert_black_bars(
             &test_env.ffmpeg,
             &segment,
@@ -720,6 +730,43 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
     );
 }
 
+/// A crop without the scale, or with non-square pixels, scores about 0.7.
+pub async fn assert_matches_cover_crop(ffmpeg: &Path, path: &Path, source: &Path, size: FrameSize) {
+    let (w, h) = (size.width, size.height);
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-v", "info", "-i"])
+            .arg(path)
+            .args(["-t", "1", "-i"])
+            .arg(source)
+            .arg("-filter_complex")
+            .arg(format!(
+                "[0:v]setsar=1,format=yuv420p,setpts=PTS-STARTPTS[out];\
+                 [1:v]scale=iw*sar:ih,setsar=1,\
+                 scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},\
+                 format=yuv420p,setpts=PTS-STARTPTS[ref];\
+                 [out][ref]ssim=shortest=1"
+            ))
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("ssim check timed out")
+    .expect("failed to spawn ffmpeg for ssim check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "ssim check failed:\n{stderr}");
+    let ssim = stderr
+        .rsplit_once(" All:")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or_else(|| panic!("no ssim in output:\n{stderr}"));
+    assert!(
+        ssim > 0.9,
+        "cropped output does not match a cover-and-crop of the source: ssim {ssim:.3}"
+    );
+}
+
 /// Checks all channels: zero YUV (green) has dark luma.
 /// Skips the top/left bar with a watermark, which can cover it.
 pub async fn assert_black_bars(
@@ -1015,6 +1062,7 @@ pub struct TestOutputParams {
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
     pub deinterlace: bool,
     pub audio_copy: Option<CopyPolicy<String>>,
     pub audio_format: AudioFormat,
@@ -1040,6 +1088,7 @@ impl Default for TestOutputParams {
             video_bitrate: Some(Kbps(5000)),
             video_buffer: Some(Kbps(10000)),
             video_size: None,
+            scaling_mode: ScalingMode::ScaleAndPad,
             deinterlace: false,
             audio_copy: None,
             audio_format: AudioFormat::Aac,
@@ -1078,7 +1127,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
                 bitrate: params.video_bitrate,
                 buffer: params.video_buffer,
                 size: params.video_size,
-                scaling_mode: ScalingMode::ScaleAndPad,
+                scaling_mode: params.scaling_mode,
                 deinterlace: params.deinterlace,
                 filter_options: params.filter_options,
             },
