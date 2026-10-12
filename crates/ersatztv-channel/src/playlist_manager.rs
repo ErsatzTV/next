@@ -739,11 +739,6 @@ mod tests {
         }
     }
 
-    /// An io failure inside `update` is one of the two ways an item airs
-    /// black, and every one of them used to render as the same sentence about
-    /// loading a channel config. These pin the two facts a log line has to
-    /// carry on its own: what was being done, and to what.
-
     #[tokio::test]
     async fn scanning_a_missing_segment_folder_names_the_folder() {
         let folder = tempfile::tempdir().unwrap();
@@ -781,7 +776,7 @@ mod tests {
     async fn trimming_a_segment_that_cannot_be_deleted_names_the_segment() {
         let folder = tempfile::tempdir().unwrap();
         let mut manager = playlist_manager(folder.path(), OffsetDateTime::UNIX_EPOCH);
-        // remove_file fails on a directory on every platform, and never with NotFound
+        // remove_file fails on a directory, but not with NotFound
         tokio::fs::create_dir(folder.path().join("live000042.ts"))
             .await
             .unwrap();

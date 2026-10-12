@@ -1226,8 +1226,6 @@ mod tests {
         config_error(load(&[base]).await);
     }
 
-    /// `from_sources` merges several files, so an unreadable one has to name
-    /// itself or the operator cannot tell which source is at fault.
     #[tokio::test]
     async fn a_config_file_that_cannot_be_read_is_named() {
         let folder = tempfile::tempdir().unwrap();

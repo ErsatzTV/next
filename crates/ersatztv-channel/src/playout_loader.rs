@@ -235,9 +235,6 @@ mod tests {
         );
     }
 
-    /// A missing playout folder is a storage fault, not a configuration one.
-    /// Reported as a config failure it sends the operator to channel.json,
-    /// which is the wrong file and the expensive half of the diagnosis.
     #[tokio::test]
     async fn a_missing_playout_folder_is_not_reported_as_a_config_failure() {
         let folder = tempfile::tempdir().unwrap();

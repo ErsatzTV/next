@@ -17,14 +17,7 @@ pub enum ChannelError {
         error: SchemaVersionError,
     },
 
-    /// An io failure, named by what was being done and to what.
-    ///
-    /// Deliberately has no `#[from]`: an io error carries neither the
-    /// operation nor the subject, and a bare ENOENT is the same value
-    /// whether a segment was trimmed, a temp file renamed, or a directory
-    /// scanned. Without the conversion a bare `?` on an io result is a
-    /// compile error, so a new call site cannot join an anonymous pool by
-    /// accident.
+    // no #[from]: a bare io error does not say which file or operation failed
     #[error("failed to {operation} {subject}: {source}")]
     Io {
         operation: &'static str,
@@ -127,27 +120,13 @@ fn format_stderr_tail(stderr_tail: &[String]) -> String {
     }
 }
 
-/// Names an io failure at the point the call is made, because neither the
-/// operation nor its subject can be recovered from the error afterwards.
-///
-/// `operation` completes "failed to ...", so it reads as a verb phrase that
-/// ends where the subject begins ("delete the trimmed segment"). It is
-/// `&'static str` so it cannot absorb variable data: it stays a stable grep
-/// key while the subject varies.
-///
-/// Where a value is written through a temp file, the subject is the
-/// DESTINATION, never `temp.path()`. A temp name is random, is unlinked
-/// before anyone reads the log, and identifies nothing; the operation says
-/// which phase failed.
 pub trait IoContext<T> {
-    /// For a subject that is a path.
     fn io_context(
         self,
         operation: &'static str,
         subject: impl AsRef<Path>,
     ) -> Result<T, ChannelError>;
 
-    /// For the few subjects that are not paths (stdin, a socket address).
     fn io_context_named(self, operation: &'static str, subject: &str) -> Result<T, ChannelError>;
 }
 
