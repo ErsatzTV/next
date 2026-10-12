@@ -1,0 +1,92 @@
+name: Problem running next directly
+description: next run on its own, outside of ErsatzTV Legacy
+type: Bug
+labels: ["host:standalone"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when you run next yourself. If your channel is managed by ErsatzTV Legacy, use the ErsatzTV Legacy form instead.
+  - type: checkboxes
+    id: before-posting
+    attributes:
+      label: "This issue respects the following points:"
+      options:
+        - label: This issue is **not** already reported on [GitHub](https://github.com/ErsatzTV/next/issues?q=is%3Aopen+is%3Aissue) _(I've searched it)_.
+          required: true
+        - label: I'm using the latest release of next.
+          required: true
+        - label: This report addresses only a single issue; If you encounter multiple issues, please create separate reports for each one.
+          required: true
+  - type: input
+    id: next-version
+    attributes:
+      label: next version
+      description: Output of `ersatztv --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Docker
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: ffmpeg-version
+    attributes:
+      label: ffmpeg version
+      description: First line of `ffmpeg -version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware-accel
+    attributes:
+      label: Hardware acceleration
+      options:
+        - None (software)
+        - amf
+        - cuda
+        - qsv
+        - rkmpp
+        - vaapi
+        - videotoolbox
+        - vulkan
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happens, and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Channel config and playout
+      description: Attach or paste the channel config and the playout JSON for the affected time. Remove any access tokens or private URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Log output from next covering the problem.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional information

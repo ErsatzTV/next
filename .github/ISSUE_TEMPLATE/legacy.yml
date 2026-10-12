@@ -1,0 +1,99 @@
+name: Streaming problem in ErsatzTV Legacy
+description: A channel using the next streaming engine in ErsatzTV Legacy doesn't play correctly
+type: Bug
+labels: ["host:ersatztv-legacy"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for channels set to the **Next** streaming engine in ErsatzTV Legacy. If you run next on its own, use the standalone form instead.
+  - type: checkboxes
+    id: before-posting
+    attributes:
+      label: "This issue respects the following points:"
+      options:
+        - label: This issue is **not** already reported on [GitHub](https://github.com/ErsatzTV/next/issues?q=is%3Aopen+is%3Aissue) _(I've searched it)_.
+          required: true
+        - label: I'm using an up-to-date version of ErsatzTV (full release or develop release).
+          required: true
+        - label: This report addresses only a single issue; If you encounter multiple issues, please create separate reports for each one.
+          required: true
+  - type: input
+    id: ersatztv-version
+    attributes:
+      label: ErsatzTV version
+      description: Shown below the left menu in ErsatzTV.
+      placeholder: 26.11.2-bd695412-docker-amd64
+    validations:
+      required: true
+  - type: input
+    id: next-version
+    attributes:
+      label: ErsatzTV Next version
+      description: Shown below the left menu in ErsatzTV.
+      placeholder: 0.2.1
+    validations:
+      required: true
+  - type: dropdown
+    id: legacy-engine
+    attributes:
+      label: Does this channel play correctly with the legacy streaming engine?
+      options:
+        - "Yes"
+        - "No"
+        - I didn't try
+    validations:
+      required: true
+  - type: dropdown
+    id: switched-back
+    attributes:
+      label: Did you switch this channel back to the legacy streaming engine because of this problem?
+      options:
+        - "Yes"
+        - "No"
+  - type: input
+    id: client
+    attributes:
+      label: Client
+      description: The app or device you watch with.
+      placeholder: Plex, Jellyfin, Channels DVR, VLC, ...
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happens, and what you expected to happen instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: troubleshooting-sharing
+    attributes:
+      label: How will you share troubleshooting results?
+      description: The troubleshooting zip is required to investigate a problem. If you'd rather not post it publicly, join [Discord](https://discord.ersatztv.org) and send it to the maintainer in a direct message that mentions this issue. Issues without a zip may be closed.
+      options:
+        - Attached below (public)
+        - I will send it privately in a Discord DM
+    validations:
+      required: true
+  - type: textarea
+    id: troubleshooting
+    attributes:
+      label: Troubleshooting results
+      description: |
+        1. Search for the affected content using the search bar.
+        2. Use the overflow/three dots menu on the content and select **Troubleshoot Playback**.
+        3. Make sure **Streaming Engine** is set to **Next**, then select the Playback Settings that trigger the problem.
+        4. Click **Play** to start playback.
+        5. Repeat steps 3 and 4 until the problem is reproduced.
+        6. Click **Download Results** to have ErsatzTV collect relevant troubleshooting logs (FFmpeg log, FFmpeg Profile, Hardware Capabilities, Media Info, etc) and compress them in a zip file.
+        7. Attach the zip to this field, or leave it empty if you chose to send it privately.
+
+        If the problem only happens on the channel (e.g. between items, or with filler or graphics), use **Troubleshoot Channel** on the **Channels** page instead, with the date and time when the problem happens.
+
+        **This issue is public.** The zip includes file paths (which can contain your username and share names) and the names of your media. Do not attach a **media sample** here; one will be requested privately if needed.
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional information
+      description: Anything else that might help, e.g. whether the problem started after an update, or only happens with certain content.
