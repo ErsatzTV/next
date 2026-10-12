@@ -1,0 +1,33 @@
+name: Troubleshooting Zip Label
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-troubleshooting-zip-${{ github.event.issue.number }}
+
+jobs:
+  label:
+    # only issues from the legacy.yml form have this heading
+    if: contains(github.event.issue.body, '### How will you share troubleshooting results?')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add or remove label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.issue.body }}
+          HAS_LABEL: ${{ contains(github.event.issue.labels.*.name, 'awaiting-troubleshooting-zip') }}
+        run: |
+          section=$(printf '%s\n' "$BODY" | awk '/^### Troubleshooting results/{found=1; next} /^### /{found=0} found')
+          if printf '%s\n' "$section" | grep -qiE '\]\(https://github\.com/[^)]+\.zip\)'; then
+            if [ "$HAS_LABEL" = "true" ]; then
+              gh issue edit "$NUMBER" --remove-label awaiting-troubleshooting-zip
+            fi
+          elif [ "$HAS_LABEL" != "true" ]; then
+            gh issue edit "$NUMBER" --add-label awaiting-troubleshooting-zip
+          fi
