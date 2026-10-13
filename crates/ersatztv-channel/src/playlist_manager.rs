@@ -16,6 +16,15 @@ const MIN_SEGMENTS: usize = 4;
 const PUBLISH_LEAD: Duration =
     Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64 * 3);
 
+const MPEGTS_WRAP: u64 = 1 << 33;
+
+// LOCAL stays 0 because VLC 3 reads any other LOCAL as 0. MPEGTS stays near the segment PTS
+// because hls.js uses the segment PTS to resolve MPEGTS rollover.
+const SUBTITLE_ANCHOR_INTERVAL_SECS: u64 = 600;
+// hls.js ignores the timestamp map when MPEGTS equals the stream's first PTS, which is 0.
+// One tick is much smaller than the ms precision of cue times.
+const SUBTITLE_ANCHOR_NUDGE_TICKS: u64 = 1;
+
 // smaller gaps are frame rounding
 pub const SHORTFALL_TOLERANCE: Duration =
     Duration::from_secs(ffpipeline::pipeline::SEGMENT_SECONDS as u64);
@@ -25,6 +34,22 @@ pub struct SubtitleSource {
     pub cues: Arc<Vec<Cue>>,
     pub(crate) cursor: usize,
     pub next_segment_source_offset: Duration,
+    in_point: Duration,
+    out_point: Duration,
+    stream_offset_ms: Option<i64>,
+}
+
+impl SubtitleSource {
+    pub fn new(cues: Arc<Vec<Cue>>, in_point: Duration, out_point: Duration) -> Self {
+        SubtitleSource {
+            cues,
+            cursor: 0,
+            next_segment_source_offset: in_point,
+            in_point,
+            out_point,
+            stream_offset_ms: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -239,23 +264,25 @@ impl PlaylistManager {
 
             let vtt_path = format!("{}.vtt", file.strip_suffix(".ts").unwrap_or(&file));
             let vtt_full = self.output_folder.join(&vtt_path);
-            let mpegts_90khz = (((self.pts_offset.unwrap_or_default().duration.as_secs_f64()
-                + (program_date_time - self.current_session_start).as_seconds_f64())
-                * 90_000.0) as u64)
-                % 8589934592;
+            let stream_start = self.pts_offset.unwrap_or_default().duration
+                + Duration::from_secs_f64(
+                    (program_date_time - self.current_session_start)
+                        .as_seconds_f64()
+                        .max(0.0),
+                );
             if let Some(src) = &mut self.subtitle_source {
                 let body = render_subtitle_segment(
                     src,
                     src.next_segment_source_offset,
                     duration,
-                    mpegts_90khz,
+                    stream_start,
                 );
                 write_atomic(&self.output_folder, &vtt_full, body).await?;
                 src.next_segment_source_offset += Duration::from_secs_f64(duration);
             } else {
                 let body = format!(
                     "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
-                    mpegts_90khz
+                    (stream_start.as_secs_f64() * 90_000.0) as u64 % MPEGTS_WRAP
                 );
                 write_atomic(&self.output_folder, &vtt_full, body).await?;
             }
@@ -490,40 +517,66 @@ fn render_subtitle_segment(
     src: &mut SubtitleSource,
     seg_start_src: Duration,
     duration: f64,
-    mpegts_90khz: u64,
+    stream_start: Duration,
 ) -> String {
-    let seg_end_src = seg_start_src + Duration::from_secs_f64(duration);
+    let seg_end_src = (seg_start_src + Duration::from_secs_f64(duration)).min(src.out_point);
 
-    let mut out = format!(
-        "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
-        mpegts_90khz
-    );
+    // rfc8216 3.5 requires the same cue times in every segment, and clients drop only exact
+    // duplicates. Fix the offset once per pass, so ms rounding can't change between segments.
+    // Cut cues at pass edges: each pass starts after a discontinuity, and hls.js moves each
+    // discontinuity by a few ms, so a cue that spans one is shown twice.
+    let stream_offset_ms = *src
+        .stream_offset_ms
+        .get_or_insert(stream_start.as_millis() as i64 - seg_start_src.as_millis() as i64);
+    let stream_ms = |t: Duration| (t.as_millis() as i64 + stream_offset_ms).max(0) as u64;
 
+    let mut cues = Vec::new();
     let mut segment_cursor = src.cursor;
 
     while let Some(cue) = src.cues.get(segment_cursor)
         && cue.start < seg_end_src
     {
-        if cue.end > seg_start_src {
-            let local_start = cue.start.saturating_sub(seg_start_src);
-            let local_end = cue
-                .end
-                .saturating_sub(seg_start_src)
-                .min(Duration::from_secs_f64(duration));
-            out.push_str(&format!(
-                "{} --> {}\n{}\n\n",
-                format_vtt_ts(local_start),
-                format_vtt_ts(local_end),
-                cue.text
-            ));
+        let start = cue.start.max(src.in_point);
+        let end = cue.end.min(src.out_point);
+        if end > seg_start_src {
+            cues.push((stream_ms(start), stream_ms(end), cue));
         }
 
         // walk persistent cursor if this cue will never display again
-        if src.cursor == segment_cursor && cue.end <= seg_end_src {
+        if src.cursor == segment_cursor && end <= seg_end_src {
             src.cursor += 1;
         }
 
         segment_cursor += 1;
+    }
+
+    // cue times can't be negative, so a cue that started before the grid line moves the anchor
+    let grid_ms = stream_start.as_secs() / SUBTITLE_ANCHOR_INTERVAL_SECS
+        * SUBTITLE_ANCHOR_INTERVAL_SECS
+        * 1000;
+    let anchor_ms = cues
+        .iter()
+        .map(|(start, _, _)| *start)
+        .fold(grid_ms, u64::min);
+
+    let mut out = format!(
+        "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{}\n\n",
+        (anchor_ms * 90 + SUBTITLE_ANCHOR_NUDGE_TICKS) % MPEGTS_WRAP
+    );
+
+    for (start, end, cue) in cues {
+        let settings = if cue.settings.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", cue.settings)
+        };
+        out.push_str(&format!(
+            "{} --> {}{}\n{}\n\n",
+            format_vtt_ts(Duration::from_millis(start - anchor_ms)),
+            format_vtt_ts(Duration::from_millis(end - anchor_ms)),
+            settings,
+            cue.text
+        ));
     }
 
     out
@@ -796,5 +849,145 @@ mod tests {
             !message.contains("channel config"),
             "message blames the channel config: {message}"
         );
+    }
+
+    fn cue(start: f64, end: f64, text: &str) -> Cue {
+        Cue {
+            start: Duration::from_secs_f64(start),
+            end: Duration::from_secs_f64(end),
+            settings: String::new(),
+            text: text.to_owned(),
+        }
+    }
+
+    fn subtitle_source(cues: Vec<Cue>, in_point: f64, out_point: f64) -> SubtitleSource {
+        SubtitleSource::new(
+            Arc::new(cues),
+            Duration::from_secs_f64(in_point),
+            Duration::from_secs_f64(out_point),
+        )
+    }
+
+    fn render_segments(src: &mut SubtitleSource, stream_start: f64, count: u64) -> Vec<String> {
+        (0..count)
+            .map(|i| {
+                let start = src.next_segment_source_offset;
+                src.next_segment_source_offset += Duration::from_secs(4);
+                let stream_start = Duration::from_secs_f64(stream_start + 4.0 * i as f64);
+                render_subtitle_segment(src, start, 4.0, stream_start)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spanning_cue_keeps_its_times_in_every_segment() {
+        let mut src = subtitle_source(vec![cue(2.0, 11.0, "long")], 0.0, 60.0);
+
+        let segments = render_segments(&mut src, 0.0, 3);
+
+        for segment in &segments {
+            assert!(
+                segment.starts_with("WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:1\n"),
+                "{segment}"
+            );
+            assert!(
+                segment.contains("00:00:02.000 --> 00:00:11.000\nlong"),
+                "{segment}"
+            );
+        }
+    }
+
+    #[test]
+    fn cue_active_at_the_stream_start_starts_with_the_stream() {
+        let mut src = subtitle_source(vec![cue(98.0, 106.0, "joined")], 100.0, 400.0);
+
+        let segments = render_segments(&mut src, 0.0, 3);
+
+        assert!(segments[0].contains("00:00:00.000 --> 00:00:06.000\njoined"));
+        assert!(segments[1].contains("00:00:00.000 --> 00:00:06.000\njoined"));
+        assert!(!segments[2].contains("joined"));
+    }
+
+    #[test]
+    fn cue_ending_on_a_boundary_is_not_repeated() {
+        let mut src = subtitle_source(
+            vec![cue(1.0, 4.0, "first"), cue(4.0, 6.0, "second")],
+            0.0,
+            60.0,
+        );
+
+        let segments = render_segments(&mut src, 0.0, 2);
+
+        assert!(segments[0].contains("first"));
+        assert!(!segments[0].contains("second"));
+        assert!(!segments[1].contains("first"));
+        assert!(segments[1].contains("00:00:04.000 --> 00:00:06.000\nsecond"));
+    }
+
+    #[test]
+    fn cues_are_clamped_to_the_pass_end() {
+        let mut src = subtitle_source(
+            vec![
+                cue(5.0, 9.0, "crosses the end"),
+                cue(8.5, 9.5, "after the end"),
+            ],
+            0.0,
+            7.5,
+        );
+
+        let segments = render_segments(&mut src, 0.0, 3);
+
+        assert!(segments[1].contains("00:00:05.000 --> 00:00:07.500\ncrosses the end"));
+        assert!(segments.iter().all(|s| !s.contains("after the end")));
+        assert!(!segments[2].contains("crosses the end"));
+    }
+
+    #[test]
+    fn cues_are_cut_at_pass_edges() {
+        let cues = vec![cue(42.0, 46.0, "split")];
+        let mut first_pass = subtitle_source(cues.clone(), 0.0, 44.0);
+        let mut second_pass = subtitle_source(cues, 44.0, 60.0);
+
+        let first = render_segments(&mut first_pass, 0.0, 11);
+        // after a seek, a pass can start 21 ms off the previous pass
+        let second = render_segments(&mut second_pass, 44.021, 1);
+
+        assert!(first[10].contains("00:00:42.000 --> 00:00:44.000\nsplit"));
+        assert!(second[0].contains("00:00:44.021 --> 00:00:46.021\nsplit"));
+    }
+
+    #[test]
+    fn cue_crossing_a_grid_line_keeps_its_absolute_times() {
+        let mut src = subtitle_source(vec![cue(2.0, 7.0, "anchored")], 0.0, 60.0);
+
+        let segments = render_segments(&mut src, 1196.0, 2);
+
+        assert!(segments[0].contains(&format!("MPEGTS:{}\n", 600 * 90_000 + 1)));
+        assert!(segments[0].contains("00:09:58.000 --> 00:10:03.000\nanchored"));
+        assert!(segments[1].contains(&format!("MPEGTS:{}\n", 1198 * 90_000 + 1)));
+        assert!(segments[1].contains("00:00:00.000 --> 00:00:05.000\nanchored"));
+    }
+
+    #[test]
+    fn long_cue_crossing_a_grid_line_keeps_its_start() {
+        let mut src = subtitle_source(vec![cue(500.0, 620.0, "long")], 0.0, 700.0);
+        src.next_segment_source_offset = Duration::from_secs(596);
+
+        let segments = render_segments(&mut src, 596.0, 2);
+
+        assert!(segments[0].contains("MPEGTS:1\n"));
+        assert!(segments[0].contains("00:08:20.000 --> 00:10:20.000\nlong"));
+        assert!(segments[1].contains(&format!("MPEGTS:{}\n", 500 * 90_000 + 1)));
+        assert!(segments[1].contains("00:00:00.000 --> 00:02:00.000\nlong"));
+    }
+
+    #[test]
+    fn anchor_wraps_with_the_mpegts_clock() {
+        let mut src = subtitle_source(vec![cue(1.0, 2.0, "late")], 0.0, 60.0);
+
+        let segments = render_segments(&mut src, 100_000.0, 1);
+
+        assert!(segments[0].contains(&format!("MPEGTS:{}\n", (99_600 * 90_000 + 1) % MPEGTS_WRAP)));
+        assert!(segments[0].contains("00:06:41.000 --> 00:06:42.000\nlate"));
     }
 }
