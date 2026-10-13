@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+
+## [0.2.2] - 2026-10-13
 ### Fixed
 - WebVTT cues that span HLS segments now keep their full start and end times in every segment, as RFC 8216 requires
   - Previously each segment cut the cue at its own boundaries, so players showed it as several cues or showed it twice
@@ -62,6 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - First versioned release; earlier builds report `0.1.0-<commit>`
 - Release notes list the config versions each build reads and the [ErsatzTV-ffmpeg](https://github.com/ErsatzTV/ErsatzTV-ffmpeg) build it ships with
 
-[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/ErsatzTV/next/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ErsatzTV/next/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ErsatzTV/next/compare/v0.1.0...v0.2.0
