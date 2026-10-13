@@ -785,11 +785,7 @@ impl ChannelSession {
                 }
             }
         {
-            subtitle_source = Some(SubtitleSource {
-                cues,
-                cursor: 0,
-                next_segment_source_offset: input.in_point,
-            });
+            subtitle_source = Some(SubtitleSource::new(cues, input.in_point, input.out_point));
         }
 
         let skip_embedded_text_subtitles = output_settings.subtitle_mode == SubtitleMode::Burn

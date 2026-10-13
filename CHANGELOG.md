@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Fixed
+- WebVTT cues that span HLS segments now keep their full start and end times in every segment, as RFC 8216 requires
+  - Previously each segment cut the cue at its own boundaries, so players showed it as several cues or showed it twice
+  - Cues still end with their item
+- The channel playlist (`/channel/{N}.m3u8`) only advertises a subtitle rendition when `normalization.subtitle.mode` is `convert`
+  - The rendition is no longer selected by default, and no longer claims English
+- WebVTT subtitle sources keep their cue settings (position, alignment) in `convert` mode
 
 ## [0.2.1] - 2026-10-13
 ### Added
