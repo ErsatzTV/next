@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Added
+- Playout schema `0.0.7`: canvas graphics layers accept an optional `layout`
+  - This can be used to composite a canvas smaller than the final output size 
 
 ## [0.2.2] - 2026-10-13
 ### Fixed

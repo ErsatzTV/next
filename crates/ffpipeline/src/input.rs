@@ -484,21 +484,37 @@ pub struct GraphicsInput {
     pub input_source: InputSource,
     pub probe_result: ProbeResult,
     pub stream_index: Option<u32>,
+    pub kind: GraphicsKind,
+    pub in_point: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub enum GraphicsKind {
+    Media(MediaGraphicsOptions),
+    Canvas(CanvasLayout),
+}
+
+impl GraphicsKind {
+    pub fn is_canvas(&self) -> bool {
+        matches!(self, Self::Canvas(_))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CanvasLayout {
+    FullFrame,
+    Region { origin: FramePoint },
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaGraphicsOptions {
     pub location: GraphicsLocation,
     pub width_percent: Option<f32>,
     pub within_source_content: Option<bool>,
     pub horizontal_margin_percent: Option<f32>,
     pub vertical_margin_percent: Option<f32>,
     pub opacity_percent: Option<f32>,
-    pub kind: GraphicsKind,
-    pub in_point: Duration,
     pub timing: Option<GraphicsTiming>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum GraphicsKind {
-    Media,
-    Canvas,
 }
 
 #[derive(Debug, Clone)]
@@ -525,7 +541,7 @@ pub enum PeriodicClock {
 pub type WatermarkInput = GraphicsInput;
 pub type WatermarkTiming = GraphicsTiming;
 
-impl GraphicsInput {
+impl MediaGraphicsOptions {
     pub(crate) fn scaled_size(
         &self,
         graphics_size: FrameSize,

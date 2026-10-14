@@ -110,9 +110,7 @@ async fn motion_check_rejects_missing_deinterlace(
 async fn canvas_local() {
     use std::time::Duration;
 
-    use ffpipeline::input::{
-        GraphicsInput, GraphicsKind, GraphicsLocation, InputSource, LocalInputSource,
-    };
+    use ffpipeline::input::{GraphicsInput, GraphicsKind, InputSource, LocalInputSource};
     use ffpipeline::pipeline::generate_pipeline;
 
     let env = test_env().await.unwrap();
@@ -181,15 +179,8 @@ async fn canvas_local() {
         }),
         probe_result: probe_file(&env.ffmpeg, &env.ffprobe, &canvas).await,
         stream_index: None,
-        kind: GraphicsKind::Canvas,
+        kind: GraphicsKind::Canvas(ffpipeline::input::CanvasLayout::FullFrame),
         in_point: Duration::from_millis(500),
-        location: GraphicsLocation::BottomRight,
-        width_percent: Some(10.0),
-        within_source_content: Some(true),
-        horizontal_margin_percent: Some(5.0),
-        vertical_margin_percent: Some(5.0),
-        opacity_percent: Some(0.0),
-        timing: None,
     };
     let probe = probe_file(&env.ffmpeg, &env.ffprobe, &main).await;
     let mut input = build_input(&main, probe, Duration::from_secs(1), Some(graphics));

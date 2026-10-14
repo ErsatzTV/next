@@ -9,8 +9,9 @@ use ersatztv_channel::config::{ChannelConfig, NormalizationConfig, StreamMode};
 use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::{READY_FILE_NAME, empty_folder};
 use ersatztv_playout::playout::{
-    AudioHint, GraphicsLayerKind, PeriodicClock, PlayoutItem, PlayoutItemSource, PlayoutItemTracks,
-    ProbeHint, SubtitleHint, TrackSelection, VideoHint, WatermarkLocation, WatermarkTiming,
+    AudioHint, GraphicsLayer, GraphicsLayerKind, PeriodicClock, PlayoutItem, PlayoutItemSource,
+    PlayoutItemTracks, ProbeHint, SubtitleHint, TrackSelection, VideoHint, WatermarkLocation,
+    WatermarkTiming,
 };
 use ersatztv_playout::template::expand_template;
 use ffpipeline::copy_decision::{CopyBlocker, CopyDecision};
@@ -583,9 +584,7 @@ impl ChannelSession {
         let graphics_fut = try_join_all(current_item.effective_graphics().enumerate().map(
             |(layer_index, layer)| async move {
                 let input_source = session.playout_source_to_input_source(layer.source.clone())?;
-                let location = playout_location_to_pipeline(&layer.location);
-                let kind = playout_graphics_kind_to_pipeline(&layer.kind);
-                let timing = playout_timing_to_pipeline(layer.timing.as_ref());
+                let kind = playout_graphics_kind_to_pipeline(layer, layer_index);
                 let probe_result = session.resolve_probe(&layer.source, &input_source).await?;
 
                 let in_point = if let PlayoutItemSource::Local {
@@ -603,15 +602,8 @@ impl ChannelSession {
                     input_source,
                     probe_result,
                     stream_index: layer.stream_index,
-                    location,
-                    width_percent: layer.width_percent,
-                    within_source_content: layer.within_source_content,
-                    horizontal_margin_percent: layer.horizontal_margin_percent,
-                    vertical_margin_percent: layer.vertical_margin_percent,
-                    opacity_percent: layer.opacity_percent,
                     kind,
                     in_point,
-                    timing,
                 })
             },
         ));
@@ -1696,13 +1688,71 @@ fn playout_location_to_pipeline(value: &WatermarkLocation) -> ffpipeline::input:
 }
 
 fn playout_graphics_kind_to_pipeline(
-    value: &Option<GraphicsLayerKind>,
+    layer: &GraphicsLayer,
+    layer_index: usize,
 ) -> ffpipeline::input::GraphicsKind {
-    match value {
-        Some(GraphicsLayerKind::Media) => ffpipeline::input::GraphicsKind::Media,
-        Some(GraphicsLayerKind::Canvas) => ffpipeline::input::GraphicsKind::Canvas,
-        None => ffpipeline::input::GraphicsKind::Media,
+    use ersatztv_playout::playout::CanvasLayout;
+    use ffpipeline::input::{
+        CanvasLayout as PipelineCanvasLayout, GraphicsKind, MediaGraphicsOptions,
+    };
+
+    if let Some(GraphicsLayerKind::Canvas) = layer.kind {
+        // location is required, so only warn for a non-default value
+        let ignored = [
+            (
+                !matches!(layer.location, WatermarkLocation::TopLeft),
+                "location",
+            ),
+            (layer.width_percent.is_some(), "width_percent"),
+            (
+                layer.within_source_content.is_some(),
+                "within_source_content",
+            ),
+            (
+                layer.horizontal_margin_percent.is_some(),
+                "horizontal_margin_percent",
+            ),
+            (
+                layer.vertical_margin_percent.is_some(),
+                "vertical_margin_percent",
+            ),
+            (layer.opacity_percent.is_some(), "opacity_percent"),
+            (layer.timing.is_some(), "timing"),
+        ]
+        .into_iter()
+        .filter_map(|(present, name)| present.then_some(name))
+        .collect::<Vec<_>>();
+        if !ignored.is_empty() {
+            log::warn!(
+                "ignoring {} on canvas graphics layer {layer_index}",
+                ignored.join(", ")
+            );
+        }
+
+        return GraphicsKind::Canvas(match &layer.layout {
+            None | Some(CanvasLayout::FullFrame) => PipelineCanvasLayout::FullFrame,
+            Some(CanvasLayout::Region { origin }) => PipelineCanvasLayout::Region {
+                origin: ffpipeline::overlay_filter::FramePoint {
+                    x: origin.x,
+                    y: origin.y,
+                },
+            },
+        });
     }
+
+    if layer.layout.is_some() {
+        log::warn!("ignoring layout on media graphics layer {layer_index}");
+    }
+
+    GraphicsKind::Media(MediaGraphicsOptions {
+        location: playout_location_to_pipeline(&layer.location),
+        width_percent: layer.width_percent,
+        within_source_content: layer.within_source_content,
+        horizontal_margin_percent: layer.horizontal_margin_percent,
+        vertical_margin_percent: layer.vertical_margin_percent,
+        opacity_percent: layer.opacity_percent,
+        timing: playout_timing_to_pipeline(layer.timing.as_ref()),
+    })
 }
 
 fn playout_timing_to_pipeline(
@@ -2055,6 +2105,51 @@ mod tests {
     use time::macros::datetime;
 
     use super::*;
+
+    #[test]
+    fn graphics_kind_and_layout_map_to_pipeline() {
+        use ffpipeline::input::{CanvasLayout, GraphicsKind};
+        let layer = |extra: serde_json::Value| -> GraphicsLayer {
+            let mut value = json!({
+                "source": {"source_type": "local", "path": "graphics.nut"},
+                "location": "top_left"
+            });
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value(value).unwrap()
+        };
+
+        for extra in [
+            json!({}),
+            json!({"kind": "media", "layout": {"mode": "full_frame"}}),
+        ] {
+            assert!(matches!(
+                playout_graphics_kind_to_pipeline(&layer(extra), 0),
+                GraphicsKind::Media(_)
+            ));
+        }
+        for extra in [
+            json!({"kind": "canvas"}),
+            json!({"kind": "canvas", "layout": {"mode": "full_frame"}}),
+        ] {
+            assert!(matches!(
+                playout_graphics_kind_to_pipeline(&layer(extra), 0),
+                GraphicsKind::Canvas(CanvasLayout::FullFrame)
+            ));
+        }
+        let region = layer(json!({
+            "kind": "canvas",
+            "layout": {"mode": "region", "origin": {"x": 80, "y": 40}}
+        }));
+        let GraphicsKind::Canvas(CanvasLayout::Region { origin }) =
+            playout_graphics_kind_to_pipeline(&region, 0)
+        else {
+            panic!("expected region canvas");
+        };
+        assert_eq!((origin.x, origin.y), (80, 40));
+    }
 
     fn hinted_input(track: Option<&TrackSelection>, duration: Duration) -> ProbedInput {
         let source = track.and_then(|t| t.source.as_ref()).expect("no source");

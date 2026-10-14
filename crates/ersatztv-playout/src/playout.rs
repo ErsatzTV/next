@@ -14,7 +14,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 6,
+    compatible: 7,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/playout/version/", SUPPORTED_SCHEMA);
@@ -146,9 +146,27 @@ pub struct GraphicsLayer {
     pub opacity_percent: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<GraphicsTiming>,
+    /// Canvas only: where the canvas is placed in the output frame. Omitted = full frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<CanvasLayout>,
 }
 
 pub type Watermark = GraphicsLayer;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum CanvasLayout {
+    /// Fill the output frame. A canvas with a different size is stretched.
+    FullFrame,
+    /// Place the canvas at `origin` without scaling. Parts outside the output are clipped.
+    Region { origin: CanvasPosition },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct CanvasPosition {
+    pub x: u32,
+    pub y: u32,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -506,15 +524,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn canvas_layout_round_trips_and_absent_layout_stays_omitted() {
+        for layout in [
+            None,
+            Some(serde_json::json!({"mode": "full_frame"})),
+            Some(serde_json::json!({"mode": "region", "origin": {"x": 80, "y": 40}})),
+        ] {
+            let mut value = layer("canvas.nut");
+            value["kind"] = serde_json::json!("canvas");
+            if let Some(layout) = &layout {
+                value["layout"] = layout.clone();
+            }
+            let parsed: GraphicsLayer = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(parsed.layout.is_none(), layout.is_none());
+            assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+        }
+        for layout in [
+            serde_json::json!({}),
+            serde_json::json!({"mode": "region"}),
+            serde_json::json!({"mode": "region", "origin": {"x": -1, "y": 0}}),
+        ] {
+            let mut value = layer("canvas.nut");
+            value["layout"] = layout;
+            assert!(serde_json::from_value::<GraphicsLayer>(value).is_err());
+        }
+    }
+
     #[tokio::test]
-    async fn schema_003_to_006_files_load() {
+    async fn schema_003_to_007_files_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        for version in ["0.0.3", "0.0.4", "0.0.5", "0.0.6"] {
+        for version in ["0.0.3", "0.0.4", "0.0.5", "0.0.6", "0.0.7"] {
             let mut item = item_json();
             let mut graphics = layer("canvas.nut");
             if version == "0.0.4" {
                 graphics["kind"] = serde_json::json!("canvas");
+            }
+            if version == "0.0.7" {
+                graphics["kind"] = serde_json::json!("canvas");
+                graphics["layout"] =
+                    serde_json::json!({"mode": "region", "origin": {"x": 80, "y": 40}});
             }
             item["graphics"] = serde_json::json!([graphics]);
             let value = serde_json::json!({
@@ -544,7 +594,7 @@ mod tests {
     async fn newer_schema_is_rejected_with_supported_version() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        let newer = "https://ersatztv.org/playout/version/0.0.7";
+        let newer = "https://ersatztv.org/playout/version/0.0.8";
         let value = serde_json::json!({ "version": newer, "items": [] });
         tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
             .await
@@ -556,7 +606,7 @@ mod tests {
                 supported,
             })) => {
                 assert_eq!(found, newer);
-                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.6");
+                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.7");
             }
             other => panic!("expected Unsupported, got {:?}", other.err()),
         }
