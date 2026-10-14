@@ -569,10 +569,11 @@ macro_rules! shared_tests {
         async fn canvas(
             #[values(("ffv1", "bgra"), ("ffv1", "yuva420p"), ("ffv1", "yuva444p"), ("png", "rgba"))]
             source: (&'static str, &'static str),
+            #[values(false, true)] positioned: bool,
         ) {
             let accel = $accel().await;
             if let Some(env) = $crate::common::test_env().await {
-                $crate::common::run_canvas_test(env, accel, source.0, source.1).await;
+                $crate::common::run_canvas_test(env, accel, source.0, source.1, positioned).await;
             }
         }
 

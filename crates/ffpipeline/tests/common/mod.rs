@@ -8,14 +8,15 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
 use ffpipeline::input::{
-    GraphicsKind, InputSettings, InputSource, LavfiInputSource, LocalInputSource, ProbedInput,
-    WatermarkInput, WatermarkLocation, WatermarkTiming,
+    CanvasLayout, GraphicsKind, InputSettings, InputSource, LavfiInputSource, LocalInputSource,
+    MediaGraphicsOptions, ProbedInput, WatermarkInput, WatermarkLocation, WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
     AudioLoudnessSettings, AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings,
     ScalingMode, SubtitleMode, VideoFilterOptions, VideoOutputSettings, VideoTranscodeSettings,
 };
+use ffpipeline::overlay_filter::FramePoint;
 use ffpipeline::pipeline::{
     AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline,
 };
@@ -323,19 +324,39 @@ pub async fn run_canvas_test(
     accel: Option<HardwareAccel>,
     codec: &str,
     pix_fmt: &str,
+    positioned: bool,
 ) {
     let size = FrameSize {
         width: 640,
         height: 360,
+    };
+    // the region has the same content offset by `origin`, so the same pixel checks apply and
+    // left of the region must stay blue. it extends past the right and bottom edges to test the
+    // clip that hw overlays need
+    let (origin, canvas_size) = if positioned {
+        (
+            FramePoint { x: 80, y: 40 },
+            FrameSize {
+                width: 600,
+                height: 340,
+            },
+        )
+    } else {
+        (FramePoint { x: 0, y: 0 }, size)
     };
     let dir = tempfile::tempdir().unwrap();
     let main = dir.path().join("main.mkv");
     let canvas = dir.path().join("canvas.nut");
     let canvas_source = format!(
         "color=black@0:s={}x{}:r=24,format=bgra,\
-         drawbox=x=0:y=0:w=160:h=160:color=red@1:t=fill:replace=1,\
-         drawbox=x=320:y=0:w=160:h=160:color=red@0.5:t=fill:replace=1",
-        size.width, size.height
+         drawbox=x={}:y={}:w=160:h=160:color=red@1:t=fill:replace=1,\
+         drawbox=x={}:y={}:w=160:h=160:color=red@0.5:t=fill:replace=1",
+        canvas_size.width,
+        canvas_size.height,
+        -(origin.x as i32),
+        -(origin.y as i32),
+        320 - origin.x as i32,
+        -(origin.y as i32),
     );
     let main_source = format!("color=blue:s={}x{}:r=24", size.width, size.height);
     for (path, args) in [
@@ -417,15 +438,12 @@ pub async fn run_canvas_test(
         }),
         probe_result: canvas_probe,
         stream_index: None,
-        location: WatermarkLocation::TopLeft,
-        width_percent: None,
-        within_source_content: None,
-        horizontal_margin_percent: None,
-        vertical_margin_percent: None,
-        opacity_percent: None,
-        kind: GraphicsKind::Canvas,
+        kind: GraphicsKind::Canvas(if positioned {
+            CanvasLayout::Region { origin }
+        } else {
+            CanvasLayout::FullFrame
+        }),
         in_point: Duration::ZERO,
-        timing: None,
     };
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
     let source_video = probe
@@ -530,6 +548,13 @@ pub async fn run_canvas_test(
         transparent[0] < 50 && transparent[1] < 50 && transparent[2] > 200,
         "transparent canvas region should show the blue main video: {transparent:?} ({pix_fmt})"
     );
+    if positioned {
+        let outside = pixel(40, 80);
+        assert!(
+            outside[0] < 50 && outside[1] < 50 && outside[2] > 200,
+            "positioned canvas should not cover the frame's top left: {outside:?} ({pix_fmt})"
+        );
+    }
 }
 
 /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
@@ -613,15 +638,8 @@ pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<Hardware
             format_name: Some("lavfi".to_owned()),
         },
         stream_index: None,
-        location: WatermarkLocation::TopLeft,
-        width_percent: None,
-        within_source_content: None,
-        horizontal_margin_percent: None,
-        vertical_margin_percent: None,
-        opacity_percent: None,
-        kind: GraphicsKind::Canvas,
+        kind: GraphicsKind::Canvas(CanvasLayout::FullFrame),
         in_point: Duration::ZERO,
-        timing: None,
     };
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
     let input = build_input(&main, probe, duration, Some(graphics));
@@ -1007,15 +1025,16 @@ pub async fn build_watermark_input(
         }),
         probe_result: probe,
         stream_index: None,
-        location: watermark.location.clone(),
-        width_percent: watermark.width_percent,
-        within_source_content: Some(false),
-        horizontal_margin_percent: Some(5.0),
-        vertical_margin_percent: Some(5.0),
-        opacity_percent: watermark.opacity_percent,
-        kind: GraphicsKind::Media,
         in_point: Duration::ZERO,
-        timing: watermark.timing.clone(),
+        kind: GraphicsKind::Media(MediaGraphicsOptions {
+            location: watermark.location.clone(),
+            width_percent: watermark.width_percent,
+            within_source_content: Some(false),
+            horizontal_margin_percent: Some(5.0),
+            vertical_margin_percent: Some(5.0),
+            opacity_percent: watermark.opacity_percent,
+            timing: watermark.timing.clone(),
+        }),
     }
 }
 

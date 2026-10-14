@@ -57,6 +57,7 @@ pub enum VideoFilter {
     ColorChannelMixer(ColorChannelMixerFilter),
     Fade(FadeFilter),
     Crop(CropFilter),
+    Clip(ClipFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
     EnsureAlpha(EnsureAlphaFilter),
     // AMF hardware filters
@@ -929,6 +930,29 @@ impl VideoFilterOp for CropFilter {
         self.size
             .as_ref()
             .map(|size| format!("crop={}:{}", size.width, size.height))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClipFilter {
+    pub size: FrameSize,
+}
+
+impl VideoFilterOp for ClipFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        (state.size != self.size).then(|| self.clone().into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.size = self.size;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("crop={}:{}:0:0", self.size.width, self.size.height))
     }
 }
 

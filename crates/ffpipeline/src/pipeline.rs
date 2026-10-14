@@ -21,7 +21,7 @@ use crate::frame_size::{FrameSize, parse_aspect_ratio};
 use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{
-    FfmpegInputArgs, FfmpegInputRequestContext, GraphicsInput, GraphicsKind, GraphicsLocation,
+    CanvasLayout, FfmpegInputArgs, FfmpegInputRequestContext, GraphicsInput, GraphicsKind,
     InputSettings, InputSource, ProbedInput,
 };
 use crate::output_option::OutputOption;
@@ -35,8 +35,8 @@ use crate::probe::{ProbeResultAudioStream, ProbeResultVideoStream};
 use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
-    ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter, EnsureAlphaFilter,
-    FadeFilter, FormatFilter, FpsFilter, LoopFilter, PadFilter, ScaleFilter,
+    ClipFilter, ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter,
+    EnsureAlphaFilter, FadeFilter, FormatFilter, FpsFilter, LoopFilter, PadFilter, ScaleFilter,
     SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions, SubtitleImageScaleFilter,
     SubtitlesFilter, ToneMapFilter, TransposeDir, TransposeFilter, VideoFilter,
 };
@@ -752,43 +752,46 @@ impl Pipeline {
                     graphics_input.layer_index,
                 ));
             };
-            if graphics_input.kind == GraphicsKind::Canvas {
-                // location is required by the schema, so only a non-default value is worth naming
-                let ignored = [
-                    (
-                        !matches!(graphics_input.location, GraphicsLocation::TopLeft),
-                        "location",
-                    ),
-                    (graphics_input.width_percent.is_some(), "width_percent"),
-                    (
-                        graphics_input.within_source_content.is_some(),
-                        "within_source_content",
-                    ),
-                    (
-                        graphics_input.horizontal_margin_percent.is_some(),
-                        "horizontal_margin_percent",
-                    ),
-                    (
-                        graphics_input.vertical_margin_percent.is_some(),
-                        "vertical_margin_percent",
-                    ),
-                    (graphics_input.opacity_percent.is_some(), "opacity_percent"),
-                    (graphics_input.timing.is_some(), "timing"),
-                ]
-                .into_iter()
-                .filter_map(|(present, name)| present.then_some(name))
-                .collect::<Vec<_>>();
+            let video_size = video_transcode.size.as_ref().unwrap_or(&initial_state.size);
 
-                if !ignored.is_empty() {
+            // hw overlays don't clip reliably (vaapi rects are int16), so crop to the visible part
+            let mut canvas_clip = None;
+            if let GraphicsKind::Canvas(CanvasLayout::Region { origin }) = &graphics_input.kind {
+                let visible = FrameSize {
+                    width: video_size.width.saturating_sub(origin.x).min(width),
+                    height: video_size.height.saturating_sub(origin.y).min(height),
+                };
+                if visible.width == 0 || visible.height == 0 {
                     log::warn!(
-                        "ignoring {} on canvas graphics layer {}",
-                        ignored.join(", "),
-                        graphics_input.layer_index
+                        "canvas graphics layer {} ({}x{} at {},{}) is outside the {}x{} output; skipping it",
+                        graphics_input.layer_index,
+                        width,
+                        height,
+                        origin.x,
+                        origin.y,
+                        video_size.width,
+                        video_size.height
                     );
+                    continue;
+                }
+                if visible != (FrameSize { width, height }) {
+                    log::warn!(
+                        "canvas graphics layer {} ({}x{} at {},{}) extends past the {}x{} output; clipping it to {}x{}",
+                        graphics_input.layer_index,
+                        width,
+                        height,
+                        origin.x,
+                        origin.y,
+                        video_size.width,
+                        video_size.height,
+                        visible.width,
+                        visible.height
+                    );
+                    canvas_clip = Some(ClipFilter { size: visible });
                 }
             }
 
-            let extra_input_args = if graphics_input.kind == GraphicsKind::Canvas {
+            let extra_input_args = if graphics_input.kind.is_canvas() {
                 // local canvas shouldn't restart from beginning after bursting
                 let seek = input_settings.playout_offset + graphics_input.in_point;
                 if seek > Duration::ZERO
@@ -849,12 +852,12 @@ impl Pipeline {
                 decoder_frames: false,
             };
 
-            let video_size = video_transcode.size.as_ref().unwrap_or(&initial_state.size);
-
-            // a canvas is authored at the output size; a mismatch means the playout metadata is
-            // stale, so scale rather than fail the whole item
-            let canvas_needs_scale = graphics_input.kind == GraphicsKind::Canvas
-                && video_size != &secondary_initial_state.size;
+            // a full-frame canvas size mismatch means stale playout metadata, so scale instead of
+            // failing the item. a region canvas is never scaled
+            let canvas_needs_scale = matches!(
+                graphics_input.kind,
+                GraphicsKind::Canvas(CanvasLayout::FullFrame)
+            ) && video_size != &secondary_initial_state.size;
             if canvas_needs_scale {
                 log::warn!(
                     "canvas graphics layer {} is {}x{} but output is {}x{}; scaling in software",
@@ -875,24 +878,29 @@ impl Pipeline {
                 ScalingMode::Crop | ScalingMode::Stretch => *video_size,
             };
 
-            let scaled_size =
-                graphics_input.scaled_size(FrameSize { width, height }, video_transcode.size);
-
-            let location = if graphics_input.kind == GraphicsKind::Canvas {
-                Some(FramePoint { x: 0, y: 0 })
-            } else {
-                Some(graphics_input.frame_location(&source_content_size, &scaled_size, video_size))
-            };
-
-            let fade_filters = if graphics_input.kind == GraphicsKind::Canvas {
-                vec![]
-            } else {
-                FadeFilter::for_graphics(
-                    graphics_input.timing.as_ref(),
-                    input_settings.start,
-                    input_settings.playout_offset,
-                    duration,
-                )
+            let (scaled_size, location, fade_filters, opacity) = match &graphics_input.kind {
+                GraphicsKind::Canvas(layout) => {
+                    let origin = match layout {
+                        CanvasLayout::FullFrame => FramePoint { x: 0, y: 0 },
+                        CanvasLayout::Region { origin } => origin.clone(),
+                    };
+                    (FrameSize { width, height }, Some(origin), vec![], 1.0)
+                }
+                GraphicsKind::Media(options) => {
+                    let size =
+                        options.scaled_size(FrameSize { width, height }, video_transcode.size);
+                    (
+                        size,
+                        Some(options.frame_location(&source_content_size, &size, video_size)),
+                        FadeFilter::for_graphics(
+                            options.timing.as_ref(),
+                            input_settings.start,
+                            input_settings.playout_offset,
+                            duration,
+                        ),
+                        options.opacity_percent.unwrap_or(100.0) / 100.0,
+                    )
+                }
             };
 
             let ensure_alpha_filter: VideoFilter = EnsureAlphaFilter {
@@ -903,47 +911,46 @@ impl Pipeline {
             }
             .into();
 
-            let mut secondary_filters: Vec<VideoFilter> =
-                if graphics_input.kind == GraphicsKind::Canvas {
-                    // convert to bgra, not yuva420p: most hw overlays upload bgra, and yuva420p
-                    // removes chroma detail. evaluate removes this filter for a bgra canvas. the
-                    // filter also keeps alpha for formats that `PixelFormat::parse` does not know
-                    let mut filters: Vec<VideoFilter> = vec![
-                        FormatFilter {
-                            format: PixelFormat::Bgra,
-                        }
-                        .into(),
-                    ];
-                    if canvas_needs_scale {
-                        // stretch, not contain: the canvas has to stay exactly the output size or
-                        // the (0,0) overlay would pin a smaller canvas to the top left corner
-                        filters.push(
-                            ScaleFilter {
-                                size: Some(*video_size),
-                                scaling_mode: ScalingMode::Stretch,
-                                input_is_anamorphic: false,
-                                flags: video_transcode.filter_options.scale.flags.clone(),
-                            }
-                            .into(),
-                        );
+            let mut secondary_filters: Vec<VideoFilter> = if graphics_input.kind.is_canvas() {
+                // convert to bgra, not yuva420p: most hw overlays upload bgra, and yuva420p
+                // removes chroma detail. evaluate removes this filter for a bgra canvas. the
+                // filter also keeps alpha for formats that `PixelFormat::parse` does not know
+                let mut filters: Vec<VideoFilter> = vec![
+                    FormatFilter {
+                        format: PixelFormat::Bgra,
                     }
-                    filters
-                } else {
-                    vec![
-                        ensure_alpha_filter,
-                        ColorChannelMixerFilter {
-                            alpha: graphics_input.opacity_percent.unwrap_or(100f32) / 100.0f32,
-                        }
-                        .into(),
+                    .into(),
+                ];
+                if let Some(clip) = canvas_clip {
+                    filters.push(clip.into());
+                }
+                if canvas_needs_scale {
+                    // stretch, not contain: the canvas has to stay exactly the output size or
+                    // the (0,0) overlay would pin a smaller canvas to the top left corner
+                    filters.push(
                         ScaleFilter {
-                            size: Some(scaled_size),
-                            scaling_mode: ScalingMode::ScaleAndPad,
+                            size: Some(*video_size),
+                            scaling_mode: ScalingMode::Stretch,
                             input_is_anamorphic: false,
                             flags: video_transcode.filter_options.scale.flags.clone(),
                         }
                         .into(),
-                    ]
-                };
+                    );
+                }
+                filters
+            } else {
+                vec![
+                    ensure_alpha_filter,
+                    ColorChannelMixerFilter { alpha: opacity }.into(),
+                    ScaleFilter {
+                        size: Some(scaled_size),
+                        scaling_mode: ScalingMode::ScaleAndPad,
+                        input_is_anamorphic: false,
+                        flags: video_transcode.filter_options.scale.flags.clone(),
+                    }
+                    .into(),
+                ]
+            };
 
             // a still image is decoded as a single frame; only fades need it repeated (they act on
             // frame timestamps). otherwise the overlay's repeatlast holds it, which keeps the
@@ -1206,7 +1213,7 @@ impl Pipeline {
             .filter_map(|i| match i {
                 PipelineInput::Graphics {
                     input, layer_index, ..
-                } if input.kind == GraphicsKind::Canvas => Some(*layer_index),
+                } if input.kind.is_canvas() => Some(*layer_index),
                 _ => None,
             })
             .collect();
@@ -1391,7 +1398,7 @@ impl Pipeline {
                 } => {
                     input_paths.push(path.as_str());
 
-                    if input.kind == GraphicsKind::Canvas {
+                    if input.kind.is_canvas() {
                         result.extend(
                             input
                                 .input_source
@@ -2100,26 +2107,57 @@ mod tests {
             input_source: source,
             probe_result: probe,
             stream_index: None,
-            kind: GraphicsKind::Canvas,
+            kind: GraphicsKind::Canvas(CanvasLayout::FullFrame),
             in_point: Duration::from_secs(3),
-            // Canvas must ignore native graphics placement, opacity and timing.
-            location: crate::input::GraphicsLocation::BottomRight,
-            width_percent: Some(10.0),
-            within_source_content: Some(true),
-            horizontal_margin_percent: Some(5.0),
-            vertical_margin_percent: Some(5.0),
-            opacity_percent: Some(0.0),
-            timing: Some(crate::input::GraphicsTiming::Periodic(
-                crate::input::PeriodicTiming {
-                    clock: crate::input::PeriodicClock::Content,
-                    frequency_ms: 10000,
-                    phase_offset_ms: None,
-                    disable_after_ms: None,
-                    fade_ms: Some(1000),
-                    hold_ms: 2000,
-                },
-            )),
         }
+    }
+
+    #[rstest::rstest]
+    #[case(940, 540, Some(None))]
+    #[case(0, 0, Some(None))]
+    #[case(1100, 600, Some(Some("crop=180:120:0:0")))]
+    #[case(1280, 0, None)]
+    #[case(u32::MAX, u32::MAX, None)]
+    fn region_canvas_overlays_at_origin_clipped_to_output(
+        #[case] x: u32,
+        #[case] y: u32,
+        #[case] expected: Option<Option<&str>>,
+    ) {
+        let mut input = multichannel_ac3_input("main.mkv");
+        let mut graphics = canvas_input(InputSource::Local(crate::input::LocalInputSource {
+            path: "canvas.nut".to_owned(),
+        }));
+        if let crate::probe::ProbeResultStream::Video(video) = &mut graphics.probe_result.streams[0]
+        {
+            video.width = Some(300);
+            video.height = Some(150);
+        }
+        graphics.kind = GraphicsKind::Canvas(CanvasLayout::Region {
+            origin: FramePoint { x, y },
+        });
+        input.graphics_inputs.push(graphics);
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+        pipeline.optimize();
+        let args = pipeline.args();
+        let filter = args
+            .windows(2)
+            .filter(|a| a[0] == "-filter_complex")
+            .map(|a| a[1].as_ref())
+            .collect::<Vec<_>>()
+            .join(";");
+
+        let Some(crop) = expected else {
+            assert!(!args.iter().any(|a| a == "canvas.nut"), "{args:?}");
+            assert!(!filter.contains("overlay"), "{filter}");
+            return;
+        };
+        let canvas_chain = filter.split(';').find(|c| c.starts_with("[1:0]")).unwrap();
+        assert!(!canvas_chain.contains("scale="), "{filter}");
+        match crop {
+            Some(crop) => assert!(canvas_chain.contains(crop), "{filter}"),
+            None => assert!(!canvas_chain.contains("crop="), "{filter}"),
+        }
+        assert!(filter.contains(&format!("overlay=x={x}:y={y}")), "{filter}");
     }
 
     #[test]
@@ -2549,8 +2587,15 @@ mod tests {
             let mut watermark = canvas_input(InputSource::Local(crate::input::LocalInputSource {
                 path: "watermark.png".to_owned(),
             }));
-            watermark.kind = GraphicsKind::Media;
-            watermark.timing = None;
+            watermark.kind = GraphicsKind::Media(crate::input::MediaGraphicsOptions {
+                location: crate::input::GraphicsLocation::BottomRight,
+                width_percent: Some(10.0),
+                within_source_content: Some(true),
+                horizontal_margin_percent: Some(5.0),
+                vertical_margin_percent: Some(5.0),
+                opacity_percent: Some(100.0),
+                timing: None,
+            });
             watermark.probe_result.format_name = Some("image2".to_owned());
             if let crate::probe::ProbeResultStream::Video(video) =
                 &mut watermark.probe_result.streams[0]
@@ -2575,7 +2620,24 @@ mod tests {
         let mut watermark = canvas_input(InputSource::Local(crate::input::LocalInputSource {
             path: "watermark.png".to_owned(),
         }));
-        watermark.kind = GraphicsKind::Media;
+        watermark.kind = GraphicsKind::Media(crate::input::MediaGraphicsOptions {
+            location: crate::input::GraphicsLocation::BottomRight,
+            width_percent: Some(10.0),
+            within_source_content: Some(true),
+            horizontal_margin_percent: Some(5.0),
+            vertical_margin_percent: Some(5.0),
+            opacity_percent: Some(100.0),
+            timing: Some(crate::input::GraphicsTiming::Periodic(
+                crate::input::PeriodicTiming {
+                    clock: crate::input::PeriodicClock::Content,
+                    frequency_ms: 10000,
+                    phase_offset_ms: None,
+                    disable_after_ms: None,
+                    fade_ms: Some(1000),
+                    hold_ms: 2000,
+                },
+            )),
+        });
         watermark.probe_result.format_name = Some("image2".to_owned());
         if let crate::probe::ProbeResultStream::Video(video) =
             &mut watermark.probe_result.streams[0]
