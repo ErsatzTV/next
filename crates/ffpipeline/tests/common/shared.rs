@@ -10,6 +10,7 @@ use ffpipeline::output_settings::{
     VideoFilterOptions,
 };
 use ffpipeline::pipeline::{AudioFormat, EncodeFormat, VideoFormat};
+use ffpipeline::probe::CodecType;
 
 use super::*;
 
@@ -134,6 +135,22 @@ macro_rules! shared_tests {
             $crate::common::shared::run(
                 $accel().await,
                 $crate::common::shared::copy_text_subtitle(),
+            )
+            .await;
+        }
+
+        /// The subtitle starts after the probe window, so ffmpeg sizes its canvas from the
+        /// 1920x1040 video (#335).
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn image_subtitle_unknown_size(
+            #[values("1920x1080", "1280x720", "640x480")] res: ::ffpipeline::frame_size::FrameSize,
+        ) {
+            $crate::common::shared::assert_image_subtitle_size_unknown().await;
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::image_subtitle_unknown_size(res),
             )
             .await;
         }
@@ -696,6 +713,45 @@ pub fn copy_text_subtitle() -> TestCase {
     test_case.params.video_size = Some(SIZE_720P);
     test_case.subtitle_fixture = Some("subtitle.srt");
     test_case.expected_copy.video = blocked(vec![CopyBlocker::BurnedSubtitle]);
+    test_case
+}
+
+const CROPPED_PGS: &str = "1080p_h264_cropped_pgs.mkv";
+
+pub async fn assert_image_subtitle_size_unknown() {
+    let Some(env) = test_env().await else {
+        return;
+    };
+    let probe = probe_file(&env.ffmpeg, &env.ffprobe, &fixture_path(CROPPED_PGS)).await;
+    let subtitle = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) if v.codec_type == CodecType::Subtitle => Some(v),
+            _ => None,
+        })
+        .expect("no subtitle stream in fixture");
+    assert_eq!(
+        (subtitle.width, subtitle.height),
+        (None, None),
+        "probe found the subtitle size, so the fixture no longer reproduces #335"
+    );
+}
+
+pub fn image_subtitle_unknown_size(res: FrameSize) -> TestCase {
+    let mut test_case = source_sized(CROPPED_PGS, res);
+    test_case.params.video_size = Some(res);
+    test_case.subtitle_fixture = Some(CROPPED_PGS);
+    // subtitle starts at 6s (after the 5s probe window) and shows ~0.35s later
+    test_case.params.in_point = Duration::from_millis(6200);
+    // near the top of the box (y 940..1020): a 1920x1040 canvas moves it 20px down
+    let scale = f64::min(
+        f64::from(res.width) / 1920.0,
+        f64::from(res.height) / 1080.0,
+    );
+    let x = (f64::from(res.width) - 1920.0 * scale) / 2.0 + 1060.0 * scale;
+    let y = (f64::from(res.height) - 1080.0 * scale) / 2.0 + 952.0 * scale;
+    test_case.burned_point = Some((x as u32, y as u32));
     test_case
 }
 

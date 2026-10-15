@@ -661,11 +661,13 @@ impl VideoFilterOp for SubtitleImageScaleFilter {
         Some(FrameSurface::System)
     }
 
+    // If the probe has no subtitle size, ffmpeg sizes the canvas from the video, then sends frames
+    // at another size. A fixed output size keeps hwupload and overlay valid.
     fn as_arg(&self) -> Option<String> {
+        let (width, height) = (self.size.width, self.size.height);
         Some(format!(
-            "scale={}:{}:flags={}:force_original_aspect_ratio=decrease,setsar=1",
-            self.size.width,
-            self.size.height,
+            "scale={width}:{height}:flags={}:force_original_aspect_ratio=decrease,\
+             pad={width}:{height}:-1:-1:color=black@0:eval=frame,setsar=1",
             scale_flags(self.flags.as_deref()),
         ))
     }
@@ -1211,7 +1213,10 @@ mod tests {
     fn subtitle_image_scale_as_arg_defaults_to_bicubic() {
         assert_eq!(
             subtitle_image_scale_filter(None).as_arg().as_deref(),
-            Some("scale=1920:1080:flags=bicubic:force_original_aspect_ratio=decrease,setsar=1")
+            Some(
+                "scale=1920:1080:flags=bicubic:force_original_aspect_ratio=decrease,\
+                 pad=1920:1080:-1:-1:color=black@0:eval=frame,setsar=1"
+            )
         );
     }
 
@@ -1222,7 +1227,8 @@ mod tests {
                 .as_arg()
                 .as_deref(),
             Some(
-                "scale=1920:1080:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1"
+                "scale=1920:1080:flags=fast_bilinear:force_original_aspect_ratio=decrease,\
+                 pad=1920:1080:-1:-1:color=black@0:eval=frame,setsar=1"
             )
         );
     }
