@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Playout schema `0.0.7`: canvas graphics layers accept an optional `layout`
   - This can be used to composite a canvas smaller than the final output size 
 
+### Fixed
+- Fix channels falling behind schedule when the playout JSON is updated or replaced
+
 ## [0.2.2] - 2026-10-13
 ### Fixed
 - WebVTT cues that span HLS segments now keep their full start and end times in every segment, as RFC 8216 requires

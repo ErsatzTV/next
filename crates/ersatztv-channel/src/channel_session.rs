@@ -61,7 +61,7 @@ const PLAYLIST_UPDATE_INTERVAL_STARTUP: Duration = Duration::from_millis(200);
 const INPUT_START_CACHE_LIMIT: usize = 4_096;
 const WORK_AHEAD_LIMIT: Duration = Duration::from_secs(SEGMENT_SECONDS as u64 * 11);
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum ChannelSessionState {
     SeekAndWorkAhead,
     ZeroAndWorkAhead,
@@ -468,6 +468,18 @@ impl ChannelSession {
                 self.fallback_playout_item(&reason, min_fallback).await
             }
         };
+
+        let state = Self::reseek_mid_item(self.state, current_item.start, self.transcoded_until);
+        if state != self.state {
+            log::debug!(
+                "item {} started at {}, before the schedule position; channel session state {} => {}",
+                current_item.id,
+                current_item.start,
+                self.state,
+                state
+            );
+            self.state = state;
+        }
 
         let pts_duration = pts_time.map(|p| p.duration);
 
@@ -1130,6 +1142,23 @@ impl ChannelSession {
         log::debug!("channel session state {} => {}", state, result);
 
         result
+    }
+
+    // the playout may have been updated, so check whether we need to seek back to the wall clock
+    fn reseek_mid_item(
+        state: ChannelSessionState,
+        item_start: OffsetDateTime,
+        transcoded_until: OffsetDateTime,
+    ) -> ChannelSessionState {
+        if item_start >= transcoded_until {
+            return state;
+        }
+
+        match state {
+            ChannelSessionState::ZeroAndWorkAhead => ChannelSessionState::SeekAndWorkAhead,
+            ChannelSessionState::ZeroAndRealtime => ChannelSessionState::SeekAndRealtime,
+            seek => seek,
+        }
     }
 
     async fn resolve_probe(
@@ -2105,6 +2134,35 @@ mod tests {
     use time::macros::datetime;
 
     use super::*;
+
+    #[test]
+    fn zero_state_seeks_into_an_item_that_started_earlier() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let until = start + time::Duration::minutes(5);
+
+        assert_eq!(
+            ChannelSession::reseek_mid_item(ChannelSessionState::ZeroAndRealtime, start, until),
+            ChannelSessionState::SeekAndRealtime
+        );
+        assert_eq!(
+            ChannelSession::reseek_mid_item(ChannelSessionState::ZeroAndWorkAhead, start, until),
+            ChannelSessionState::SeekAndWorkAhead
+        );
+    }
+
+    #[test]
+    fn zero_state_starts_an_item_at_the_schedule_position_at_zero() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+
+        for state in [
+            ChannelSessionState::ZeroAndRealtime,
+            ChannelSessionState::ZeroAndWorkAhead,
+            ChannelSessionState::SeekAndRealtime,
+            ChannelSessionState::SeekAndWorkAhead,
+        ] {
+            assert_eq!(ChannelSession::reseek_mid_item(state, start, start), state);
+        }
+    }
 
     #[test]
     fn graphics_kind_and_layout_map_to_pipeline() {
