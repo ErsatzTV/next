@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 - Fix channels falling behind schedule when the playout JSON is updated or replaced
+- Fix image subtitles (e.g. PGS) missing or misplaced with hardware acceleration when the subtitle size differs from the video size (e.g. cropped video)
 
 ## [0.2.2] - 2026-10-13
 ### Fixed

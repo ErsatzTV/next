@@ -187,7 +187,22 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     if let Some(subtitle_fixture) = test_case.subtitle_fixture {
         let path = fixture_path(subtitle_fixture);
         let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
-        input.subtitle_input = Some(local_input(&path, probe, duration));
+        let mut subtitle_input = local_input(&path, probe, duration);
+        // embedded tracks are only selected by index
+        if subtitle_fixture == test_case.fixture_name {
+            subtitle_input.stream_index =
+                subtitle_input
+                    .probe_result
+                    .streams
+                    .iter()
+                    .find_map(|s| match s {
+                        ProbeResultStream::Video(v) if v.is_subtitle_image() => {
+                            Some(v.stream_index)
+                        }
+                        _ => None,
+                    });
+        }
+        input.subtitle_input = Some(subtitle_input);
     }
     let output = build_output(dir.path(), test_case.params);
 
