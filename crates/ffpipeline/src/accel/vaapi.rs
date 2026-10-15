@@ -314,6 +314,14 @@ impl HwAccel for Vaapi {
         }
     }
 
+    // reverse hwmap to VAAPI only works on frames mapped from VAAPI
+    fn upload_surface(&self, target: &FrameSurface) -> FrameSurface {
+        match target {
+            FrameSurface::OpenCL => FrameSurface::Vaapi,
+            other => *other,
+        }
+    }
+
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
         if surfaces.contains(&FrameSurface::OpenCL) {
             args![

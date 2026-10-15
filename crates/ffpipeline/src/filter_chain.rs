@@ -479,15 +479,20 @@ impl FilterChain {
                 resolved.push(PipelineFilter::Video(format));
             }
 
+            let upload_surface = accel
+                .as_ref()
+                .map_or(required, |a| a.upload_surface(&required));
             let upload: VideoFilter = HwUploadFilter {
-                target_surface: required,
+                target_surface: upload_surface,
                 source_format: current_state.pixel_format,
             }
             .into();
             upload.apply_to(current_state);
             surfaces.insert(current_state.surface);
             resolved.push(PipelineFilter::Video(upload));
-            return true;
+            if current_state.surface == required {
+                return true;
+            }
         }
 
         // Lastly, if we're doing a hw -> hw transition, see if we can do so
@@ -1347,6 +1352,45 @@ mod tests {
         assert!(args[1].starts_with("tonemap_opencl="), "{args:?}");
         assert_eq!(args[2], "hwmap=derive_device=vaapi:reverse=1");
         assert_eq!(args[3], "fps=30");
+    }
+
+    #[test]
+    fn resolve_uploads_through_vaapi_for_opencl_tonemap() {
+        let tonemap: VideoFilter = TonemapOpencl {
+            algorithm: Some(String::from("hable")),
+            output_format: HwPixelFormat::Nv12,
+        }
+        .into();
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
+
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(HardwareAccel::Vaapi(vaapi_accel_with_opencl(true))),
+            &VideoFilterOptions::default(),
+            &FrameState {
+                surface: FrameSurface::System,
+                ..hdr_vaapi_state()
+            },
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
+        );
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 4, "{args:?}");
+        assert_eq!(args[0], "hwupload");
+        assert_eq!(args[1], "hwmap=derive_device=opencl");
+        assert!(args[2].starts_with("tonemap_opencl="), "{args:?}");
+        assert_eq!(args[3], "hwmap=derive_device=vaapi:reverse=1");
     }
 
     #[test]
