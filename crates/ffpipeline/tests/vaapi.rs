@@ -128,3 +128,32 @@ async fn watermark_software_overlay(
     test_case.params.disabled_filters = vec!["overlay_vaapi"];
     run_vaapi_test_case(test_case).await;
 }
+
+/// Downscale pads before tonemap, so a software pad must upload to OpenCL.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn pad_software_tonemap_opencl(
+    #[values("1080p_hevc_10_hdr_scope.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+    #[values(("h264", 8), ("hevc", 10))] vf: (&'static str, u8),
+) {
+    let mut test_case = common::shared::tonemap(
+        src,
+        "1280x720".parse().unwrap(),
+        vf,
+        AudioFormat::Aac,
+        false,
+    );
+    test_case.params.disabled_filters = vec!["pad_vaapi", "pad_opencl"];
+    if let Some((env, vaapi, args)) = run_vaapi_test_case(test_case).await
+        && vaapi.opencl_capabilities.can_tonemap()
+        && env
+            .ffmpeg_info
+            .has_video_filter(&KnownVideoFilter::TonemapOpencl)
+    {
+        assert!(
+            args.join(" ").contains("tonemap_opencl"),
+            "OpenCL can tonemap but the pipeline did not use tonemap_opencl"
+        );
+    }
+}

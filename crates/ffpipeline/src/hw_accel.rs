@@ -78,6 +78,9 @@ pub trait HwAccel {
     fn hw_map_filter(&self, _from: &FrameSurface, _to: &FrameSurface) -> Option<VideoFilter> {
         None
     }
+    fn upload_surface(&self, target: &FrameSurface) -> FrameSurface {
+        *target
+    }
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec;
     fn known_accel(&self) -> Option<&KnownHardwareAccel>;
     fn make_decoder(
