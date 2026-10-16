@@ -32,6 +32,10 @@ pub trait VideoFilterOp {
     fn apply_to(&self, state: &mut FrameState);
     fn required_surface(&self) -> Option<FrameSurface>;
     fn as_arg(&self) -> Option<String>;
+    /// Whether the filter (including hardware replacements) may preserve input surfaces.
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +57,7 @@ pub enum VideoFilter {
     ColorChannelMixer(ColorChannelMixerFilter),
     Fade(FadeFilter),
     Crop(CropFilter),
+    Clip(ClipFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
     EnsureAlpha(EnsureAlphaFilter),
     // AMF hardware filters
@@ -80,6 +85,7 @@ pub enum VideoFilter {
     ScaleRkrga(accel::rkmpp::ScaleRkrga),
     // QSV hardware filters
     VppQsv(accel::qsv::VppQsv),
+    CopyQsv(accel::qsv::CopyQsv),
     // Vulkan hardware filters
     ScaleVulkan(accel::vulkan::ScaleVulkan),
     FormatVulkan(accel::vulkan::FormatVulkan),
@@ -196,17 +202,14 @@ pub struct ScaleFilter {
 }
 
 impl VideoFilterOp for ScaleFilter {
+    fn passes_frames_through(&self, state: &FrameState) -> bool {
+        // A SAR-only correction becomes a passthrough vpp_qsv followed by setsar.
+        self.size.is_none_or(|size| size == state.size)
+    }
+
     fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         let target = self.size?;
         if state.size == target && !state.is_anamorphic {
-            return None;
-        }
-
-        // no need to scale "cropped" content that is already large enough
-        if self.scaling_mode == ScalingMode::Crop
-            && state.size.height >= target.height
-            && state.size.width >= target.width
-        {
             return None;
         }
 
@@ -215,6 +218,10 @@ impl VideoFilterOp for ScaleFilter {
             ScalingMode::Stretch => target,
             ScalingMode::Crop => target.square_pixel_size_cover(state),
         };
+
+        if self.scaling_mode == ScalingMode::Crop && size == state.size && !state.is_anamorphic {
+            return None;
+        }
 
         Some(
             ScaleFilter {
@@ -351,6 +358,10 @@ impl VideoFilterOp for FpsFilter {
         self.frame_rate
             .as_ref()
             .map(|frame_rate| format!("fps={}", frame_rate.r_frame_rate))
+    }
+
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        true
     }
 }
 
@@ -650,11 +661,13 @@ impl VideoFilterOp for SubtitleImageScaleFilter {
         Some(FrameSurface::System)
     }
 
+    // If the probe has no subtitle size, ffmpeg sizes the canvas from the video, then sends frames
+    // at another size. A fixed output size keeps hwupload and overlay valid.
     fn as_arg(&self) -> Option<String> {
+        let (width, height) = (self.size.width, self.size.height);
         Some(format!(
-            "scale={}:{}:flags={}:force_original_aspect_ratio=decrease,setsar=1",
-            self.size.width,
-            self.size.height,
+            "scale={width}:{height}:flags={}:force_original_aspect_ratio=decrease,\
+             pad={width}:{height}:-1:-1:color=black@0:eval=frame,setsar=1",
             scale_flags(self.flags.as_deref()),
         ))
     }
@@ -923,6 +936,29 @@ impl VideoFilterOp for CropFilter {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClipFilter {
+    pub size: FrameSize,
+}
+
+impl VideoFilterOp for ClipFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        (state.size != self.size).then(|| self.clone().into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.size = self.size;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!("crop={}:{}:0:0", self.size.width, self.size.height))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Dv5WorkaroundFilter;
 
 impl VideoFilterOp for Dv5WorkaroundFilter {
@@ -944,6 +980,11 @@ impl VideoFilterOp for Dv5WorkaroundFilter {
 
     fn as_arg(&self) -> Option<String> {
         FrameColor::hdr10().to_setparams()
+    }
+
+    // setparams changes only metadata
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        true
     }
 }
 
@@ -1038,6 +1079,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
         let evaluated = scale_filter(Some("spline"))
             .evaluate(&state, &FfmpegInfo::default())
@@ -1048,11 +1090,133 @@ mod tests {
         );
     }
 
+    fn crop_state(width: u32, height: u32, sar: Option<&str>) -> FrameState {
+        FrameState {
+            size: FrameSize { width, height },
+            is_anamorphic: sar.is_some(),
+            is_interlaced: false,
+            sample_aspect_ratio: sar.map(str::to_owned),
+            display_aspect_ratio: None,
+            surface: FrameSurface::System,
+            pixel_format: PixelFormat::Yuv420p,
+            color: FrameColor::default(),
+            hdr_format: HdrFormat::None,
+            rotation: None,
+            decoder_frames: false,
+        }
+    }
+
+    fn crop_args(state: &FrameState, target: FrameSize) -> (Option<String>, Option<String>) {
+        let ffmpeg_info = FfmpegInfo::default();
+        let mut state = state.clone();
+
+        let scale = ScaleFilter {
+            size: Some(target),
+            scaling_mode: ScalingMode::Crop,
+            input_is_anamorphic: state.is_anamorphic,
+            flags: None,
+        }
+        .evaluate(&state, &ffmpeg_info);
+        if let Some(scale) = &scale {
+            scale.apply_to(&mut state);
+        }
+
+        let crop = CropFilter {
+            size: Some(target),
+            scaling_mode: ScalingMode::Crop,
+        }
+        .evaluate(&state, &ffmpeg_info);
+
+        (
+            scale.and_then(|f| f.as_arg()),
+            crop.and_then(|f| f.as_arg()),
+        )
+    }
+
+    const HD: FrameSize = FrameSize {
+        width: 1920,
+        height: 1080,
+    };
+
+    #[test]
+    fn crop_downscales_same_aspect_source() {
+        assert_eq!(
+            crop_args(&crop_state(3840, 2160, None), HD),
+            (
+                Some(String::from("scale=1920:1080:flags=bicubic,setsar=1")),
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn crop_downscales_wide_source_to_cover() {
+        assert_eq!(
+            crop_args(&crop_state(3840, 1600, None), HD),
+            (
+                Some(String::from("scale=2592:1080:flags=bicubic,setsar=1")),
+                Some(String::from("crop=1920:1080"))
+            )
+        );
+    }
+
+    #[test]
+    fn crop_skips_scale_when_source_already_covers() {
+        assert_eq!(
+            crop_args(&crop_state(2560, 1080, None), HD),
+            (None, Some(String::from("crop=1920:1080")))
+        );
+    }
+
+    #[test]
+    fn crop_upscales_small_source_to_cover() {
+        assert_eq!(
+            crop_args(&crop_state(1920, 800, None), HD),
+            (
+                Some(String::from("scale=2592:1080:flags=bicubic,setsar=1")),
+                Some(String::from("crop=1920:1080"))
+            )
+        );
+    }
+
+    #[test]
+    fn crop_squares_large_anamorphic_source() {
+        let target = FrameSize {
+            width: 1280,
+            height: 720,
+        };
+        assert_eq!(
+            crop_args(&crop_state(1440, 1080, Some("4:3")), target),
+            (
+                Some(String::from("scale=1280:720:flags=bicubic,setsar=1")),
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn crop_squares_anamorphic_source_before_cropping() {
+        let target = FrameSize {
+            width: 640,
+            height: 480,
+        };
+        assert_eq!(
+            crop_args(&crop_state(720, 480, Some("32:27")), target),
+            (
+                Some(String::from("scale=852:480:flags=bicubic,setsar=1")),
+                Some(String::from("crop=640:480"))
+            )
+        );
+    }
+
     #[test]
     fn subtitle_image_scale_as_arg_defaults_to_bicubic() {
         assert_eq!(
             subtitle_image_scale_filter(None).as_arg().as_deref(),
-            Some("scale=1920:1080:flags=bicubic:force_original_aspect_ratio=decrease,setsar=1")
+            Some(
+                "scale=1920:1080:flags=bicubic:force_original_aspect_ratio=decrease,\
+                 pad=1920:1080:-1:-1:color=black@0:eval=frame,setsar=1"
+            )
         );
     }
 
@@ -1063,7 +1227,8 @@ mod tests {
                 .as_arg()
                 .as_deref(),
             Some(
-                "scale=1920:1080:flags=fast_bilinear:force_original_aspect_ratio=decrease,setsar=1"
+                "scale=1920:1080:flags=fast_bilinear:force_original_aspect_ratio=decrease,\
+                 pad=1920:1080:-1:-1:color=black@0:eval=frame,setsar=1"
             )
         );
     }
@@ -1123,6 +1288,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
+            decoder_frames: false,
         };
 
         let filter: VideoFilter = HwMapFilter {

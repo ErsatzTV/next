@@ -66,6 +66,9 @@ pub trait HwAccel {
     fn metadata_bsf(&self, _codec: &VideoCodec) -> Option<MetadataBsf> {
         None
     }
+    fn encoder_filters(&self, _codec: &VideoCodec) -> Vec<VideoFilter> {
+        Vec::new()
+    }
     fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
@@ -74,6 +77,9 @@ pub trait HwAccel {
     }
     fn hw_map_filter(&self, _from: &FrameSurface, _to: &FrameSurface) -> Option<VideoFilter> {
         None
+    }
+    fn upload_surface(&self, target: &FrameSurface) -> FrameSurface {
+        *target
     }
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec;
     fn known_accel(&self) -> Option<&KnownHardwareAccel>;

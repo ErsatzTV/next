@@ -86,6 +86,7 @@ impl FilterChain {
                 }
                 PipelineFilter::Video(vf) => {
                     if let Some(new_filter) = vf.evaluate(&state, ffmpeg_info) {
+                        state.decoder_frames &= new_filter.passes_frames_through(&state);
                         new_filter.apply_to(&mut state);
                         active_filters.push(PipelineFilter::Video(new_filter));
                     }
@@ -93,6 +94,7 @@ impl FilterChain {
                 PipelineFilter::Overlay(of) => {
                     let new_filter = of.clone();
                     new_filter.kind.apply_to(&mut state);
+                    state.decoder_frames = false;
                     active_filters.push(PipelineFilter::Overlay(new_filter));
                 }
             }
@@ -477,15 +479,20 @@ impl FilterChain {
                 resolved.push(PipelineFilter::Video(format));
             }
 
+            let upload_surface = accel
+                .as_ref()
+                .map_or(required, |a| a.upload_surface(&required));
             let upload: VideoFilter = HwUploadFilter {
-                target_surface: required,
+                target_surface: upload_surface,
                 source_format: current_state.pixel_format,
             }
             .into();
             upload.apply_to(current_state);
             surfaces.insert(current_state.surface);
             resolved.push(PipelineFilter::Video(upload));
-            return true;
+            if current_state.surface == required {
+                return true;
+            }
         }
 
         // Lastly, if we're doing a hw -> hw transition, see if we can do so
@@ -675,6 +682,7 @@ impl FilterChain {
         else {
             return None;
         };
+        // CopyQsv must stay: without input state, VPP may be a passthrough.
         va.fuse(vb)
             .map(|fused| PipelineFilter::Video(VideoFilter::VppQsv(fused)))
     }
@@ -922,6 +930,112 @@ mod tests {
         assert_eq!(args[1], "fps=25");
     }
 
+    fn video_args(chain: &FilterChain) -> Vec<String> {
+        chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[rstest::rstest]
+    #[case::decoder_frames(true, false, true)]
+    #[case::fps_keeps_decoder_frames(true, true, true)]
+    #[case::software_decode(false, false, false)]
+    fn evaluate_keeps_copy_qsv_only_for_decoder_frames(
+        #[case] decoder_frames: bool,
+        #[case] with_fps: bool,
+        #[case] keeps_copy: bool,
+    ) {
+        use crate::accel::qsv::CopyQsv;
+        use crate::frame_rate::FrameRate;
+        use crate::video_filter::FpsFilter;
+
+        let mut filters = Vec::new();
+        if with_fps {
+            filters.push(PipelineFilter::Video(
+                FpsFilter {
+                    frame_rate: FrameRate::parse_target("25"),
+                }
+                .into(),
+            ));
+        }
+        filters.push(PipelineFilter::Video(CopyQsv.into()));
+        let mut chain = FilterChain::new(filters);
+        let state = FrameState {
+            decoder_frames,
+            ..sdr_state(FrameSurface::Qsv, PixelFormat::Nv12)
+        };
+
+        chain.evaluate(&state, &FfmpegInfo::default());
+
+        let args = video_args(&chain);
+        assert_eq!(
+            args.iter().any(|a| a == "scale_qsv"),
+            keeps_copy,
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn evaluate_drops_copy_qsv_after_a_filter_that_writes_new_frames() {
+        use crate::accel::qsv::CopyQsv;
+
+        let mut chain = FilterChain::new(vec![
+            PipelineFilter::Video(
+                ScaleFilter {
+                    size: Some(FrameSize {
+                        width: 1280,
+                        height: 720,
+                    }),
+                    scaling_mode: ScalingMode::ScaleAndPad,
+                    input_is_anamorphic: false,
+                    flags: None,
+                }
+                .into(),
+            ),
+            PipelineFilter::Video(CopyQsv.into()),
+        ]);
+        let state = FrameState {
+            decoder_frames: true,
+            ..sdr_state(FrameSurface::Qsv, PixelFormat::Nv12)
+        };
+
+        chain.evaluate(&state, &FfmpegInfo::default());
+
+        let args = video_args(&chain);
+        assert!(!args.iter().any(|a| a == "scale_qsv"), "{args:?}");
+    }
+
+    #[rstest::rstest]
+    #[case::copy_first(true)]
+    #[case::copy_last(false)]
+    fn optimize_keeps_copy_qsv_beside_potentially_passthrough_vpp(#[case] copy_first: bool) {
+        use crate::accel::qsv::{CopyQsv, VppQsv};
+
+        let copy = PipelineFilter::Video(CopyQsv.into());
+        let vpp = PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::format(PixelFormat::Nv12)));
+        let mut chain = FilterChain::new(if copy_first {
+            vec![copy, vpp]
+        } else {
+            vec![vpp, copy]
+        });
+
+        chain.optimize();
+
+        assert_eq!(
+            video_args(&chain),
+            if copy_first {
+                vec!["scale_qsv", "vpp_qsv=format=nv12"]
+            } else {
+                vec!["vpp_qsv=format=nv12", "scale_qsv"]
+            }
+        );
+    }
+
     fn vaapi_accel() -> HardwareAccel {
         HardwareAccel::Vaapi(Vaapi {
             device: String::from("/dev/dri/renderD128"),
@@ -985,6 +1099,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         }
     }
 
@@ -1192,6 +1307,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
+            decoder_frames: false,
         }
     }
 
@@ -1236,6 +1352,45 @@ mod tests {
         assert!(args[1].starts_with("tonemap_opencl="), "{args:?}");
         assert_eq!(args[2], "hwmap=derive_device=vaapi:reverse=1");
         assert_eq!(args[3], "fps=30");
+    }
+
+    #[test]
+    fn resolve_uploads_through_vaapi_for_opencl_tonemap() {
+        let tonemap: VideoFilter = TonemapOpencl {
+            algorithm: Some(String::from("hable")),
+            output_format: HwPixelFormat::Nv12,
+        }
+        .into();
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(tonemap)]);
+
+        chain.resolve(
+            &FfmpegInfo::default(),
+            &Some(HardwareAccel::Vaapi(vaapi_accel_with_opencl(true))),
+            &VideoFilterOptions::default(),
+            &FrameState {
+                surface: FrameSurface::System,
+                ..hdr_vaapi_state()
+            },
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
+        );
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 4, "{args:?}");
+        assert_eq!(args[0], "hwupload");
+        assert_eq!(args[1], "hwmap=derive_device=opencl");
+        assert!(args[2].starts_with("tonemap_opencl="), "{args:?}");
+        assert_eq!(args[3], "hwmap=derive_device=vaapi:reverse=1");
     }
 
     #[test]
@@ -1407,6 +1562,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         }
     }
 
@@ -1844,6 +2000,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         }
     }
 
@@ -2214,6 +2371,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2296,6 +2454,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2354,6 +2513,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2426,6 +2586,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2497,6 +2658,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());

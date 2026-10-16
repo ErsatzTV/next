@@ -210,11 +210,14 @@ async fn stream(
         .find(|c| c.number() == number)
         .ok_or(LineupError::ChannelNotFound(number.to_owned()))?;
 
-    let mut ready_receiver = {
+    let (mut ready_receiver, stream_hints) = {
         let mut active = state.active.lock().await;
 
         if let Some(channel_session) = active.get(number) {
-            channel_session.subscribe_ready()
+            (
+                channel_session.subscribe_ready(),
+                channel_session.stream_hints(),
+            )
         } else {
             let channel_session = ChannelSession::spawn(
                 channel,
@@ -223,8 +226,9 @@ async fn stream(
                 &state.tracker,
             )?;
             let ready_receiver = channel_session.subscribe_ready();
+            let stream_hints = channel_session.stream_hints();
             active.insert(number.to_owned(), channel_session);
-            ready_receiver
+            (ready_receiver, stream_hints)
         }
     };
 
@@ -235,7 +239,7 @@ async fn stream(
         Err(_) => return Err(LineupError::ChannelNotReady),     // 30s deadline
     }
 
-    let content = get_multi_variant(channel, request.headers());
+    let content = get_multi_variant(channel, stream_hints, request.headers());
 
     Ok((
         [(
@@ -268,19 +272,33 @@ async fn fix_content_types(
     response
 }
 
-fn get_multi_variant(channel: &ChannelModel, headers: &HeaderMap) -> String {
+fn get_multi_variant(
+    channel: &ChannelModel,
+    hints: channel_model::StreamHints,
+    headers: &HeaderMap,
+) -> String {
     let mut result = String::new();
     result.push_str("#EXTM3U\n");
     result.push_str("#EXT-X-VERSION:6\n");
-    result.push_str(&format!(
-        "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,LANGUAGE=\"en\",URI=\"{}/session/{}/live_sub.m3u8\"\n",
-        get_scheme_host(headers),
-        channel.number()
-    ));
-    result.push_str(&format!(
-        "#EXT-X-STREAM-INF:BANDWIDTH={},SUBTITLES=\"subs\"\n",
-        channel.bandwidth_bps()
-    ));
+    // burn channels never have cues. An empty rendition still breaks clients: VLC 3 stalls,
+    // and a remuxing ffmpeg waits for packets that never come.
+    if hints.converts_subtitles {
+        // don't claim a language
+        result.push_str(&format!(
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI=\"{}/session/{}/live_sub.m3u8\"\n",
+            get_scheme_host(headers),
+            channel.number()
+        ));
+        result.push_str(&format!(
+            "#EXT-X-STREAM-INF:BANDWIDTH={},SUBTITLES=\"subs\"\n",
+            hints.bandwidth_bps
+        ));
+    } else {
+        result.push_str(&format!(
+            "#EXT-X-STREAM-INF:BANDWIDTH={}\n",
+            hints.bandwidth_bps
+        ));
+    }
     result.push_str(&format!(
         "{}/session/{}/live.m3u8",
         get_scheme_host(headers),

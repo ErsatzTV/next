@@ -392,6 +392,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::Hdr10,
             rotation: None,
+            decoder_frames: false,
         }
     }
 

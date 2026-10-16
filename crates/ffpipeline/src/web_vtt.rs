@@ -14,6 +14,7 @@ use crate::probe::{CodecType, ProbeResultStream, ProbeResultVideoStream};
 pub struct Cue {
     pub start: Duration,
     pub end: Duration,
+    pub settings: String,
     pub text: String,
 }
 
@@ -53,7 +54,12 @@ pub async fn convert_to_vtt(
         "-map",
         format!("0:s:{}", subtitle_index),
         "-c:s",
-        "webvtt",
+        // the webvtt encoder drops cue settings (position, alignment)
+        if subtitle_stream.codec == "webvtt" {
+            "copy"
+        } else {
+            "webvtt"
+        },
         "-y",
         file_name
     ]);
@@ -105,6 +111,7 @@ fn parse_internal(body: &str) -> Result<Vec<Cue>, FFPipelineError> {
     let mut parse_state = ParseState::Header;
     let mut start = Duration::ZERO;
     let mut end = Duration::ZERO;
+    let mut settings = String::new();
     let mut text = String::new();
 
     for line in body.lines() {
@@ -115,15 +122,15 @@ fn parse_internal(body: &str) -> Result<Vec<Cue>, FFPipelineError> {
                 }
             }
             ParseState::Body => {
-                if line.contains(" --> ") {
-                    let split: Vec<&str> = line.split(" --> ").collect();
-                    if split.len() == 2
-                        && let Some(parsed_start) = parse_timestamp(split[0])
-                        && let Some(parsed_end) = parse_timestamp(split[1])
+                if let Some((left, right)) = line.split_once(" --> ") {
+                    let mut right = right.split_whitespace();
+                    if let Some(parsed_start) = parse_timestamp(left.trim())
+                        && let Some(parsed_end) = right.next().and_then(parse_timestamp)
                     {
                         parse_state = ParseState::Cue;
                         start = parsed_start;
                         end = parsed_end;
+                        settings = right.collect::<Vec<_>>().join(" ");
                     }
                 }
             }
@@ -137,6 +144,7 @@ fn parse_internal(body: &str) -> Result<Vec<Cue>, FFPipelineError> {
                     result.push(Cue {
                         start,
                         end,
+                        settings: std::mem::take(&mut settings),
                         text: text.trim().to_string(),
                     });
                     text.clear();
@@ -150,6 +158,7 @@ fn parse_internal(body: &str) -> Result<Vec<Cue>, FFPipelineError> {
         result.push(Cue {
             start,
             end,
+            settings,
             text: text.trim().to_string(),
         });
     }
@@ -231,6 +240,27 @@ and the way we access it is changing
         assert_eq!(parsed[2].start, Duration::from_secs_f64(16.166));
         assert_eq!(parsed[2].end, Duration::from_secs_f64(17.666));
         assert_eq!(parsed[2].text, "[BIRD TWEETS]");
+    }
+
+    #[test]
+    fn vtt_should_keep_cue_settings() {
+        let vtt_text = r"WEBVTT
+
+00:00:01.000 --> 00:00:02.000 align:start line:0
+Top left
+
+00:00:03.000 --> 00:00:04.000
+Plain
+";
+
+        let parsed = parse_internal(vtt_text).unwrap_or_default();
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].end, Duration::from_secs(2));
+        assert_eq!(parsed[0].settings, "align:start line:0");
+        assert_eq!(parsed[0].text, "Top left");
+        assert_eq!(parsed[1].settings, "");
+        assert_eq!(parsed[1].text, "Plain");
     }
 
     #[rstest]

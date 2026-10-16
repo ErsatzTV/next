@@ -8,14 +8,15 @@ use ffpipeline::frame_rate::FrameRate;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::{HardwareAccel, HwAccel};
 use ffpipeline::input::{
-    GraphicsKind, InputSettings, InputSource, LavfiInputSource, LocalInputSource, ProbedInput,
-    WatermarkInput, WatermarkLocation, WatermarkTiming,
+    CanvasLayout, GraphicsKind, InputSettings, InputSource, LavfiInputSource, LocalInputSource,
+    MediaGraphicsOptions, ProbedInput, WatermarkInput, WatermarkLocation, WatermarkTiming,
 };
 use ffpipeline::output_format::OutputFormat;
 use ffpipeline::output_settings::{
     AudioLoudnessSettings, AudioOutputSettings, AudioTranscodeSettings, CopyPolicy, OutputSettings,
     ScalingMode, SubtitleMode, VideoFilterOptions, VideoOutputSettings, VideoTranscodeSettings,
 };
+use ffpipeline::overlay_filter::FramePoint;
 use ffpipeline::pipeline::{
     AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline,
 };
@@ -146,6 +147,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     let video_format = test_case.params.video_format;
     let bit_depth = test_case.params.bit_depth;
     let video_size = test_case.params.video_size;
+    let scaling_mode = test_case.params.scaling_mode;
     let disabled_filters = std::mem::take(&mut test_case.params.disabled_filters);
     let source_video = probe
         .streams
@@ -160,6 +162,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     // copied video keeps the source HDR, so skip the SDR check
     let source_is_hdr =
         !video_copied && (source_video.color_params.is_hdr() || source_video.dv_profile == Some(5));
+    let frame_rate_normalized = test_case.params.frame_rate.is_some();
     // without frame rate normalization, output must keep the source frame rate
     let expected_frame_rate = test_case
         .params
@@ -184,7 +187,22 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     if let Some(subtitle_fixture) = test_case.subtitle_fixture {
         let path = fixture_path(subtitle_fixture);
         let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &path).await;
-        input.subtitle_input = Some(local_input(&path, probe, duration));
+        let mut subtitle_input = local_input(&path, probe, duration);
+        // embedded tracks are only selected by index
+        if subtitle_fixture == test_case.fixture_name {
+            subtitle_input.stream_index =
+                subtitle_input
+                    .probe_result
+                    .streams
+                    .iter()
+                    .find_map(|s| match s {
+                        ProbeResultStream::Video(v) if v.is_subtitle_image() => {
+                            Some(v.stream_index)
+                        }
+                        _ => None,
+                    });
+        }
+        input.subtitle_input = Some(subtitle_input);
     }
     let output = build_output(dir.path(), test_case.params);
 
@@ -248,7 +266,25 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
-    if !video_copied && let Some(size) = video_size {
+    // reference is only the scaled source. without bars, nothing else catches green output.
+    let plain_picture = scaling_mode == ScalingMode::Crop
+        || (!source_is_hdr
+            && !has_watermark
+            && test_case.subtitle_fixture.is_none()
+            && !source_video.is_quarter_turn()
+            && !(deinterlace && source_video.is_interlaced())
+            && in_point.is_zero()
+            && !frame_rate_normalized);
+    if !video_copied
+        && plain_picture
+        && let Some(size) = video_size
+    {
+        assert_matches_source(&test_env.ffmpeg, &segment, &source, size, scaling_mode).await;
+    }
+    if !video_copied
+        && scaling_mode == ScalingMode::ScaleAndPad
+        && let Some(size) = video_size
+    {
         assert_black_bars(
             &test_env.ffmpeg,
             &segment,
@@ -303,19 +339,39 @@ pub async fn run_canvas_test(
     accel: Option<HardwareAccel>,
     codec: &str,
     pix_fmt: &str,
+    positioned: bool,
 ) {
     let size = FrameSize {
         width: 640,
         height: 360,
+    };
+    // the region has the same content offset by `origin`, so the same pixel checks apply and
+    // left of the region must stay blue. it extends past the right and bottom edges to test the
+    // clip that hw overlays need
+    let (origin, canvas_size) = if positioned {
+        (
+            FramePoint { x: 80, y: 40 },
+            FrameSize {
+                width: 600,
+                height: 340,
+            },
+        )
+    } else {
+        (FramePoint { x: 0, y: 0 }, size)
     };
     let dir = tempfile::tempdir().unwrap();
     let main = dir.path().join("main.mkv");
     let canvas = dir.path().join("canvas.nut");
     let canvas_source = format!(
         "color=black@0:s={}x{}:r=24,format=bgra,\
-         drawbox=x=0:y=0:w=160:h=160:color=red@1:t=fill:replace=1,\
-         drawbox=x=320:y=0:w=160:h=160:color=red@0.5:t=fill:replace=1",
-        size.width, size.height
+         drawbox=x={}:y={}:w=160:h=160:color=red@1:t=fill:replace=1,\
+         drawbox=x={}:y={}:w=160:h=160:color=red@0.5:t=fill:replace=1",
+        canvas_size.width,
+        canvas_size.height,
+        -(origin.x as i32),
+        -(origin.y as i32),
+        320 - origin.x as i32,
+        -(origin.y as i32),
     );
     let main_source = format!("color=blue:s={}x{}:r=24", size.width, size.height);
     for (path, args) in [
@@ -397,15 +453,12 @@ pub async fn run_canvas_test(
         }),
         probe_result: canvas_probe,
         stream_index: None,
-        location: WatermarkLocation::TopLeft,
-        width_percent: None,
-        within_source_content: None,
-        horizontal_margin_percent: None,
-        vertical_margin_percent: None,
-        opacity_percent: None,
-        kind: GraphicsKind::Canvas,
+        kind: GraphicsKind::Canvas(if positioned {
+            CanvasLayout::Region { origin }
+        } else {
+            CanvasLayout::FullFrame
+        }),
         in_point: Duration::ZERO,
-        timing: None,
     };
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
     let source_video = probe
@@ -510,6 +563,13 @@ pub async fn run_canvas_test(
         transparent[0] < 50 && transparent[1] < 50 && transparent[2] > 200,
         "transparent canvas region should show the blue main video: {transparent:?} ({pix_fmt})"
     );
+    if positioned {
+        let outside = pixel(40, 80);
+        assert!(
+            outside[0] < 50 && outside[1] < 50 && outside[2] > 200,
+            "positioned canvas should not cover the frame's top left: {outside:?} ({pix_fmt})"
+        );
+    }
 }
 
 /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
@@ -593,15 +653,8 @@ pub async fn run_loudnorm_canvas_test(test_env: &TestEnv, accel: Option<Hardware
             format_name: Some("lavfi".to_owned()),
         },
         stream_index: None,
-        location: WatermarkLocation::TopLeft,
-        width_percent: None,
-        within_source_content: None,
-        horizontal_margin_percent: None,
-        vertical_margin_percent: None,
-        opacity_percent: None,
-        kind: GraphicsKind::Canvas,
+        kind: GraphicsKind::Canvas(CanvasLayout::FullFrame),
         in_point: Duration::ZERO,
-        timing: None,
     };
     let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &main).await;
     let input = build_input(&main, probe, duration, Some(graphics));
@@ -717,6 +770,62 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
     assert!(
         center > 64.0,
         "rotated video has no picture in the centre: luma {center:.1}"
+    );
+}
+
+/// Wrong scale or non-square pixels score about 0.7. Green output scores 0.
+pub async fn assert_matches_source(
+    ffmpeg: &Path,
+    path: &Path,
+    source: &Path,
+    size: FrameSize,
+    scaling_mode: ScalingMode,
+) {
+    let (w, h) = (size.width, size.height);
+    let (fit, description) = match scaling_mode {
+        ScalingMode::Crop => (
+            format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+            "a cover-and-crop",
+        ),
+        ScalingMode::ScaleAndPad => (
+            format!(
+                "scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2,\
+                 pad={w}:{h}:-1:-1:black"
+            ),
+            "a scale-and-pad",
+        ),
+        ScalingMode::Stretch => (format!("scale={w}:{h}"), "a stretch"),
+    };
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-v", "info", "-i"])
+            .arg(path)
+            .args(["-t", "1", "-i"])
+            .arg(source)
+            .arg("-filter_complex")
+            .arg(format!(
+                "[0:v]setsar=1,format=yuv420p,setpts=PTS-STARTPTS[out];\
+                 [1:v]scale=iw*sar:ih,setsar=1,{fit},\
+                 format=yuv420p,setpts=PTS-STARTPTS[ref];\
+                 [out][ref]ssim=shortest=1"
+            ))
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("ssim check timed out")
+    .expect("failed to spawn ffmpeg for ssim check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "ssim check failed:\n{stderr}");
+    let ssim = stderr
+        .rsplit_once(" All:")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or_else(|| panic!("no ssim in output:\n{stderr}"));
+    assert!(
+        ssim > 0.9,
+        "output does not match {description} of the source: ssim {ssim:.3}"
     );
 }
 
@@ -931,15 +1040,16 @@ pub async fn build_watermark_input(
         }),
         probe_result: probe,
         stream_index: None,
-        location: watermark.location.clone(),
-        width_percent: watermark.width_percent,
-        within_source_content: Some(false),
-        horizontal_margin_percent: Some(5.0),
-        vertical_margin_percent: Some(5.0),
-        opacity_percent: watermark.opacity_percent,
-        kind: GraphicsKind::Media,
         in_point: Duration::ZERO,
-        timing: watermark.timing.clone(),
+        kind: GraphicsKind::Media(MediaGraphicsOptions {
+            location: watermark.location.clone(),
+            width_percent: watermark.width_percent,
+            within_source_content: Some(false),
+            horizontal_margin_percent: Some(5.0),
+            vertical_margin_percent: Some(5.0),
+            opacity_percent: watermark.opacity_percent,
+            timing: watermark.timing.clone(),
+        }),
     }
 }
 
@@ -1015,6 +1125,7 @@ pub struct TestOutputParams {
     pub video_bitrate: Option<Kbps>,
     pub video_buffer: Option<Kbps>,
     pub video_size: Option<FrameSize>,
+    pub scaling_mode: ScalingMode,
     pub deinterlace: bool,
     pub audio_copy: Option<CopyPolicy<String>>,
     pub audio_format: AudioFormat,
@@ -1040,6 +1151,7 @@ impl Default for TestOutputParams {
             video_bitrate: Some(Kbps(5000)),
             video_buffer: Some(Kbps(10000)),
             video_size: None,
+            scaling_mode: ScalingMode::ScaleAndPad,
             deinterlace: false,
             audio_copy: None,
             audio_format: AudioFormat::Aac,
@@ -1078,7 +1190,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
                 bitrate: params.video_bitrate,
                 buffer: params.video_buffer,
                 size: params.video_size,
-                scaling_mode: ScalingMode::ScaleAndPad,
+                scaling_mode: params.scaling_mode,
                 deinterlace: params.deinterlace,
                 filter_options: params.filter_options,
             },

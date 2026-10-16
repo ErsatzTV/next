@@ -242,6 +242,10 @@ impl HwAccel for Vaapi {
                     options.extend(args!["-rc_mode", "1"]);
                 }
 
+                if self.capabilities.hevc_a53cc_hangs() {
+                    options.extend(args!["-sei", "-a53_cc"]);
+                }
+
                 Some(VideoCodec {
                     codec_name: "hevc_vaapi",
                     options,
@@ -307,6 +311,14 @@ impl HwAccel for Vaapi {
                 .into(),
             ),
             _ => None,
+        }
+    }
+
+    // reverse hwmap to VAAPI only works on frames mapped from VAAPI
+    fn upload_surface(&self, target: &FrameSurface) -> FrameSurface {
+        match target {
+            FrameSurface::OpenCL => FrameSurface::Vaapi,
+            other => *other,
         }
     }
 
@@ -648,6 +660,7 @@ mod tests {
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
+            decoder_frames: false,
         }
     }
 
@@ -808,5 +821,51 @@ mod tests {
             "expected software Deinterlace (not promoted), got {:?}",
             result.as_arg()
         );
+    }
+
+    #[test]
+    fn hevc_drops_a53cc_sei_only_on_mesa_before_26_2_3() {
+        for (vendor, drops) in [
+            (
+                "Mesa Gallium driver 26.0.8-1ubuntu0.3 for AMD Radeon Vega Mobile Gfx (radeonsi, raven, ACO, DRM 3.64, 7.0.0-38-generic)",
+                true,
+            ),
+            (
+                "Mesa Gallium driver 26.2.2 for AMD Radeon RX 550 / 550 Series (radeonsi, polaris12, ACO)",
+                true,
+            ),
+            (
+                "Mesa Gallium driver 26.2.3 for AMD Radeon RX 550 / 550 Series (radeonsi, polaris12, ACO)",
+                false,
+            ),
+            (
+                "Mesa Gallium driver 26.2.4-arch1.1 for AMD Radeon RX 550 / 550 Series (radeonsi, polaris12, ACO, DRM 3.64, 7.2.8-arch1-2)",
+                false,
+            ),
+            (
+                "Mesa Gallium driver 26.3.0-devel for AMD Radeon RX 550 / 550 Series (radeonsi, polaris12, ACO)",
+                false,
+            ),
+            (
+                "Intel iHD driver for Intel(R) Gen Graphics - 25.3.0 ()",
+                false,
+            ),
+        ] {
+            let mut vaapi = make_vaapi();
+            vaapi.capabilities.vendor = vendor.to_string();
+            let options = |format| {
+                vaapi
+                    .codec_for_format(&format, 8, None)
+                    .unwrap()
+                    .options
+                    .join(" ")
+            };
+            assert_eq!(
+                options(EncodeFormat::Hevc).contains("-sei -a53_cc"),
+                drops,
+                "{vendor}"
+            );
+            assert!(!options(EncodeFormat::H264).contains("-sei"), "{vendor}");
+        }
     }
 }

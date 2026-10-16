@@ -10,6 +10,7 @@ use ffpipeline::output_settings::{
     VideoFilterOptions,
 };
 use ffpipeline::pipeline::{AudioFormat, EncodeFormat, VideoFormat};
+use ffpipeline::probe::CodecType;
 
 use super::*;
 
@@ -134,6 +135,22 @@ macro_rules! shared_tests {
             $crate::common::shared::run(
                 $accel().await,
                 $crate::common::shared::copy_text_subtitle(),
+            )
+            .await;
+        }
+
+        /// The subtitle starts after the probe window, so ffmpeg sizes its canvas from the
+        /// 1920x1040 video (#335).
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn image_subtitle_unknown_size(
+            #[values("1920x1080", "1280x720", "640x480")] res: ::ffpipeline::frame_size::FrameSize,
+        ) {
+            $crate::common::shared::assert_image_subtitle_size_unknown().await;
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::image_subtitle_unknown_size(res),
             )
             .await;
         }
@@ -403,6 +420,37 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Sources larger than the output must still scale before the crop.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn crop(
+            #[values(
+                "1080p_h264.ts",
+                "720p_h264.ts",
+                "480p_h264.ts",
+                "480p_h264_anamorphic.ts"
+            )]
+            src: &'static str,
+            #[values("1280x720", "640x480")] res: ::ffpipeline::frame_size::FrameSize,
+            #[values(("h264", 8), ("hevc", 10))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run($accel().await, $crate::common::shared::crop(src, res, vf))
+                .await;
+        }
+
+        /// Correcting SAR without resizing must not leave legacy QSV encoders reading
+        /// decoder surfaces: vpp_qsv passes through when dimensions and format match.
+        #[::tokio::test]
+        #[ignore]
+        async fn stretch_anamorphic_same_size() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::stretch_anamorphic_same_size(),
+            )
+            .await;
+        }
+
         /// A 1080p source has a coded height of 1088, so 1920x1080 output catches overlays
         /// that blend into the padded surface and leak it to the encoder, e.g. overlay_cuda
         /// (trac #11674), via the height assertion in `assert_video`.
@@ -538,10 +586,11 @@ macro_rules! shared_tests {
         async fn canvas(
             #[values(("ffv1", "bgra"), ("ffv1", "yuva420p"), ("ffv1", "yuva444p"), ("png", "rgba"))]
             source: (&'static str, &'static str),
+            #[values(false, true)] positioned: bool,
         ) {
             let accel = $accel().await;
             if let Some(env) = $crate::common::test_env().await {
-                $crate::common::run_canvas_test(env, accel, source.0, source.1).await;
+                $crate::common::run_canvas_test(env, accel, source.0, source.1, positioned).await;
             }
         }
 
@@ -664,6 +713,45 @@ pub fn copy_text_subtitle() -> TestCase {
     test_case.params.video_size = Some(SIZE_720P);
     test_case.subtitle_fixture = Some("subtitle.srt");
     test_case.expected_copy.video = blocked(vec![CopyBlocker::BurnedSubtitle]);
+    test_case
+}
+
+const CROPPED_PGS: &str = "1080p_h264_cropped_pgs.mkv";
+
+pub async fn assert_image_subtitle_size_unknown() {
+    let Some(env) = test_env().await else {
+        return;
+    };
+    let probe = probe_file(&env.ffmpeg, &env.ffprobe, &fixture_path(CROPPED_PGS)).await;
+    let subtitle = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) if v.codec_type == CodecType::Subtitle => Some(v),
+            _ => None,
+        })
+        .expect("no subtitle stream in fixture");
+    assert_eq!(
+        (subtitle.width, subtitle.height),
+        (None, None),
+        "probe found the subtitle size, so the fixture no longer reproduces #335"
+    );
+}
+
+pub fn image_subtitle_unknown_size(res: FrameSize) -> TestCase {
+    let mut test_case = source_sized(CROPPED_PGS, res);
+    test_case.params.video_size = Some(res);
+    test_case.subtitle_fixture = Some(CROPPED_PGS);
+    // subtitle starts at 6s (after the 5s probe window) and shows ~0.35s later
+    test_case.params.in_point = Duration::from_millis(6200);
+    // near the top of the box (y 940..1020): a 1920x1040 canvas moves it 20px down
+    let scale = f64::min(
+        f64::from(res.width) / 1920.0,
+        f64::from(res.height) / 1080.0,
+    );
+    let x = (f64::from(res.width) - 1920.0 * scale) / 2.0 + 1060.0 * scale;
+    let y = (f64::from(res.height) - 1080.0 * scale) / 2.0 + 952.0 * scale;
+    test_case.burned_point = Some((x as u32, y as u32));
     test_case
 }
 
@@ -822,6 +910,26 @@ pub fn deinterlace(
 ) -> TestCase {
     let mut test_case = transcode(src, res, vf, af);
     test_case.params.deinterlace = deinterlace;
+    test_case
+}
+
+pub fn crop(src: &'static str, res: FrameSize, vf: (&str, u8)) -> TestCase {
+    let mut test_case = transcode(src, res, vf, AudioFormat::Aac);
+    test_case.params.scaling_mode = ScalingMode::Crop;
+    test_case
+}
+
+pub fn stretch_anamorphic_same_size() -> TestCase {
+    let mut test_case = transcode(
+        "480p_h264_anamorphic.ts",
+        FrameSize {
+            width: 720,
+            height: 480,
+        },
+        ("h264", 8),
+        AudioFormat::Aac,
+    );
+    test_case.params.scaling_mode = ScalingMode::Stretch;
     test_case
 }
 
