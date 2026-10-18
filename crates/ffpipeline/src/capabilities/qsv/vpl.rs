@@ -93,9 +93,10 @@ impl QsvCapabilities {
                 "[qsv] VPL reported no codecs; falling back to a legacy Media SDK capability query"
             );
 
-            if let Some(capabilities) = legacy::probe(&vpl) {
-                return Ok(capabilities);
-            }
+            // no codecs means no device. an error makes the channel use software
+            return legacy::probe(&vpl).ok_or_else(|| {
+                FFPipelineError::QsvCapabilitiesError("no hardware implementation found".into())
+            });
         }
 
         Ok(QsvCapabilities {
