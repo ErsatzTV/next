@@ -18,6 +18,8 @@ use crate::input::LocalInputSource;
 use crate::input::{FfmpegInputArgs, HttpInputSource};
 use crate::input::{InputSource, RtspInputSource};
 
+static PGS_CODECS: &[&str] = &["hdmv_pgs_subtitle", "pgssub", "pgs"];
+
 static SUBTITLE_IMAGE_CODECS: &[&str] = &[
     "hdmv_pgs_subtitle",
     "dvd_subtitle",
@@ -135,6 +137,10 @@ impl ProbeResultVideoStream {
     pub fn is_subtitle_image(&self) -> bool {
         self.codec_type == CodecType::Subtitle
             && SUBTITLE_IMAGE_CODECS.contains(&self.codec.as_str())
+    }
+
+    pub fn is_pgs_subtitle(&self) -> bool {
+        self.codec_type == CodecType::Subtitle && PGS_CODECS.contains(&self.codec.as_str())
     }
 
     pub fn is_still_image(&self) -> bool {
