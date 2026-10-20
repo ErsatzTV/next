@@ -328,6 +328,7 @@ pub enum PipelineInput {
         index: u32,
         path: String,
         seek: Duration,
+        canvas_size: Option<FrameSize>,
     },
     Graphics {
         input: GraphicsInput,
@@ -681,6 +682,7 @@ impl Pipeline {
                     index: subtitle_stream.stream_index,
                     path: subtitle_input.probe_result.path.to_owned(),
                     seek: subtitle_input.in_point,
+                    canvas_size: unknown_pgs_canvas_size(subtitle_stream),
                 });
 
                 let secondary_initial_state = FrameState {
@@ -1286,6 +1288,24 @@ impl Pipeline {
             _ => None,
         });
 
+        // the subtitle can share the video's `-i`
+        let mut subtitle_canvas_args: Option<(&str, ArgVec)> =
+            self.inputs.iter().find_map(|i| match i {
+                PipelineInput::Subtitle {
+                    index,
+                    path,
+                    canvas_size: Some(size),
+                    ..
+                } => Some((
+                    path.as_str(),
+                    args![
+                        format!("-canvas_size:{index}"),
+                        format!("{}x{}", size.width, size.height)
+                    ],
+                )),
+                _ => None,
+            });
+
         let mut sorted_inputs: Vec<&PipelineInput> = self.inputs.iter().collect();
         sorted_inputs.sort_by_key(|i| i.sort_order());
 
@@ -1329,6 +1349,12 @@ impl Pipeline {
 
                     result.extend(input_source.args_for_input());
 
+                    if let Some((_, canvas_args)) =
+                        subtitle_canvas_args.take_if(|(p, _)| *p == path.as_str())
+                    {
+                        result.extend(canvas_args);
+                    }
+
                     result.extend(args!["-i", path.to_owned()]);
                 }
                 PipelineInput::Audio {
@@ -1359,6 +1385,12 @@ impl Pipeline {
 
                             result.extend(input_source.args_for_input());
 
+                            if let Some((_, canvas_args)) =
+                                subtitle_canvas_args.take_if(|(p, _)| *p == path.as_str())
+                            {
+                                result.extend(canvas_args);
+                            }
+
                             result.extend(args!["-i", path.to_owned()]);
 
                             input_paths.len() - 1
@@ -1381,6 +1413,10 @@ impl Pipeline {
                         }
 
                         result.extend(input_source.args_for_input());
+
+                        if let Some((_, canvas_args)) = subtitle_canvas_args.take() {
+                            result.extend(canvas_args);
+                        }
 
                         result.extend(args!["-i", path.to_owned()]);
                     }
@@ -1453,6 +1489,17 @@ impl std::fmt::Display for Pipeline {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "args: {}", self.args().join(" "))
     }
+}
+
+// PGS is 1080p. With no size, ffmpeg uses the video size (e.g. 4K) and scales that canvas on
+// every frame until the first subtitle.
+fn unknown_pgs_canvas_size(stream: &ProbeResultVideoStream) -> Option<FrameSize> {
+    (stream.is_pgs_subtitle() && (stream.width.is_none() || stream.height.is_none())).then_some(
+        FrameSize {
+            width: 1920,
+            height: 1080,
+        },
+    )
 }
 
 fn subtitle_burn<'a>(
@@ -1783,6 +1830,92 @@ mod tests {
             pipeline.copy_decisions().transcode_summary().as_deref(),
             Some("video (image subtitles)")
         );
+    }
+
+    fn image_subtitle_input(path: &str, codec: &str, size: Option<(u32, u32)>) -> ProbedInput {
+        let mut subtitle = multichannel_ac3_input(path).video_input;
+        subtitle.probe_result.streams.truncate(1);
+        if let crate::probe::ProbeResultStream::Video(video) = &mut subtitle.probe_result.streams[0]
+        {
+            video.codec_type = crate::probe::CodecType::Subtitle;
+            video.codec = codec.to_owned();
+            video.stream_index = 7;
+            video.width = size.map(|(w, _)| w);
+            video.height = size.map(|(_, h)| h);
+        }
+        subtitle
+    }
+
+    fn args_by_input(args: &ArgVec) -> Vec<(String, Vec<String>)> {
+        let mut start = 0;
+        let mut result = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "-i" {
+                result.push((
+                    args[i + 1].to_string(),
+                    args[start..i].iter().map(|a| a.to_string()).collect(),
+                ));
+                start = i + 2;
+            }
+        }
+        result
+    }
+
+    fn canvas_size_args(input: InputSettings) -> Vec<(String, Vec<String>)> {
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+        pipeline.optimize();
+        args_by_input(&pipeline.args())
+            .into_iter()
+            .map(|(path, args)| {
+                let canvas = args
+                    .windows(2)
+                    .filter(|a| a[0].starts_with("-canvas_size"))
+                    .flat_map(|a| a.to_vec())
+                    .collect();
+                (path, canvas)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn embedded_pgs_without_size_sets_canvas_on_shared_input() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        input.subtitle_input = Some(image_subtitle_input("main.mkv", "hdmv_pgs_subtitle", None));
+        assert_eq!(
+            canvas_size_args(input),
+            [(
+                "main.mkv".to_owned(),
+                vec!["-canvas_size:7".to_owned(), "1920x1080".to_owned()]
+            )]
+        );
+    }
+
+    #[test]
+    fn external_pgs_without_size_sets_canvas_on_its_own_input() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        input.subtitle_input = Some(image_subtitle_input("main.sup", "pgssub", None));
+        assert_eq!(
+            canvas_size_args(input),
+            [
+                ("main.mkv".to_owned(), vec![]),
+                (
+                    "main.sup".to_owned(),
+                    vec!["-canvas_size:7".to_owned(), "1920x1080".to_owned()]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn image_subtitle_canvas_is_left_to_ffmpeg_when_size_known_or_not_pgs() {
+        for subtitle in [
+            image_subtitle_input("main.mkv", "hdmv_pgs_subtitle", Some((1920, 1080))),
+            image_subtitle_input("main.mkv", "dvd_subtitle", None),
+        ] {
+            let mut input = multichannel_ac3_input("main.mkv");
+            input.subtitle_input = Some(subtitle);
+            assert_eq!(canvas_size_args(input), [("main.mkv".to_owned(), vec![])]);
+        }
     }
 
     fn separate_audio_input(input_source: InputSource, seek: Duration) -> InputSettings {

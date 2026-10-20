@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix image subtitles (e.g. PGS) missing or misplaced with hardware acceleration when the subtitle size differs from the video size (e.g. cropped video)
 - Fix VAAPI stream failing when software `pad` is used before `tonemap_opencl`
 - Fix QSV stream failing when no Intel device is found; the channel now uses a software pipeline
+- Fix slow transcoding of high-resolution video with PGS subtitles until the first subtitle appears
 
 ## [0.2.2] - 2026-10-13
 ### Fixed
