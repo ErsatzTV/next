@@ -70,12 +70,19 @@ body:
     id: troubleshooting-sharing
     attributes:
       label: How will you share troubleshooting results?
-      description: The troubleshooting zip is required to investigate a problem. If you'd rather not post it publicly, join [Discord](https://discord.ersatztv.org) and send it to the maintainer in a direct message that mentions this issue. Issues without a zip may be closed.
+      description: Troubleshooting results are required to investigate a problem. **Upload Results** encrypts them so only the maintainer can read them. Otherwise attach the zip publicly, or join [Discord](https://discord.ersatztv.org) and send it to the maintainer in a direct message that mentions this issue. Issues without results may be closed.
       options:
+        - Uploaded with Upload Results (ID below)
         - Attached below (public)
         - I will send it privately in a Discord DM
     validations:
       required: true
+  - type: input
+    id: upload-id
+    attributes:
+      label: Upload ID
+      description: The ID shown after **Upload Results**. See [Troubleshooting](https://ersatztv.org/docs/troubleshooting) for what is uploaded and who can read it.
+      placeholder: etv-xxxx-xxxxxx
   - type: textarea
     id: troubleshooting
     attributes:
@@ -86,12 +93,12 @@ body:
         3. Make sure **Streaming Engine** is set to **Next**, then select the Playback Settings that trigger the problem.
         4. Click **Play** to start playback.
         5. Repeat steps 3 and 4 until the problem is reproduced.
-        6. Click **Download Results** to have ErsatzTV collect relevant troubleshooting logs (FFmpeg log, FFmpeg Profile, Hardware Capabilities, Media Info, etc) and compress them in a zip file.
-        7. Attach the zip to this field, or leave it empty if you chose to send it privately.
+        6. Click **Upload Results** to have ErsatzTV collect relevant troubleshooting logs (FFmpeg log, FFmpeg Profile, Hardware Capabilities, Media Info, etc), encrypt them and upload them. Paste the ID it shows into **Upload ID** above.
+        7. If you can't upload, click **Download Results** instead to get a zip file, and attach it to this field or send it privately.
 
         If the problem only happens on the channel (e.g. between items, or with filler or graphics), use **Troubleshoot Channel** on the **Channels** page instead, with the date and time when the problem happens.
 
-        **This issue is public.** The zip includes file paths (which can contain your username and share names) and the names of your media. Do not attach a **media sample** here; one will be requested privately if needed.
+        **This issue is public.** A downloaded zip includes file paths (which can contain your username and share names) and the names of your media. Do not attach a **media sample** here; one will be requested privately if needed.
   - type: textarea
     id: additional-information
     attributes:
