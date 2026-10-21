@@ -623,13 +623,6 @@ impl Pipeline {
                 .into(),
             ),
             PipelineFilter::Video(
-                PadFilter {
-                    size: video_transcode.size,
-                    scaling_mode: video_transcode.scaling_mode,
-                }
-                .into(),
-            ),
-            PipelineFilter::Video(
                 CropFilter {
                     size: video_transcode.size,
                     scaling_mode: video_transcode.scaling_mode,
@@ -638,6 +631,15 @@ impl Pipeline {
             ),
         ];
 
+        // always pad after tonemap; qsv on windows ignores pad color with some hdr content
+        let pad = PipelineFilter::Video(
+            PadFilter {
+                size: video_transcode.size,
+                scaling_mode: video_transcode.scaling_mode,
+            }
+            .into(),
+        );
+
         if tonemap_first {
             filters.push(tonemap);
             filters.extend(geometry_filters);
@@ -645,6 +647,7 @@ impl Pipeline {
             filters.extend(geometry_filters);
             filters.push(tonemap);
         }
+        filters.push(pad);
 
         let mut inputs = vec![
             PipelineInput::Audio {
