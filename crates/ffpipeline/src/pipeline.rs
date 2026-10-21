@@ -1208,6 +1208,13 @@ impl Pipeline {
     /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
     /// slow canvas. The qsv frames queued for overlay_qsv exhaust fixed pools (runtime < 2.9).
     fn audio_needs_own_input(&self) -> bool {
+        // rkmpp tests time out with loudnorm
+        if let Some(HardwareAccel::Rkmpp(_)) = &self.accel
+            && self.has_loudnorm()
+        {
+            return true;
+        }
+
         let Some(HardwareAccel::Qsv(qsv)) = &self.accel else {
             return false;
         };
