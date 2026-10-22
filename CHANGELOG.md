@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 - Playout schema `0.0.7`: canvas graphics layers accept an optional `layout`
   - This can be used to composite a canvas smaller than the final output size 
+- Probe for HDR10 metadata using first frame of local and HTTP sources, when `probe_hint` omits `has_hdr10_metadata` for `smpte2084` video
+  - This allows hardware tonemapping (QSV) for e.g. media server content that doesn't reliably report HDR10 metadata
 
 ### Fixed
 - Fix channels falling behind schedule when the playout JSON is updated or replaced

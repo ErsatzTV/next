@@ -904,7 +904,7 @@
             "boolean",
             "null"
           ],
-          "description": "Whether the stream carries HDR10 static metadata (mastering display colour volume or content light level), at the container level or in per-frame SEI. Hardware tonemappers that read that metadata (Intel vpp_qsv) are only used when this is true; omitting it is treated as false and falls back to software tonemapping for \"smpte2084\" content."
+          "description": "Whether the stream carries HDR10 static metadata (mastering display colour volume or content light level), at the container level or in per-frame SEI. Hardware tonemappers that read that metadata (Intel vpp_qsv) are only used when this is true; when it is omitted for \"smpte2084\" content, the channel reads the first frame of local and HTTP sources to determine it, and otherwise treats it as false."
         },
         "rotation": {
           "type": [

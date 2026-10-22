@@ -610,54 +610,84 @@ async fn probe_hdr10_metadata(
             continue;
         }
 
-        let mut args: ArgVec = args![
-            "-hide_banner",
-            "-print_format",
-            "json",
-            "-select_streams",
-            video.stream_index.to_string(),
-            "-read_intervals",
-            "%+#1",
-            "-show_frames",
-            "-show_entries",
-            "frame=side_data_list",
-        ];
-        args.extend(input_args.iter().cloned());
-        args.extend(args!["-i", path.to_owned()]);
-
-        let output = tokio::time::timeout(
-            FRAME_PROBE_TIMEOUT,
-            process::command(ffprobe_path)
-                .args(args.iter().map(Cow::as_ref))
-                .output(),
-        )
-        .await;
-
-        let Ok(Ok(output)) = output else {
-            log::warn!(
-                "ffprobe frame probe for HDR10 metadata timed out or failed on stream {}",
-                video.stream_index
-            );
-            continue;
-        };
-
-        if !output.status.success() {
-            log::warn!(
-                "error executing ffprobe frame probe: {}\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            );
-            continue;
+        if let Some(has_hdr10_metadata) =
+            probe_frame_hdr10_metadata(ffprobe_path, path, input_args, video.stream_index).await
+        {
+            video.color_params.has_hdr10_metadata = has_hdr10_metadata;
         }
+    }
+}
 
-        match serde_json::from_slice::<FrameProbeOutput>(&output.stdout) {
-            Ok(frames) => {
-                video.color_params.has_hdr10_metadata = frames
-                    .frames
-                    .iter()
-                    .any(|f| has_hdr10_side_data(&f.side_data_list));
-            }
-            Err(err) => log::warn!("failed to parse ffprobe frame probe: {err}"),
+pub async fn probe_stream_hdr10_metadata(
+    probe_deps: &ProbeDeps<'_>,
+    source: &InputSource,
+    stream_index: u32,
+) -> Option<bool> {
+    let path = source.input_path()?;
+    probe_frame_hdr10_metadata(
+        probe_deps.ffprobe_path,
+        &path,
+        &source.args_for_input(),
+        stream_index,
+    )
+    .await
+}
+
+async fn probe_frame_hdr10_metadata(
+    ffprobe_path: &Path,
+    path: &str,
+    input_args: &ArgVec,
+    stream_index: u32,
+) -> Option<bool> {
+    let mut args: ArgVec = args![
+        "-hide_banner",
+        "-print_format",
+        "json",
+        "-select_streams",
+        stream_index.to_string(),
+        "-read_intervals",
+        "%+#1",
+        "-show_frames",
+        "-show_entries",
+        "frame=side_data_list",
+    ];
+    args.extend(input_args.iter().cloned());
+    args.extend(args!["-i", path.to_owned()]);
+
+    let output = tokio::time::timeout(
+        FRAME_PROBE_TIMEOUT,
+        process::command(ffprobe_path)
+            .args(args.iter().map(Cow::as_ref))
+            .output(),
+    )
+    .await;
+
+    let Ok(Ok(output)) = output else {
+        log::warn!(
+            "ffprobe frame probe for HDR10 metadata timed out or failed on stream {stream_index}"
+        );
+        return None;
+    };
+
+    if !output.status.success() {
+        log::warn!(
+            "error executing ffprobe frame probe: {}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
+
+    match serde_json::from_slice::<FrameProbeOutput>(&output.stdout) {
+        Ok(frames) => Some(
+            frames
+                .frames
+                .iter()
+                .any(|f| has_hdr10_side_data(&f.side_data_list)),
+        ),
+        Err(err) => {
+            log::warn!("failed to parse ffprobe frame probe: {err}");
+            None
         }
     }
 }

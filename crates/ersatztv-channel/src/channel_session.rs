@@ -1171,6 +1171,8 @@ impl ChannelSession {
                 let path = input.input_path().ok_or(ChannelError::ProbeHintFailure)?;
                 let mut result = probe_hint_to_result(hint, path);
                 self.fill_missing_rotation(&mut result, input).await;
+                self.fill_missing_hdr10_metadata(&mut result, hint, input)
+                    .await;
                 Ok(result)
             }
             None => self.probe_source(input).await,
@@ -1199,6 +1201,46 @@ impl ChannelSession {
             }
 
             video.rotation = probe::probe_rotation(&probe_deps, local, video.stream_index).await;
+        }
+    }
+
+    /// Media servers don't report HDR10 static metadata, so hints often omit it; read the first
+    /// frame rather than treating PQ video as metadata-free
+    async fn fill_missing_hdr10_metadata(
+        &self,
+        result: &mut ProbeResult,
+        hint: &ProbeHint,
+        input: &InputSource,
+    ) {
+        if !matches!(input, InputSource::Local(_) | InputSource::Http(_)) {
+            return;
+        }
+
+        let probe_deps = probe::ProbeDeps {
+            ffprobe_path: &self.ffprobe_path,
+            ffmpeg_path: &self.ffmpeg_path,
+        };
+
+        for stream in result.streams.iter_mut() {
+            let ProbeResultStream::Video(video) = stream else {
+                continue;
+            };
+
+            let hinted = hint
+                .video
+                .iter()
+                .find(|v| v.stream_index == video.stream_index)
+                .is_some_and(|v| v.has_hdr10_metadata.is_some());
+
+            if video.codec_type != CodecType::Video || !video.color_params.is_pq() || hinted {
+                continue;
+            }
+
+            if let Some(has_hdr10_metadata) =
+                probe::probe_stream_hdr10_metadata(&probe_deps, input, video.stream_index).await
+            {
+                video.color_params.has_hdr10_metadata = has_hdr10_metadata;
+            }
         }
     }
 
