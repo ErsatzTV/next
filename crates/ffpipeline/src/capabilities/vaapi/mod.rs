@@ -32,6 +32,13 @@ pub struct VaapiCapabilities {
     /// Bitmask of VA_RC_* per (profile, entrypoint). Absent = unknown / not queried.
     #[serde(serialize_with = "serialize_rate_control")]
     pub(crate) rate_control: HashMap<(i32, i32), u32>,
+    pub(crate) amd_encode_engine: Option<AmdEncodeEngine>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum AmdEncodeEngine {
+    Vce,
+    Vcn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,6 +166,15 @@ impl VaapiCapabilities {
     /// Mesa before 26.2.3 loops forever parsing an HEVC A53 CC SEI (mesa#16267).
     pub fn hevc_a53cc_hangs(&self) -> bool {
         self.mesa_version().is_some_and(|v| v < (26, 2, 3))
+    }
+
+    /// VCE H.264 drops slices at the default async_depth (2). Seen on Polaris only. HEVC is not affected.
+    pub fn h264_needs_serial_encode(&self) -> bool {
+        self.amd_encode_engine == Some(AmdEncodeEngine::Vce)
+    }
+
+    pub fn amd_encode_engine(&self) -> Option<AmdEncodeEngine> {
+        self.amd_encode_engine
     }
 
     fn mesa_version(&self) -> Option<(u32, u32, u32)> {

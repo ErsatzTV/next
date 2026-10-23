@@ -221,11 +221,14 @@ impl HwAccel for Vaapi {
 
         match format {
             EncodeFormat::H264 => {
-                let options = if force_cqp {
-                    args!["-rc_mode", "1"]
-                } else {
-                    Vec::new()
-                };
+                let mut options = Vec::new();
+                if force_cqp {
+                    options.extend(args!["-rc_mode", "1"]);
+                }
+
+                if self.capabilities.h264_needs_serial_encode() {
+                    options.extend(args!["-async_depth", "1"]);
+                }
 
                 Some(VideoCodec {
                     codec_name: "h264_vaapi",
@@ -637,6 +640,7 @@ mod tests {
                 can_overlay: false,
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
+                amd_encode_engine: None,
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: 0,
@@ -866,6 +870,36 @@ mod tests {
                 "{vendor}"
             );
             assert!(!options(EncodeFormat::H264).contains("-sei"), "{vendor}");
+        }
+    }
+
+    #[test]
+    fn async_depth_1_only_for_vce_h264() {
+        use crate::capabilities::vaapi::AmdEncodeEngine;
+
+        for (engine, expected) in [
+            (Some(AmdEncodeEngine::Vce), true),
+            (Some(AmdEncodeEngine::Vcn), false),
+            (None, false),
+        ] {
+            let mut vaapi = make_vaapi();
+            vaapi.capabilities.amd_encode_engine = engine;
+            let options = |format| {
+                vaapi
+                    .codec_for_format(&format, 8, None)
+                    .unwrap()
+                    .options
+                    .join(" ")
+            };
+            assert_eq!(
+                options(EncodeFormat::H264).contains("-async_depth 1"),
+                expected,
+                "{engine:?}"
+            );
+            assert!(
+                !options(EncodeFormat::Hevc).contains("-async_depth"),
+                "{engine:?}"
+            );
         }
     }
 }

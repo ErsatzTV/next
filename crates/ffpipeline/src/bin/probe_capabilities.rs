@@ -347,6 +347,9 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
     println!("  Vendor:  {}", caps.vendor());
     println!("  Device:  {device}");
     println!("  Driver:  {}", driver.unwrap_or("(auto-detected)"));
+    if let Some(engine) = caps.amd_encode_engine() {
+        println!("  AMD encode engine: {engine:?}");
+    }
     println!();
 
     print_decode_table(ALL_FORMATS, |f, bd| {
