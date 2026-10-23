@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Probe for HDR10 metadata using first frame of local and HTTP sources, when `probe_hint` omits `has_hdr10_metadata` for `smpte2084` video
   - This allows hardware tonemapping (QSV) for e.g. media server content that doesn't reliably report HDR10 metadata
 
+### Changed
+- Remove VideoToolbox `h264` encoder workaround that stripped A53 closed captions
+  - This is no longer needed with ErsatzTV-ffmpeg `8.1.2-5`
+
 ### Fixed
 - Fix channels falling behind schedule when the playout JSON is updated or replaced
 - Fix image subtitles (e.g. PGS) missing or misplaced with hardware acceleration when the subtitle size differs from the video size (e.g. cropped video)
