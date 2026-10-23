@@ -55,7 +55,7 @@ use crate::playlist_manager::{
     PlaylistManager, PlaylistManagerOutputFiles, SHORTFALL_TOLERANCE, SubtitleSource,
 };
 use crate::playout_loader::PlayoutLoader;
-use crate::pts_scanner::{PtsScanner, PtsTime};
+use crate::pts_scanner::PtsScanner;
 
 const STDERR_RING_LINES: usize = 2_000;
 const STALL_THRESHOLD: Duration = Duration::from_secs(60);
@@ -435,9 +435,9 @@ impl ChannelSession {
         log::debug!("channel session state: {}", self.state);
 
         // get last pts offset
-        let mut pts_time: Option<PtsTime> = None;
+        let mut pts_offset: Option<PtsOffset> = None;
         match self.pts_scanner.get_last_pts().await {
-            Ok(scanned_pts_time) => pts_time = Some(scanned_pts_time),
+            Ok(scanned) => pts_offset = Some(scanned),
             Err(e) => log::debug!("{e}"),
         }
 
@@ -504,14 +504,12 @@ impl ChannelSession {
             self.state = state;
         }
 
-        let pts_duration = pts_time.map(|p| p.duration);
-
         let result = self
             .transcode_item(
                 &current_item,
                 realtime,
                 troubleshoot,
-                pts_duration,
+                pts_offset,
                 is_fallback,
             )
             .await;
@@ -541,11 +539,11 @@ impl ChannelSession {
                 }
                 let fallback_item = self.fallback_playout_item(&reason, Duration::ZERO).await;
                 // the failed pass may have output segments
-                let pts_duration = match self.pts_scanner.get_last_pts().await {
-                    Ok(scanned_pts_time) => Some(scanned_pts_time.duration),
-                    Err(_) => pts_duration,
+                let pts_offset = match self.pts_scanner.get_last_pts().await {
+                    Ok(scanned) => Some(scanned),
+                    Err(_) => pts_offset,
                 };
-                self.transcode_item(&fallback_item, realtime, troubleshoot, pts_duration, true)
+                self.transcode_item(&fallback_item, realtime, troubleshoot, pts_offset, true)
                     .await?
             }
         };
@@ -563,7 +561,7 @@ impl ChannelSession {
         current_item: &PlayoutItem,
         realtime: bool,
         troubleshoot: bool,
-        pts_duration: Option<Duration>,
+        pts_offset: Option<PtsOffset>,
         is_fallback: bool,
     ) -> Result<(OffsetDateTime, bool), ChannelError> {
         let subtitle_mode = if is_fallback {
@@ -679,7 +677,7 @@ impl ChannelSession {
                 segment_template: self.output_segment_template.clone(),
                 troubleshoot,
             },
-            pts_offset: pts_duration.map(|duration| PtsOffset { duration }),
+            pts_offset,
             realtime,
             is_live,
             frame_rate: target_frame_rate(&self.channel_config.normalization)
@@ -877,7 +875,6 @@ impl ChannelSession {
             input_settings.subtitle_input = None;
         }
 
-        let pts_offset = output_settings.pts_offset;
         let mut pipeline_result =
             pipeline::generate_pipeline(&self.ffmpeg_info, input_settings, output_settings)?;
         pipeline_result.optimize();
@@ -924,7 +921,7 @@ impl ChannelSession {
             .await
             .before_new_pipeline(
                 self.transcoded_until - self.start_time_offset,
-                pts_offset,
+                pipeline_result.stream_start(),
                 subtitle_source,
             )
             .await?;

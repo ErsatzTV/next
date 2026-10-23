@@ -151,6 +151,7 @@ async fn run_copy_seek_path(
 
         pts_offset = Some(PtsOffset {
             duration: last_segment_end(&env.ffprobe, &chunk_dir).await,
+            audio_end: None,
         });
         target += plan.duration;
         remaining -= plan.duration;

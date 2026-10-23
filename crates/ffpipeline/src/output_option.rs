@@ -97,7 +97,8 @@ impl OutputOption {
             OutputOption::TsOffset(Some(pts_offset)) if pts_offset.duration > Duration::ZERO => {
                 args![
                     "-output_ts_offset",
-                    format!("{}ms", pts_offset.duration.as_millis()),
+                    // avoid starting before the previous output ends
+                    format!("{}us", pts_offset.duration.as_nanos().div_ceil(1000)),
                 ]
             }
             OutputOption::TsOffset(_) => Vec::new(),

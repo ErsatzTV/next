@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use ersatztv_channel::config::{PLAYLIST_WINDOW_SEGMENTS, SessionConfig};
 use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::HEARTBEAT_FILE_NAME;
-use ffpipeline::pipeline::PtsOffset;
 use ffpipeline::web_vtt::{Cue, format_vtt_ts};
 use time::OffsetDateTime;
 use time::macros::format_description;
@@ -75,7 +74,7 @@ pub struct PlaylistManager {
     last_segment_end: OffsetDateTime,
     current_session_start: OffsetDateTime,
 
-    pts_offset: Option<PtsOffset>,
+    stream_start: Option<Duration>,
     subtitle_source: Option<SubtitleSource>,
 
     timeout: bool,
@@ -130,7 +129,7 @@ impl PlaylistManager {
             last_segment_end: channel_start_time,
             current_session_start: channel_start_time,
 
-            pts_offset: None,
+            stream_start: None,
             subtitle_source: None,
 
             timeout: false,
@@ -154,11 +153,11 @@ impl PlaylistManager {
     pub async fn before_new_pipeline(
         &mut self,
         scheduled_start: OffsetDateTime,
-        new_pts_offset: Option<PtsOffset>,
+        new_stream_start: Option<Duration>,
         new_subtitle_source: Option<SubtitleSource>,
     ) -> Result<(), ChannelError> {
         self.update().await?;
-        self.pts_offset = new_pts_offset;
+        self.stream_start = new_stream_start;
         self.subtitle_source = new_subtitle_source;
         self.pending_discontinuity = true;
 
@@ -268,7 +267,7 @@ impl PlaylistManager {
 
             let vtt_path = format!("{}.vtt", file.strip_suffix(".ts").unwrap_or(&file));
             let vtt_full = self.output_folder.join(&vtt_path);
-            let stream_start = self.pts_offset.unwrap_or_default().duration
+            let stream_start = self.stream_start.unwrap_or_default()
                 + Duration::from_secs_f64(
                     (program_date_time - self.current_session_start)
                         .as_seconds_f64()
