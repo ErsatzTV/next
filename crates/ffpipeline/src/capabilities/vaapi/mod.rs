@@ -33,6 +33,8 @@ pub struct VaapiCapabilities {
     #[serde(serialize_with = "serialize_rate_control")]
     pub(crate) rate_control: HashMap<(i32, i32), u32>,
     pub(crate) amd_encode_engine: Option<AmdEncodeEngine>,
+    /// ffmpeg uses this to pick the Vulkan device. Without it, ffmpeg picks by vendor.
+    pub(crate) pci_device_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -175,6 +177,10 @@ impl VaapiCapabilities {
 
     pub fn amd_encode_engine(&self) -> Option<AmdEncodeEngine> {
         self.amd_encode_engine
+    }
+
+    pub fn pci_device_id(&self) -> Option<u32> {
+        self.pci_device_id
     }
 
     fn mesa_version(&self) -> Option<(u32, u32, u32)> {

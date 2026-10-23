@@ -269,6 +269,22 @@ fn print_cuda_vulkan_tonemap(caps: &NvidiaCapabilities) {
     println!("  Also requires ffmpeg with the vulkan hwaccel and the libplacebo filter.");
 }
 
+fn print_vaapi_vulkan(device: &str, caps: &VaapiCapabilities) {
+    println!("Vulkan (libplacebo):");
+    println!(
+        "  VA PCI device id:  {}",
+        caps.pci_device_id()
+            .map_or_else(|| String::from("(unavailable)"), |id| format!("0x{id:04x}"))
+    );
+    match VulkanCapabilities::probe_for_vaapi(device, caps) {
+        Ok(vulkan) => {
+            println!("  Device index:      {}", vulkan.device_index());
+            println!("  DRM_PRIME import:  {}", yn(vulkan.can_import_drm_prime()));
+        }
+        Err(e) => println!("  unavailable ({e})"),
+    }
+}
+
 fn print_qsv() -> Result<(), String> {
     let caps = QsvCapabilities::probe().map_err(|e| e.to_string())?;
     println!("=== QSV (Intel VPL) Capabilities ===");
@@ -406,6 +422,9 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
             );
         }
     }
+
+    println!();
+    print_vaapi_vulkan(device, &caps);
 
     println!();
     println!("Overlay: {}", yn(caps.can_overlay()));

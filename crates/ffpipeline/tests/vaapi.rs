@@ -8,6 +8,7 @@ use common::*;
 use ffpipeline::accel::vaapi::{Vaapi, VaapiDriver};
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::vaapi::VaapiCapabilities;
+use ffpipeline::capabilities::vulkan::VulkanCapabilities;
 use ffpipeline::ffmpeg_info::{KnownHardwareAccel, KnownVideoFilter};
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
@@ -56,11 +57,13 @@ fn probe_vaapi() -> Option<(
 
 fn probe() -> Option<HardwareAccel> {
     let (device, driver, capabilities, opencl_capabilities) = probe_vaapi()?;
+    let vulkan_capabilities = VulkanCapabilities::probe_for_vaapi(&device, &capabilities).ok();
     Some(HardwareAccel::Vaapi(Vaapi {
         device,
         driver,
         capabilities,
         opencl_capabilities,
+        vulkan_capabilities,
     }))
 }
 
@@ -144,7 +147,8 @@ async fn pad_software_tonemap_opencl(
         AudioFormat::Aac,
         false,
     );
-    test_case.params.disabled_filters = vec!["pad_vaapi", "pad_opencl"];
+    // libplacebo is preferred over OpenCL
+    test_case.params.disabled_filters = vec!["pad_vaapi", "pad_opencl", "libplacebo"];
     if let Some((env, vaapi, args)) = run_vaapi_test_case(test_case).await
         && vaapi.opencl_capabilities.can_tonemap()
         && env
@@ -154,6 +158,40 @@ async fn pad_software_tonemap_opencl(
         assert!(
             args.join(" ").contains("tonemap_opencl"),
             "OpenCL can tonemap but the pipeline did not use tonemap_opencl"
+        );
+    }
+}
+
+/// The software pad downloads the frame that libplacebo wrote back to VAAPI.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn pad_software_tonemap_libplacebo(
+    #[values("1080p_hevc_10_hdr_scope.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+) {
+    let mut test_case = common::shared::tonemap(
+        src,
+        "1280x720".parse().unwrap(),
+        ("h264", 8),
+        AudioFormat::Aac,
+        false,
+    );
+    test_case.params.disabled_filters = vec!["pad_vaapi", "pad_opencl"];
+    if let Some((env, vaapi, args)) = run_vaapi_test_case(test_case).await
+        && vaapi
+            .vulkan_capabilities
+            .as_ref()
+            .is_some_and(|vk| vk.can_import_drm_prime())
+        && env
+            .ffmpeg_info
+            .has_video_filter(&KnownVideoFilter::LibPlacebo)
+        && env
+            .ffmpeg_info
+            .has_video_filter(&KnownVideoFilter::ScaleVulkan)
+    {
+        assert!(
+            args.join(" ").contains("libplacebo="),
+            "Vulkan can import DRM_PRIME but the pipeline did not use libplacebo"
         );
     }
 }

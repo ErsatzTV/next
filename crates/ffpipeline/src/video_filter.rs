@@ -36,6 +36,10 @@ pub trait VideoFilterOp {
     fn passes_frames_through(&self, _state: &FrameState) -> bool {
         false
     }
+    /// A surface used only inside the filter. Its device must still be initialized.
+    fn internal_surface(&self) -> Option<FrameSurface> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +80,7 @@ pub enum VideoFilter {
     PadVaapi(accel::vaapi::PadVaapi),
     FormatVaapi(accel::vaapi::FormatVaapi),
     TonemapVaapi(accel::vaapi::TonemapVaapi),
+    LibplaceboVaapi(accel::vaapi::LibplaceboVaapi),
     TransposeVaapi(accel::vaapi::TransposeVaapi),
     // OpenCL hardware filters
     PadOpencl(accel::opencl::PadOpencl),
@@ -150,7 +155,8 @@ impl VideoFilterOp for HwUploadFilter {
             // don't pass extra_hw_frames here; it triggers bugs with filter graph reinit
             FrameSurface::Qsv => Some(format!("{format_filter}hwupload")),
 
-            FrameSurface::Vaapi => Some(format!("{format_filter}hwupload")),
+            // with libplacebo on vaapi, the filter device is vulkan
+            FrameSurface::Vaapi => Some(format!("{format_filter}hwupload=derive_device=vaapi")),
             FrameSurface::Vulkan => Some(format!("{format_filter}hwupload")),
             FrameSurface::VideoToolbox => Some(format!("{format_filter}hwupload")),
             _ => None,
