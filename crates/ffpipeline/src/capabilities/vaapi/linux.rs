@@ -5,7 +5,7 @@ use std::os::unix::io::AsRawFd;
 
 use libva_sys::*;
 
-use crate::capabilities::vaapi::VaapiCapabilities;
+use crate::capabilities::vaapi::{AmdEncodeEngine, VaapiCapabilities};
 use crate::error::FFPipelineError;
 use crate::error::FFPipelineError::VaapiCapabilitiesError;
 
@@ -47,6 +47,8 @@ impl VaapiCapabilities {
             .write(true)
             .open(device)
             .map_err(|e| VaapiCapabilitiesError(format!("cannot open {device}: {e}")))?;
+
+        let amd_encode_engine = Self::probe_amd_encode_engine(file.as_raw_fd());
 
         let display = unsafe { (va.vaGetDisplayDRM)(file.as_raw_fd()) };
         if display.is_null() {
@@ -333,7 +335,29 @@ impl VaapiCapabilities {
             can_overlay: can_overlay.unwrap_or_default(),
             rotation_flags,
             rate_control,
+            amd_encode_engine,
         })
+    }
+
+    fn probe_amd_encode_engine(fd: i32) -> Option<AmdEncodeEngine> {
+        use libva_sys::drm::*;
+
+        let driver = drm_driver_name(fd)?;
+        log::debug!("[vaapi] kernel driver: {driver}");
+        match driver.as_str() {
+            // radeon only runs chips older than VCN
+            "radeon" => Some(AmdEncodeEngine::Vce),
+            "amdgpu" => {
+                if amdgpu_hw_ip_count(fd, AMDGPU_HW_IP_VCN_ENC) > 0 {
+                    Some(AmdEncodeEngine::Vcn)
+                } else if amdgpu_hw_ip_count(fd, AMDGPU_HW_IP_VCE) > 0 {
+                    Some(AmdEncodeEngine::Vce)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn va_status_to_string(va: &VaLib, status: VAStatus) -> String {

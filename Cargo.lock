@@ -1145,6 +1145,7 @@ name = "libva-sys"
 version = "0.2.2"
 dependencies = [
  "derive_more",
+ "libc",
  "libloading",
 ]
 

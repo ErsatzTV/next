@@ -175,6 +175,8 @@ pub struct VAProcPipelineCaps {
 }
 
 #[cfg(target_os = "linux")]
+pub mod drm;
+#[cfg(target_os = "linux")]
 mod ffi;
 
 #[cfg(target_os = "linux")]

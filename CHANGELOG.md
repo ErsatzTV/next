@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix QSV green padding on Windows with certain HDR content
 - Fix slow transcoding of high-resolution video with PGS subtitles until the first subtitle appears
 - Fix RKMPP stream failing with loudness normalization
+- Fix VAAPI blocky, smeared `h264` video on older AMD GPUs
 
 ## [0.2.2] - 2026-10-13
 ### Fixed

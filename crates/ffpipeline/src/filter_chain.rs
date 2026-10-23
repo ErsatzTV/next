@@ -1049,6 +1049,7 @@ mod tests {
                 can_overlay: false,
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
+                amd_encode_engine: None,
             },
             opencl_capabilities: OpenCLCapabilities::default(),
         })
@@ -1273,6 +1274,7 @@ mod tests {
                 can_overlay: false,
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
+                amd_encode_engine: None,
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: if opencl { 1 } else { 0 },
@@ -1977,6 +1979,7 @@ mod tests {
                 can_overlay: false,
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
+                amd_encode_engine: None,
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: if opencl { 1 } else { 0 },
