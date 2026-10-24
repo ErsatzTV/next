@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `libplacebo` is preferred over `tonemap_opencl` and `tonemap_vaapi`, and shows Dolby Vision profile 5 with correct colors
   - Padding right after the tonemap is drawn by `libplacebo` in the same pass instead of by a separate (or, on AMD, software) pad
   - Requires ErsatzTV-ffmpeg `8.1.2-6`
+- Channel config `0.1.3`: `normalization.video.vaapi_low_power` (`auto` or `never`, default `auto`)
+
+### Changed
+- VAAPI: encode HEVC with the low-power entrypoint (Intel VDEnc) when the GPU also has the default one and low-power supports bitrate rate control
+  - Up to 2.6x faster HEVC encoding on an Intel N100, with more concurrent streams
+  - Quality is about the same on most content, but slightly lower on grainy sources and in the first seconds of low-bitrate HDR content
+  - Set `normalization.video.vaapi_low_power` to `never` to keep the previous behavior
+  - H.264 is unchanged: low-power H.264 is no faster, and slower on older (Gen9) GPUs
+- `probe_capabilities vaapi` shows each encode entrypoint's rate control modes and which entrypoint `auto` and `never` select
 
 ### Fixed
 - Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed

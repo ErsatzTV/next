@@ -1097,6 +1097,7 @@ mod tests {
             },
             opencl_capabilities: OpenCLCapabilities::default(),
             vulkan_capabilities: None,
+            prefer_low_power: true,
         })
     }
 
@@ -1336,6 +1337,7 @@ mod tests {
                 va_api_sharing_device_count: if opencl { 1 } else { 0 },
             },
             vulkan_capabilities: None,
+            prefer_low_power: true,
         }
     }
 
@@ -2289,6 +2291,7 @@ mod tests {
                 va_api_sharing_device_count: if opencl { 1 } else { 0 },
             },
             vulkan_capabilities: None,
+            prefer_low_power: true,
         }
     }
 
