@@ -438,19 +438,50 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
     }
 
     println!();
-    println!("Rate Control:");
-    println!("  {:<12} {:<8} {:<14}", "Codec", "Bits", "Forced Mode");
-    println!("  {:<12} {:<8} {:<14}", "-----", "----", "-----------");
+    println!("Encode entrypoints (vaapi_low_power auto / never):");
+    println!(
+        "  {:<12} {:<6} {:<16} {:<16} {:<18} {:<18}",
+        "Codec", "Bits", "EncSlice RC", "EncSliceLP RC", "auto", "never"
+    );
+    println!(
+        "  {:<12} {:<6} {:<16} {:<16} {:<18} {:<18}",
+        "-----", "----", "-----------", "-------------", "----", "-----"
+    );
     for f in ALL_FORMATS {
         for bd in [8u8, 10] {
-            let forced = caps.rate_control_mode_for(f, bd);
-            if caps.can_encode(f, bd) || caps.can_encode_low_power(f, bd) {
-                let label = match forced {
-                    Some(RateControlMode::Cqp) => "CQP (forced)",
-                    None => "(default)",
-                };
-                println!("  {:<12} {:<8} {:<14}", format_name(f), bd, label);
+            if !caps.can_encode(f, bd) && !caps.can_encode_low_power(f, bd) {
+                continue;
             }
+            let rc = |low_power| {
+                caps.encode_rate_control_modes(f, bd, low_power)
+                    .map_or_else(|| String::from("-"), |modes| modes.join(","))
+            };
+            let selected =
+                |prefer_low_power| match caps.encode_entrypoint_for(f, bd, prefer_low_power) {
+                    Some(e) => format!(
+                        "{}{}",
+                        if e.low_power {
+                            "EncSliceLP"
+                        } else {
+                            "EncSlice"
+                        },
+                        if e.rate_control == Some(RateControlMode::Cqp) {
+                            " CQP"
+                        } else {
+                            ""
+                        }
+                    ),
+                    None => String::from("-"),
+                };
+            println!(
+                "  {:<12} {:<6} {:<16} {:<16} {:<18} {:<18}",
+                format_name(f),
+                bd,
+                rc(false),
+                rc(true),
+                selected(true),
+                selected(false),
+            );
         }
     }
 

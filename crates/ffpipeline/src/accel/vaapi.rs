@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::ArgVec;
 use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
-use crate::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
+use crate::capabilities::vaapi::{EncodeEntrypoint, RateControlMode, VaapiCapabilities};
 use crate::capabilities::vulkan::VulkanCapabilities;
 use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
@@ -41,9 +41,18 @@ pub struct Vaapi {
     pub opencl_capabilities: OpenCLCapabilities,
     /// The Vulkan device ffmpeg derives from this VAAPI device
     pub vulkan_capabilities: Option<VulkanCapabilities>,
+    pub prefer_low_power: bool,
 }
 
 impl Vaapi {
+    fn encode_entrypoint(&self, format: &EncodeFormat, bit_depth: u8) -> Option<EncodeEntrypoint> {
+        self.capabilities.encode_entrypoint_for(
+            &VideoFormat::from(*format),
+            bit_depth,
+            self.prefer_low_power,
+        )
+    }
+
     // scale_vulkan writes only 8-bit YUV
     fn can_libplacebo_tonemap(
         &self,
@@ -221,11 +230,7 @@ impl HwAccel for Vaapi {
     }
 
     fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
-        let video_format = VideoFormat::from(*format);
-        let result = self.capabilities.can_encode(&video_format, bit_depth)
-            || self
-                .capabilities
-                .can_encode_low_power(&video_format, bit_depth);
+        let result = self.encode_entrypoint(format, bit_depth).is_some();
 
         if !result {
             log::debug!(
@@ -244,18 +249,17 @@ impl HwAccel for Vaapi {
         bit_depth: u8,
         _video_size: Option<FrameSize>,
     ) -> Option<VideoCodec> {
-        let force_cqp = self
-            .capabilities
-            .rate_control_mode_for(&VideoFormat::from(*format), bit_depth)
-            == Some(RateControlMode::Cqp);
+        let entrypoint = self.encode_entrypoint(format, bit_depth);
+        let mut options = Vec::new();
+        if entrypoint.is_some_and(|e| e.low_power) {
+            options.extend(args!["-low_power", "1"]);
+        }
+        if entrypoint.is_some_and(|e| e.rate_control == Some(RateControlMode::Cqp)) {
+            options.extend(args!["-rc_mode", "1"]);
+        }
 
         match format {
             EncodeFormat::H264 => {
-                let mut options = Vec::new();
-                if force_cqp {
-                    options.extend(args!["-rc_mode", "1"]);
-                }
-
                 if self.capabilities.h264_needs_serial_encode() {
                     options.extend(args!["-async_depth", "1"]);
                 }
@@ -270,11 +274,6 @@ impl HwAccel for Vaapi {
                 })
             }
             EncodeFormat::Hevc => {
-                let mut options = Vec::new();
-                if force_cqp {
-                    options.extend(args!["-rc_mode", "1"]);
-                }
-
                 if self.capabilities.hevc_a53cc_hangs() {
                     options.extend(args!["-sei", "-a53_cc"]);
                 }
@@ -288,21 +287,14 @@ impl HwAccel for Vaapi {
                     also_accepts: &[],
                 })
             }
-            EncodeFormat::Mpeg2Video => {
-                let mut options = Vec::new();
-                if force_cqp {
-                    options.extend(args!["-rc_mode", "1"]);
-                }
-
-                Some(VideoCodec {
-                    codec_name: "mpeg2_vaapi",
-                    options,
-                    preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                    preferred_pixel_format_10bit: None,
-                    preferred_surface: FrameSurface::Vaapi,
-                    also_accepts: &[],
-                })
-            }
+            EncodeFormat::Mpeg2Video => Some(VideoCodec {
+                codec_name: "mpeg2_vaapi",
+                options,
+                preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
+                preferred_pixel_format_10bit: None,
+                preferred_surface: FrameSurface::Vaapi,
+                also_accepts: &[],
+            }),
         }
     }
 
@@ -749,6 +741,7 @@ mod tests {
                 va_api_sharing_device_count: 0,
             },
             vulkan_capabilities: None,
+            prefer_low_power: true,
         }
     }
 
@@ -1020,6 +1013,44 @@ mod tests {
             assert!(
                 !options(EncodeFormat::Hevc).contains("-async_depth"),
                 "{engine:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn low_power_and_cqp_args_follow_selected_entrypoint() {
+        use libva_sys::*;
+
+        let mut vaapi = make_vaapi();
+        for (profile, entrypoint, rc) in [
+            (VA_PROFILE_H264_MAIN, VA_ENTRYPOINT_ENC_SLICE, VA_RC_VBR),
+            (VA_PROFILE_H264_MAIN, VA_ENTRYPOINT_ENC_SLICE_LP, VA_RC_VBR),
+            (VA_PROFILE_HEVC_MAIN, VA_ENTRYPOINT_ENC_SLICE, VA_RC_VBR),
+            (VA_PROFILE_HEVC_MAIN, VA_ENTRYPOINT_ENC_SLICE_LP, VA_RC_VBR),
+            (VA_PROFILE_MPEG2_MAIN, VA_ENTRYPOINT_ENC_SLICE, VA_RC_CQP),
+        ] {
+            vaapi.capabilities.supported.insert((profile, entrypoint));
+            vaapi
+                .capabilities
+                .rate_control
+                .insert((profile, entrypoint), rc);
+        }
+
+        for (prefer_low_power, format, expected) in [
+            (true, EncodeFormat::Hevc, "-low_power 1"),
+            (false, EncodeFormat::Hevc, ""),
+            (true, EncodeFormat::H264, ""),
+            (true, EncodeFormat::Mpeg2Video, "-rc_mode 1"),
+        ] {
+            vaapi.prefer_low_power = prefer_low_power;
+            let options = vaapi
+                .codec_for_format(&format, 8, None)
+                .unwrap()
+                .options
+                .join(" ");
+            assert_eq!(
+                options, expected,
+                "{format} prefer_low_power={prefer_low_power}"
             );
         }
     }
