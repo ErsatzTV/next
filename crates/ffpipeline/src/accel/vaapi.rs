@@ -128,6 +128,7 @@ impl HwAccel for Vaapi {
                 ..
             }) if self.can_libplacebo_tonemap(ffmpeg_info, format) => LibplaceboVaapi {
                 algorithm: filter_options.libplacebo.tonemapping.clone(),
+                pad: None,
             }
             .into(),
 
@@ -563,6 +564,25 @@ impl VideoFilterOp for TonemapVaapi {
 #[derive(Debug, Clone)]
 pub struct LibplaceboVaapi {
     pub(crate) algorithm: Option<String>,
+    pub(crate) pad: Option<LibplaceboPad>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LibplaceboPad {
+    pub(crate) input: FrameSize,
+    pub(crate) output: FrameSize,
+}
+
+impl LibplaceboPad {
+    fn as_options(&self) -> String {
+        // even, like pad=-1:-1
+        let x = ((self.output.width - self.input.width) / 2) & !1;
+        let y = ((self.output.height - self.input.height) / 2) & !1;
+        format!(
+            "w={}:h={}:pos_x={x}:pos_y={y}:pos_w={}:pos_h={}:fillcolor=black:",
+            self.output.width, self.output.height, self.input.width, self.input.height,
+        )
+    }
 }
 
 impl VideoFilterOp for LibplaceboVaapi {
@@ -574,6 +594,9 @@ impl VideoFilterOp for LibplaceboVaapi {
         state.pixel_format = PixelFormat::Nv12;
         state.apply_tonemap();
         state.surface = FrameSurface::Vaapi;
+        if let Some(pad) = &self.pad {
+            state.size = pad.output;
+        }
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -585,8 +608,13 @@ impl VideoFilterOp for LibplaceboVaapi {
     }
 
     fn as_arg(&self) -> Option<String> {
+        let (pad, setsar) = match &self.pad {
+            // libplacebo sets SAR as if it stretched to w:h
+            Some(pad) => (pad.as_options(), ",setsar=1"),
+            None => (String::new(), ""),
+        };
         Some(format!(
-            "hwmap=derive_device=drm,format=drm_prime,libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=rgba,scale_vulkan=format=nv12:out_range=limited,hwmap=derive_device=vaapi:reverse=1,format=vaapi",
+            "hwmap=derive_device=drm,format=drm_prime,libplacebo={pad}tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=rgba,scale_vulkan=format=nv12:out_range=limited,hwmap=derive_device=vaapi:reverse=1,format=vaapi{setsar}",
             self.algorithm.as_deref().unwrap_or("linear"),
         ))
     }
@@ -904,6 +932,24 @@ mod tests {
             matches!(&result, VideoFilter::Deinterlace(_)),
             "expected software Deinterlace (not promoted), got {:?}",
             result.as_arg()
+        );
+    }
+
+    #[test]
+    fn libplacebo_pad_offsets_snap_to_chroma_grid() {
+        let pad = LibplaceboPad {
+            input: FrameSize {
+                width: 1278,
+                height: 718,
+            },
+            output: FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+        };
+        assert_eq!(
+            pad.as_options(),
+            "w=1920:h=1080:pos_x=320:pos_y=180:pos_w=1278:pos_h=718:fillcolor=black:"
         );
     }
 

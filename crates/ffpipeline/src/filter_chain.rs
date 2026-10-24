@@ -1,4 +1,5 @@
 use crate::ArgVec;
+use crate::accel::vaapi::LibplaceboPad;
 use crate::audio_filter::AudioFilter;
 use crate::ffmpeg_info::FfmpegInfo;
 use crate::hw_accel::{HardwareAccel, HwAccel};
@@ -6,7 +7,7 @@ use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp, OverlaySource};
 use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet};
 use crate::video_filter::{
-    FormatFilter, HwDownloadFilter, HwUploadFilter, VideoFilter, VideoFilterOp,
+    FormatFilter, HwDownloadFilter, HwUploadFilter, PadFilter, VideoFilter, VideoFilterOp,
 };
 
 /// what the encoder takes as input
@@ -170,6 +171,12 @@ impl FilterChain {
         for filter in &self.filters {
             match filter {
                 PipelineFilter::Video(video_filter) => {
+                    if let VideoFilter::Pad(pad) = video_filter
+                        && Self::fold_pad_into_libplacebo(&mut resolved, pad, &mut current_state)
+                    {
+                        continue;
+                    }
+
                     let mut best = match accel {
                         Some(a) => {
                             a.best_filter(video_filter, ffmpeg_info, &current_state, filter_options)
@@ -345,6 +352,39 @@ impl FilterChain {
 
         self.filters = resolved;
         self.surfaces = surfaces;
+    }
+
+    /// saves a pad pass; on Mesa, a software pad
+    fn fold_pad_into_libplacebo(
+        resolved: &mut [PipelineFilter],
+        pad: &PadFilter,
+        state: &mut FrameState,
+    ) -> bool {
+        let Some(output) = pad.size else {
+            return false;
+        };
+        let input = state.size;
+        if output.width < input.width || output.height < input.height {
+            return false;
+        }
+
+        // fps only drops or repeats frames
+        let previous = resolved.iter_mut().rev().find(|f| {
+            !matches!(
+                f,
+                PipelineFilter::Audio(_) | PipelineFilter::Video(VideoFilter::Fps(_))
+            )
+        });
+        let Some(PipelineFilter::Video(VideoFilter::LibplaceboVaapi(libplacebo))) = previous else {
+            return false;
+        };
+        if libplacebo.pad.is_some() {
+            return false;
+        }
+
+        libplacebo.pad = Some(LibplaceboPad { input, output });
+        state.size = output;
+        true
     }
 
     pub(crate) fn surfaces(&self) -> &SurfaceSet {
@@ -1912,6 +1952,83 @@ mod tests {
                 "vk"
             ]
         );
+    }
+
+    fn resolve_libplacebo_vaapi(filters: Vec<VideoFilter>, size: FrameSize) -> Vec<String> {
+        let mut chain = FilterChain::new(filters.into_iter().map(PipelineFilter::Video).collect());
+        chain.resolve(
+            &ffmpeg_info_with_libplacebo(),
+            &Some(HardwareAccel::Vaapi(vaapi_accel_with_libplacebo(true))),
+            &VideoFilterOptions::default(),
+            &FrameState {
+                size,
+                ..hdr_vaapi_state()
+            },
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
+        );
+        chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pad_to_1080p() -> VideoFilter {
+        PadFilter {
+            size: Some(FrameSize {
+                width: 1920,
+                height: 1080,
+            }),
+            scaling_mode: ScalingMode::ScaleAndPad,
+        }
+        .into()
+    }
+
+    #[test]
+    fn resolve_folds_pad_into_libplacebo_on_vaapi() {
+        let args = resolve_libplacebo_vaapi(
+            vec![libplacebo_tonemap(PixelFormat::Yuv420p), pad_to_1080p()],
+            FrameSize {
+                width: 1920,
+                height: 800,
+            },
+        );
+        assert_eq!(args.len(), 1, "{args:?}");
+        assert!(
+            args[0].contains(
+                "libplacebo=w=1920:h=1080:pos_x=0:pos_y=140:pos_w=1920:pos_h=800:fillcolor=black:tonemapping="
+            ) && args[0].ends_with("format=vaapi,setsar=1"),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_folds_pad_into_libplacebo_across_fps() {
+        let fps: VideoFilter = crate::video_filter::FpsFilter {
+            frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
+        }
+        .into();
+        let args = resolve_libplacebo_vaapi(
+            vec![
+                libplacebo_tonemap(PixelFormat::Yuv420p),
+                fps,
+                pad_to_1080p(),
+            ],
+            FrameSize {
+                width: 1440,
+                height: 1080,
+            },
+        );
+        assert_eq!(args.len(), 2, "{args:?}");
+        assert!(args[0].contains("pos_x=240:pos_y=0:"), "{args:?}");
+        assert_eq!(args[1], "fps=30");
     }
 
     #[test]

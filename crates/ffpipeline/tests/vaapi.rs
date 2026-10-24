@@ -162,11 +162,11 @@ async fn pad_software_tonemap_opencl(
     }
 }
 
-/// The software pad downloads the frame that libplacebo wrote back to VAAPI.
+/// hides pad_vaapi, like Mesa
 #[rstest]
 #[tokio::test]
 #[ignore]
-async fn pad_software_tonemap_libplacebo(
+async fn pad_tonemap_libplacebo(
     #[values("1080p_hevc_10_hdr_scope.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
 ) {
     let mut test_case = common::shared::tonemap(
@@ -189,9 +189,14 @@ async fn pad_software_tonemap_libplacebo(
             .ffmpeg_info
             .has_video_filter(&KnownVideoFilter::ScaleVulkan)
     {
+        let args = args.join(" ");
         assert!(
-            args.join(" ").contains("libplacebo="),
+            args.contains("libplacebo="),
             "Vulkan can import DRM_PRIME but the pipeline did not use libplacebo"
+        );
+        assert!(
+            args.contains("fillcolor=black") && !args.contains("hwdownload"),
+            "pad was not folded into libplacebo: {args}"
         );
     }
 }
