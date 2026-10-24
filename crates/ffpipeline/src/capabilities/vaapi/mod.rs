@@ -165,6 +165,11 @@ impl VaapiCapabilities {
         self.vendor.starts_with("Intel iHD driver")
     }
 
+    /// cl_intel_va_api_media_sharing needs an Intel VA display
+    pub fn can_map_to_opencl(&self) -> bool {
+        self.vendor.starts_with("Intel")
+    }
+
     /// Mesa before 26.2.3 loops forever parsing an HEVC A53 CC SEI (mesa#16267).
     pub fn hevc_a53cc_hangs(&self) -> bool {
         self.mesa_version().is_some_and(|v| v < (26, 2, 3))

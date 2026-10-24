@@ -14,16 +14,15 @@ pub(crate) mod stub;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct OpenCLCapabilities {
-    pub(crate) platform_count: u32,
-    pub(crate) gpu_device_count: u32,
+    pub(crate) va_api_sharing_device_count: u32,
 }
 
 impl OpenCLCapabilities {
     pub fn can_tonemap(&self) -> bool {
-        self.platform_count > 0 && self.gpu_device_count > 0
+        self.va_api_sharing_device_count > 0
     }
 
     pub fn can_pad(&self) -> bool {
-        self.platform_count > 0 && self.gpu_device_count > 0
+        self.va_api_sharing_device_count > 0
     }
 }

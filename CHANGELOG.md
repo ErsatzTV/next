@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Padding right after the tonemap is drawn by `libplacebo` in the same pass instead of by a separate (or, on AMD, software) pad
   - Requires ErsatzTV-ffmpeg `8.1.2-6`
 
+### Fixed
+- Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed
+  - `pad_opencl` and `tonemap_opencl` are now only used with an Intel VAAPI driver and an OpenCL device that supports `cl_intel_va_api_media_sharing`
+
 ## [0.2.3] - 2026-10-23
 ### Added
 - Playout schema `0.0.7`: canvas graphics layers accept an optional `layout`

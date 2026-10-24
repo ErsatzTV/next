@@ -84,7 +84,7 @@ impl HwAccel for Vaapi {
                 if self.capabilities.can_pad() {
                     pad_options.push(KnownVideoFilter::PadVaapi);
                 }
-                if self.opencl_capabilities.can_pad() {
+                if self.capabilities.can_map_to_opencl() && self.opencl_capabilities.can_pad() {
                     pad_options.push(KnownVideoFilter::PadOpencl);
                 }
                 if let Some(hw_filter) = ffmpeg_info.find_best_fit(pad_options.as_slice()) {
@@ -153,7 +153,7 @@ impl HwAccel for Vaapi {
                     tonemap_options.push(KnownVideoFilter::TonemapVaapi);
                 }
 
-                if self.opencl_capabilities.can_tonemap() {
+                if self.capabilities.can_map_to_opencl() && self.opencl_capabilities.can_tonemap() {
                     // Prepend because OpenCL is preferred.
                     tonemap_options.insert(0, KnownVideoFilter::TonemapOpencl);
                 }
@@ -746,8 +746,7 @@ mod tests {
                 pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities {
-                platform_count: 0,
-                gpu_device_count: 0,
+                va_api_sharing_device_count: 0,
             },
             vulkan_capabilities: None,
         }
