@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 - VAAPI: tonemap with `libplacebo` when a Vulkan device on the same GPU is available
   - `libplacebo` is preferred over `tonemap_opencl` and `tonemap_vaapi`, and shows Dolby Vision profile 5 with correct colors
+  - Padding right after the tonemap is drawn by `libplacebo` in the same pass instead of by a separate (or, on AMD, software) pad
   - Requires ErsatzTV-ffmpeg `8.1.2-6`
 
 ## [0.2.3] - 2026-10-23
