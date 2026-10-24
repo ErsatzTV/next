@@ -1946,8 +1946,6 @@ mod tests {
                 "vaapi=va@dr",
                 "-init_hw_device",
                 "vulkan=vk@va",
-                "-hwaccel_device",
-                "va",
                 "-filter_hw_device",
                 "vk"
             ]

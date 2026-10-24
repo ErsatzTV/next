@@ -366,8 +366,6 @@ impl HwAccel for Vaapi {
                 "vaapi=va@dr",
                 "-init_hw_device",
                 "vulkan=vk@va",
-                "-hwaccel_device",
-                "va",
                 "-filter_hw_device",
                 "vk"
             ]
@@ -377,8 +375,6 @@ impl HwAccel for Vaapi {
                 format!("vaapi=va:{}", self.device.clone()),
                 "-init_hw_device",
                 "opencl=ocl@va",
-                "-hwaccel_device",
-                "va",
                 "-filter_hw_device",
                 "va"
             ]
