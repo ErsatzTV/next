@@ -99,6 +99,7 @@ async fn pad_opencl(#[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8)) 
     );
     test_case.params.disabled_filters = vec!["pad_vaapi"];
     if let Some((env, vaapi, args)) = run_vaapi_test_case(test_case).await
+        && vaapi.capabilities.can_map_to_opencl()
         && vaapi.opencl_capabilities.can_pad()
         && env
             .ffmpeg_info
@@ -150,6 +151,7 @@ async fn pad_software_tonemap_opencl(
     // libplacebo is preferred over OpenCL
     test_case.params.disabled_filters = vec!["pad_vaapi", "pad_opencl", "libplacebo"];
     if let Some((env, vaapi, args)) = run_vaapi_test_case(test_case).await
+        && vaapi.capabilities.can_map_to_opencl()
         && vaapi.opencl_capabilities.can_tonemap()
         && env
             .ffmpeg_info

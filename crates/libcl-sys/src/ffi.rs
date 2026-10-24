@@ -13,9 +13,12 @@ pub type cl_platform_info = u32;
 pub enum _cl_device_id {}
 pub type cl_device_id = *mut _cl_device_id;
 pub type cl_device_type = u64;
+pub type cl_device_info = u32;
 
 pub const CL_SUCCESS: i32 = 0;
 pub const CL_PLATFORM_NAME: cl_platform_info = 0x0902;
+pub const CL_PLATFORM_EXTENSIONS: cl_platform_info = 0x0904;
+pub const CL_DEVICE_EXTENSIONS: cl_device_info = 0x1030;
 pub const CL_DEVICE_TYPE_ALL: cl_device_type = 0xFFFFFFFF;
 pub const CL_DEVICE_TYPE_GPU: cl_device_type = 1 << 2;
 
@@ -36,6 +39,8 @@ pub struct ClLib {
         *mut cl_device_id,
         *mut u32,
     ) -> i32,
+    pub clGetDeviceInfo:
+        unsafe extern "C" fn(cl_device_id, cl_device_info, usize, *mut c_void, *mut usize) -> i32,
 }
 
 impl ClLib {
@@ -49,11 +54,13 @@ impl ClLib {
             let clGetPlatformIDs = *lib.get(b"clGetPlatformIDs\0")?;
             let clGetPlatformInfo = *lib.get(b"clGetPlatformInfo\0")?;
             let clGetDeviceIDs = *lib.get(b"clGetDeviceIDs\0")?;
+            let clGetDeviceInfo = *lib.get(b"clGetDeviceInfo\0")?;
             Ok(Self {
                 _lib: lib,
                 clGetPlatformIDs,
                 clGetPlatformInfo,
                 clGetDeviceIDs,
+                clGetDeviceInfo,
             })
         }
     }

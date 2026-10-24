@@ -1310,11 +1310,18 @@ mod tests {
         if hdr_to_hdr {
             can_hdr_to_hdr_tonemap.insert(libva_sys::VA_FOURCC_P010);
         }
+        let vendor = match driver {
+            VaapiDriver::Ihd => "Intel iHD driver for Intel(R) Gen Graphics - 26.2.4 ()",
+            VaapiDriver::I965 => "Intel i965 driver for Intel(R) Haswell Desktop - 2.4.1",
+            VaapiDriver::RadeonSI => {
+                "Mesa Gallium driver 26.2.4 for AMD Radeon RX 550 / 550 Series (radeonsi, polaris12, ACO)"
+            }
+        };
         Vaapi {
             device: String::from("/dev/dri/renderD128"),
             driver: Some(driver),
             capabilities: VaapiCapabilities {
-                vendor: String::from("test"),
+                vendor: String::from(vendor),
                 supported: HashSet::new(),
                 vpp_pixel_formats: HashSet::new(),
                 can_hdr_to_sdr_tonemap,
@@ -1326,8 +1333,7 @@ mod tests {
                 pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities {
-                platform_count: if opencl { 1 } else { 0 },
-                gpu_device_count: if opencl { 1 } else { 0 },
+                va_api_sharing_device_count: if opencl { 1 } else { 0 },
             },
             vulkan_capabilities: None,
         }
@@ -1750,6 +1756,27 @@ mod tests {
     }
 
     // -- tonemap_vaapi best_filter tests --
+
+    #[test]
+    fn best_filter_skips_tonemap_opencl_on_mesa() {
+        let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, true, false, true);
+        let ffmpeg_info = ffmpeg_info_with_filters(&[
+            KnownVideoFilter::TonemapOpencl,
+            KnownVideoFilter::TonemapVaapi,
+        ]);
+
+        let result = vaapi.best_filter(
+            &libplacebo_tonemap(PixelFormat::Nv12),
+            &ffmpeg_info,
+            &hdr_vaapi_state(),
+            &VideoFilterOptions::default(),
+        );
+        assert!(
+            matches!(result, VideoFilter::TonemapVaapi(_)),
+            "{:?}",
+            result.as_arg()
+        );
+    }
 
     #[test]
     fn best_filter_selects_tonemap_vaapi_for_hdr_to_sdr_when_capable() {
@@ -2259,8 +2286,7 @@ mod tests {
                 pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities {
-                platform_count: if opencl { 1 } else { 0 },
-                gpu_device_count: if opencl { 1 } else { 0 },
+                va_api_sharing_device_count: if opencl { 1 } else { 0 },
             },
             vulkan_capabilities: None,
         }
@@ -2313,7 +2339,7 @@ mod tests {
     #[rstest::rstest]
     #[case::opencl(true)]
     #[case::software(false)]
-    fn best_filter_skips_pad_vaapi_on_mesa(#[case] opencl: bool) {
+    fn best_filter_pads_in_software_on_mesa(#[case] opencl: bool) {
         let vaapi = vaapi_accel_with_vendor(
             "Mesa Gallium driver 26.0.3 for AMD Radeon Vega Mobile Gfx (radeonsi, raven, ACO)",
             opencl,
@@ -2333,19 +2359,11 @@ mod tests {
         .into();
 
         let result = vaapi.best_filter(&input, &ffmpeg_info, &state, &filter_options);
-        if opencl {
-            assert!(
-                matches!(result, VideoFilter::PadOpencl(_)),
-                "expected PadOpencl on Mesa, got {:?}",
-                result.as_arg()
-            );
-        } else {
-            assert!(
-                matches!(result, VideoFilter::Pad(_)),
-                "expected software Pad on Mesa, got {:?}",
-                result.as_arg()
-            );
-        }
+        assert!(
+            matches!(result, VideoFilter::Pad(_)),
+            "expected software Pad on Mesa, got {:?}",
+            result.as_arg()
+        );
     }
 
     #[test]
