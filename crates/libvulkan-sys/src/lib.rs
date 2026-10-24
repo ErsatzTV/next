@@ -26,6 +26,7 @@ pub const VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR: u32 = 1000187000
 pub const VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR: u32 = 1000299003;
 pub const VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR: u32 = 1000512000;
 pub const VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_CAPABILITIES_KHR: u32 = 1000513000;
+pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT: u32 = 1000353000;
 
 // Video codec operation flags
 pub const VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR: u32 = 0x00000001;
@@ -67,6 +68,11 @@ pub const VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME: &str = "VK_KHR_video_decode_av
 pub const VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME: &str = "VK_KHR_video_encode_h264";
 pub const VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME: &str = "VK_KHR_video_encode_h265";
 pub const VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME: &str = "VK_KHR_video_encode_av1";
+pub const VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME: &str = "VK_EXT_physical_device_drm";
+pub const VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME: &str =
+    "VK_EXT_image_drm_format_modifier";
+pub const VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME: &str = "VK_EXT_external_memory_dma_buf";
+pub const VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME: &str = "VK_KHR_external_memory_fd";
 
 pub const fn vk_make_api_version(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
     (variant << 29) | (major << 22) | (minor << 12) | patch
@@ -118,6 +124,18 @@ pub struct VkPhysicalDeviceIDProperties {
     pub device_luid: [u8; 8],
     pub device_node_mask: u32,
     pub device_luid_valid: u32,
+}
+
+#[repr(C)]
+pub struct VkPhysicalDeviceDrmPropertiesEXT {
+    pub s_type: u32,
+    pub p_next: *mut c_void,
+    pub has_primary: u32,
+    pub has_render: u32,
+    pub primary_major: i64,
+    pub primary_minor: i64,
+    pub render_major: i64,
+    pub render_minor: i64,
 }
 
 #[repr(C)]

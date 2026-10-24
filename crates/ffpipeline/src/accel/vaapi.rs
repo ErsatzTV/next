@@ -4,6 +4,7 @@ use crate::ArgVec;
 use crate::accel::opencl::{PadOpencl, TonemapOpencl};
 use crate::capabilities::opencl::OpenCLCapabilities;
 use crate::capabilities::vaapi::{RateControlMode, VaapiCapabilities};
+use crate::capabilities::vulkan::VulkanCapabilities;
 use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::frame_size::FrameSize;
@@ -38,6 +39,26 @@ pub struct Vaapi {
     pub driver: Option<VaapiDriver>,
     pub capabilities: VaapiCapabilities,
     pub opencl_capabilities: OpenCLCapabilities,
+    /// The Vulkan device ffmpeg derives from this VAAPI device
+    pub vulkan_capabilities: Option<VulkanCapabilities>,
+}
+
+impl Vaapi {
+    // scale_vulkan writes only 8-bit YUV
+    fn can_libplacebo_tonemap(
+        &self,
+        ffmpeg_info: &FfmpegInfo,
+        output_format: &PixelFormat,
+    ) -> bool {
+        self.output_format(output_format) == HwPixelFormat::Nv12
+            && self
+                .vulkan_capabilities
+                .as_ref()
+                .is_some_and(|vk| vk.can_import_drm_prime())
+            && ffmpeg_info.has_hw_accel(&KnownHardwareAccel::Vulkan)
+            && ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo)
+            && ffmpeg_info.has_video_filter(&KnownVideoFilter::ScaleVulkan)
+    }
 }
 
 impl HwAccel for Vaapi {
@@ -101,6 +122,14 @@ impl HwAccel for Vaapi {
                 }
                 .into()
             }
+
+            VideoFilter::ToneMap(ToneMapFilter {
+                output_format: format,
+                ..
+            }) if self.can_libplacebo_tonemap(ffmpeg_info, format) => LibplaceboVaapi {
+                algorithm: filter_options.libplacebo.tonemapping.clone(),
+            }
+            .into(),
 
             VideoFilter::ToneMap(ToneMapFilter {
                 output_format: format,
@@ -326,7 +355,22 @@ impl HwAccel for Vaapi {
     }
 
     fn init_hw_device(&self, surfaces: &SurfaceSet) -> ArgVec {
-        if surfaces.contains(&FrameSurface::OpenCL) {
+        if surfaces.contains(&FrameSurface::Vulkan) {
+            // Derive vk from va, so derive_device=vaapi reuses va. A second VADisplay breaks overlay_vaapi.
+            // ffmpeg cannot derive drm from vaapi, so va comes from dr.
+            args![
+                "-init_hw_device",
+                format!("drm=dr:{}", self.device),
+                "-init_hw_device",
+                "vaapi=va@dr",
+                "-init_hw_device",
+                "vulkan=vk@va",
+                "-hwaccel_device",
+                "va",
+                "-filter_hw_device",
+                "vk"
+            ]
+        } else if surfaces.contains(&FrameSurface::OpenCL) {
             args![
                 "-init_hw_device",
                 format!("vaapi=va:{}", self.device.clone()),
@@ -514,6 +558,40 @@ impl VideoFilterOp for TonemapVaapi {
     }
 }
 
+/// libplacebo cannot render to the mapped nv12 surface, so it writes rgba for scale_vulkan.
+/// Vulkan cannot import a frame mapped directly from VAAPI, so the input goes through DRM_PRIME.
+#[derive(Debug, Clone)]
+pub struct LibplaceboVaapi {
+    pub(crate) algorithm: Option<String>,
+}
+
+impl VideoFilterOp for LibplaceboVaapi {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        None
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.pixel_format = PixelFormat::Nv12;
+        state.apply_tonemap();
+        state.surface = FrameSurface::Vaapi;
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vaapi)
+    }
+
+    fn internal_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::Vulkan)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(format!(
+            "hwmap=derive_device=drm,format=drm_prime,libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=rgba,scale_vulkan=format=nv12:out_range=limited,hwmap=derive_device=vaapi:reverse=1,format=vaapi",
+            self.algorithm.as_deref().unwrap_or("linear"),
+        ))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VaapiOverlay;
 
@@ -641,11 +719,13 @@ mod tests {
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
                 amd_encode_engine: None,
+                pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: 0,
                 gpu_device_count: 0,
             },
+            vulkan_capabilities: None,
         }
     }
 

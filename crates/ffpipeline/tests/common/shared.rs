@@ -276,7 +276,12 @@ macro_rules! shared_tests {
         #[::tokio::test]
         #[ignore]
         async fn tonemap_hdr(
-            #[values("1080p_hevc_10_hdr.ts", "1080p_hevc_10_hdr_4x3.ts")] src: &'static str,
+            #[values(
+                "1080p_hevc_10_hdr.ts",
+                "1080p_hevc_10_hdr_4x3.ts",
+                "1080p_av1_10_hdr.mkv"
+            )]
+            src: &'static str,
             #[values("2560x1440", "1920x1080", "1280x720")]
             res: ::ffpipeline::frame_size::FrameSize,
             #[values(("h264", 8), ("hevc", 8), ("hevc", 10))] vf: (&'static str, u8),

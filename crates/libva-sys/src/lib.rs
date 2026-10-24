@@ -14,6 +14,7 @@ pub type VAContextID = c_uint;
 // https://intel.github.io/libva/group__api__vpp.html#ga3614dbee76b8ac89dd5a3dc8b1a12bb7
 pub type VAProcFilterType = c_int;
 pub type VAProcColorStandardType = c_int;
+pub type VADisplayAttribType = c_int;
 
 pub const VA_CONFIG_ATTRIB_RATE_CONTROL: VAConfigAttribType = 5;
 
@@ -27,6 +28,21 @@ pub const VA_RC_VBR: c_uint = 0x00000004;
 pub const VA_RC_CQP: c_uint = 0x00000010;
 
 pub const VA_ATTRIB_NOT_SUPPORTED: c_uint = 0x80000000;
+
+/// Value is vendor id << 16 | device id. Needs libva 1.15+.
+pub const VA_DISPLAY_PCIID: VADisplayAttribType = 21;
+pub const VA_DISPLAY_ATTRIB_NOT_SUPPORTED: c_uint = 0x0000;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct VADisplayAttribute {
+    pub type_: VADisplayAttribType,
+    pub min_value: i32,
+    pub max_value: i32,
+    pub value: i32,
+    pub flags: c_uint,
+    pub va_reserved: [c_uint; 4],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]

@@ -13,11 +13,19 @@ impl VulkanCapabilities {
             device_index: 0,
             supported_decoders: HashMap::new(),
             supported_encoders: HashMap::new(),
+            can_import_drm_prime: false,
         })
     }
 
     pub fn probe_for_nvidia(
         _device_uuid: Option<[u8; 16]>,
+    ) -> Result<VulkanCapabilities, FFPipelineError> {
+        Self::probe()
+    }
+
+    pub fn probe_for_vaapi(
+        _device: &str,
+        _vaapi: &crate::capabilities::vaapi::VaapiCapabilities,
     ) -> Result<VulkanCapabilities, FFPipelineError> {
         Self::probe()
     }

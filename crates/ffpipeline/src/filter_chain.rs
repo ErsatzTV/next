@@ -218,6 +218,7 @@ impl FilterChain {
 
                     best.apply_to(&mut current_state);
                     surfaces.insert(current_state.surface);
+                    surfaces.extend(best.internal_surface());
                     resolved.push(PipelineFilter::Video(best));
                 }
                 PipelineFilter::Audio(_) => {
@@ -585,6 +586,7 @@ impl FilterChain {
             matches!(
                 f,
                 PipelineFilter::Video(VideoFilter::LibplaceboCuda(_))
+                    | PipelineFilter::Video(VideoFilter::LibplaceboVaapi(_))
                     | PipelineFilter::Video(VideoFilter::LibplaceboVulkan(_))
             )
         }) {
@@ -879,8 +881,9 @@ mod tests {
     use crate::capabilities::qsv::{QsvCapabilities, QsvFourCC};
     use crate::capabilities::vaapi::VaapiCapabilities;
     use crate::capabilities::videotoolbox::VideoToolboxCapabilities;
+    use crate::capabilities::vulkan::VulkanCapabilities;
     use crate::color::FrameColor;
-    use crate::ffmpeg_info::KnownVideoFilter;
+    use crate::ffmpeg_info::{KnownHardwareAccel, KnownVideoFilter};
     use crate::frame_size::FrameSize;
     use crate::hw_accel::HardwareAccel;
     use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
@@ -1050,8 +1053,10 @@ mod tests {
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
                 amd_encode_engine: None,
+                pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities::default(),
+            vulkan_capabilities: None,
         })
     }
 
@@ -1221,7 +1226,10 @@ mod tests {
             sec.contains("setsar=1,format=bgra,loop=-1:1,fade="),
             "unexpected secondary: {sec}"
         );
-        assert!(sec.ends_with("',hwupload[v_s0]"), "{sec}");
+        assert!(
+            sec.ends_with("',hwupload=derive_device=vaapi[v_s0]"),
+            "{sec}"
+        );
         assert_eq!(sec.matches("format=").count(), 1, "{sec}");
     }
 
@@ -1275,11 +1283,13 @@ mod tests {
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
                 amd_encode_engine: None,
+                pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: if opencl { 1 } else { 0 },
                 gpu_device_count: if opencl { 1 } else { 0 },
             },
+            vulkan_capabilities: None,
         }
     }
 
@@ -1389,7 +1399,7 @@ mod tests {
             })
             .collect();
         assert_eq!(args.len(), 4, "{args:?}");
-        assert_eq!(args[0], "hwupload");
+        assert_eq!(args[0], "hwupload=derive_device=vaapi");
         assert_eq!(args[1], "hwmap=derive_device=opencl");
         assert!(args[2].starts_with("tonemap_opencl="), "{args:?}");
         assert_eq!(args[3], "hwmap=derive_device=vaapi:reverse=1");
@@ -1753,6 +1763,157 @@ mod tests {
         );
     }
 
+    fn vaapi_accel_with_libplacebo(can_import_drm_prime: bool) -> Vaapi {
+        Vaapi {
+            vulkan_capabilities: Some(VulkanCapabilities {
+                device_index: 0,
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::new(),
+                can_import_drm_prime,
+            }),
+            // enable the other tonemap routes, so libplacebo must win over them
+            ..vaapi_accel_with_tonemap(VaapiDriver::Ihd, true, true, true)
+        }
+    }
+
+    fn ffmpeg_info_with_libplacebo() -> FfmpegInfo {
+        FfmpegInfo {
+            hwaccels: HashSet::from([KnownHardwareAccel::Vulkan.to_string()]),
+            ..ffmpeg_info_with_filters(&[
+                KnownVideoFilter::LibPlacebo,
+                KnownVideoFilter::ScaleVulkan,
+                KnownVideoFilter::TonemapOpencl,
+                KnownVideoFilter::TonemapVaapi,
+            ])
+        }
+    }
+
+    fn libplacebo_tonemap(output_format: PixelFormat) -> VideoFilter {
+        ToneMapFilter {
+            algorithm: Some(String::from("hable")),
+            output_format,
+        }
+        .into()
+    }
+
+    #[test]
+    fn best_filter_prefers_libplacebo_for_hdr_to_sdr() {
+        let result = vaapi_accel_with_libplacebo(true).best_filter(
+            &libplacebo_tonemap(PixelFormat::Yuv420p),
+            &ffmpeg_info_with_libplacebo(),
+            &hdr_vaapi_state(),
+            &VideoFilterOptions::default(),
+        );
+        assert!(
+            matches!(result, VideoFilter::LibplaceboVaapi(_)),
+            "{:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_keeps_libplacebo_off_hdr_to_hdr() {
+        let result = vaapi_accel_with_libplacebo(true).best_filter(
+            &libplacebo_tonemap(PixelFormat::Yuv420p10le),
+            &ffmpeg_info_with_libplacebo(),
+            &hdr_vaapi_state(),
+            &VideoFilterOptions::default(),
+        );
+        assert!(
+            !matches!(result, VideoFilter::LibplaceboVaapi(_)),
+            "{:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_skips_libplacebo_without_drm_prime_import() {
+        let result = vaapi_accel_with_libplacebo(false).best_filter(
+            &libplacebo_tonemap(PixelFormat::Yuv420p),
+            &ffmpeg_info_with_libplacebo(),
+            &hdr_vaapi_state(),
+            &VideoFilterOptions::default(),
+        );
+        assert!(
+            matches!(result, VideoFilter::TonemapOpencl(_)),
+            "{:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn best_filter_skips_libplacebo_without_scale_vulkan() {
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: HashSet::from([KnownHardwareAccel::Vulkan.to_string()]),
+            ..ffmpeg_info_with_filters(&[KnownVideoFilter::LibPlacebo])
+        };
+        let result = vaapi_accel_with_libplacebo(true).best_filter(
+            &libplacebo_tonemap(PixelFormat::Yuv420p),
+            &ffmpeg_info,
+            &hdr_vaapi_state(),
+            &VideoFilterOptions::default(),
+        );
+        assert!(
+            !matches!(result, VideoFilter::LibplaceboVaapi(_)),
+            "{:?}",
+            result.as_arg()
+        );
+    }
+
+    #[test]
+    fn resolve_libplacebo_on_vaapi_initializes_vulkan_from_vaapi() {
+        let vaapi = vaapi_accel_with_libplacebo(true);
+        let mut chain = FilterChain::new(vec![PipelineFilter::Video(libplacebo_tonemap(
+            PixelFormat::Yuv420p,
+        ))]);
+
+        chain.resolve(
+            &ffmpeg_info_with_libplacebo(),
+            &Some(HardwareAccel::Vaapi(vaapi.clone())),
+            &VideoFilterOptions::default(),
+            &hdr_vaapi_state(),
+            &EncoderTarget {
+                surface: FrameSurface::Vaapi,
+                pixel_format: Some(PixelFormat::Nv12),
+                also_accepts: Vec::new(),
+            },
+        );
+
+        let args: Vec<_> = chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Video(v) => v.as_arg(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args.len(), 1, "{args:?}");
+        assert!(
+            args[0].starts_with("hwmap=derive_device=drm,format=drm_prime,libplacebo=tonemapping=")
+                && args[0]
+                    .ends_with(":format=rgba,scale_vulkan=format=nv12:out_range=limited,hwmap=derive_device=vaapi:reverse=1,format=vaapi"),
+            "{args:?}"
+        );
+
+        assert!(chain.surfaces().contains(&FrameSurface::Vulkan));
+        let init = vaapi.init_hw_device(chain.surfaces());
+        assert_eq!(
+            init,
+            args![
+                "-init_hw_device",
+                "drm=dr:/dev/dri/renderD128",
+                "-init_hw_device",
+                "vaapi=va@dr",
+                "-init_hw_device",
+                "vulkan=vk@va",
+                "-hwaccel_device",
+                "va",
+                "-filter_hw_device",
+                "vk"
+            ]
+        );
+    }
+
     #[test]
     fn best_filter_falls_back_to_software_tonemap_without_vaapi_capability() {
         let vaapi = vaapi_accel_with_tonemap(VaapiDriver::RadeonSI, false, false, false);
@@ -1980,11 +2141,13 @@ mod tests {
                 rotation_flags: 0,
                 rate_control: HashMap::new(),
                 amd_encode_engine: None,
+                pci_device_id: None,
             },
             opencl_capabilities: OpenCLCapabilities {
                 platform_count: if opencl { 1 } else { 0 },
                 gpu_device_count: if opencl { 1 } else { 0 },
             },
+            vulkan_capabilities: None,
         }
     }
 

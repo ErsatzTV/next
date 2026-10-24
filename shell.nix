@@ -21,6 +21,7 @@ pkgs.mkShell {
     export LD_LIBRARY_PATH="/run/opengl-driver/lib:${pkgs.lib.makeLibraryPath [
       pkgs.libva # libva.so.2 / libva-drm.so.2, for the vaapi tests
       pkgs.vulkan-loader # libvulkan.so.1, for the libplacebo tonemap tests
+      pkgs.libdrm
       # Add as needed for other backends, e.g.:
       #   pkgs.ocl-icd  # libOpenCL.so, for the tonemap/pad_opencl paths
       #   pkgs.libvpl   # libvpl.so.2, for the qsv tests

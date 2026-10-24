@@ -7,8 +7,8 @@ use libloading::Library;
 
 use crate::{
     VkExtensionProperties, VkInstance, VkInstanceCreateInfo, VkPhysicalDevice,
-    VkPhysicalDeviceIDProperties, VkPhysicalDeviceProperties, VkPhysicalDeviceProperties2,
-    VkResult,
+    VkPhysicalDeviceDrmPropertiesEXT, VkPhysicalDeviceIDProperties, VkPhysicalDeviceProperties,
+    VkPhysicalDeviceProperties2, VkResult,
 };
 
 // VkPhysicalDeviceLimits contains VkDeviceSize members, so it is 8-byte aligned and
@@ -21,6 +21,8 @@ const _: () = assert!(size_of::<VkPhysicalDeviceProperties2>() == 840);
 const _: () = assert!(offset_of!(VkPhysicalDeviceProperties2, properties) == 16);
 const _: () = assert!(size_of::<VkPhysicalDeviceIDProperties>() == 64);
 const _: () = assert!(offset_of!(VkPhysicalDeviceIDProperties, device_uuid) == 16);
+const _: () = assert!(size_of::<VkPhysicalDeviceDrmPropertiesEXT>() == 56);
+const _: () = assert!(offset_of!(VkPhysicalDeviceDrmPropertiesEXT, primary_major) == 24);
 
 pub type PfnVkVoidFunction = unsafe extern "C" fn();
 

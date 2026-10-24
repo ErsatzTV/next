@@ -9,11 +9,14 @@ use std::ptr;
 
 use libvulkan_sys::{
     STD_VIDEO_AV1_PROFILE_MAIN, STD_VIDEO_H264_PROFILE_IDC_HIGH, STD_VIDEO_H265_PROFILE_IDC_MAIN,
-    STD_VIDEO_H265_PROFILE_IDC_MAIN_10, VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
+    STD_VIDEO_H265_PROFILE_IDC_MAIN_10, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
     VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
     VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
     VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
     VK_STRUCTURE_TYPE_APPLICATION_INFO, VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
@@ -36,13 +39,14 @@ use libvulkan_sys::{
     VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR, VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR,
     VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
     VkApplicationInfo, VkExtensionProperties, VkInstanceCreateInfo, VkLib, VkPhysicalDevice,
-    VkPhysicalDeviceIDProperties, VkPhysicalDeviceProperties2, VkResult, VkVideoCapabilitiesKHR,
-    VkVideoDecodeAV1ProfileInfoKHR, VkVideoDecodeH264ProfileInfoKHR,
-    VkVideoDecodeH265ProfileInfoKHR, VkVideoEncodeAV1ProfileInfoKHR,
-    VkVideoEncodeH264ProfileInfoKHR, VkVideoEncodeH265ProfileInfoKHR, VkVideoProfileInfoKHR,
-    vk_make_api_version,
+    VkPhysicalDeviceDrmPropertiesEXT, VkPhysicalDeviceIDProperties, VkPhysicalDeviceProperties2,
+    VkResult, VkVideoCapabilitiesKHR, VkVideoDecodeAV1ProfileInfoKHR,
+    VkVideoDecodeH264ProfileInfoKHR, VkVideoDecodeH265ProfileInfoKHR,
+    VkVideoEncodeAV1ProfileInfoKHR, VkVideoEncodeH264ProfileInfoKHR,
+    VkVideoEncodeH265ProfileInfoKHR, VkVideoProfileInfoKHR, vk_make_api_version,
 };
 
+use crate::capabilities::vaapi::VaapiCapabilities;
 use crate::capabilities::vulkan::{VulkanCapabilities, format_uuid};
 use crate::error::FFPipelineError;
 use crate::pipeline::VideoFormat;
@@ -61,6 +65,15 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME,
     VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,
 ];
+
+/// Needed by ffmpeg's `vulkan_map_from_drm`
+const DRM_PRIME_IMPORT_EXTENSIONS: &[&str] = &[
+    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
+    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+];
+
+const VENDOR_ID_AMD: u32 = 0x1002;
 
 const BIT_DEPTHS: &[(u32, u8)] = &[
     (VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, 8),
@@ -82,9 +95,12 @@ struct DeviceIdentity {
     name: String,
     device_type: u32,
     vendor_id: u32,
+    pci_device_id: u32,
     device_uuid: Option<[u8; 16]>,
     /// Only Windows drivers report a LUID
     device_luid: Option<[u8; 8]>,
+    /// Empty without VK_EXT_physical_device_drm
+    drm_nodes: Vec<(i64, i64)>,
 }
 
 impl CapsBuf {
@@ -104,6 +120,21 @@ enum DeviceTarget {
     Best,
     /// The device backing a CUDA device, which ffmpeg reaches via `vulkan=vk@nv`
     Nvidia([u8; 16]),
+    /// Must be the device ffmpeg picks for `vulkan=vk@va`
+    Vaapi(DrmNode, VaapiDerive),
+}
+
+#[derive(Clone, Copy)]
+struct DrmNode {
+    major: i64,
+    minor: i64,
+}
+
+/// Inputs to ffmpeg's `vulkan_device_derive` for a VAAPI source
+#[derive(Clone, Copy)]
+struct VaapiDerive {
+    pci_device_id: Option<u32>,
+    is_amd: bool,
 }
 
 impl VulkanCapabilities {
@@ -127,6 +158,43 @@ impl VulkanCapabilities {
 
         probe_target(DeviceTarget::Nvidia(device_uuid))
     }
+
+    pub fn probe_for_vaapi(
+        device: &str,
+        vaapi: &VaapiCapabilities,
+    ) -> Result<VulkanCapabilities, FFPipelineError> {
+        let derive = VaapiDerive {
+            pci_device_id: vaapi.pci_device_id(),
+            is_amd: vaapi.vendor().contains("AMD"),
+        };
+        probe_target(DeviceTarget::Vaapi(drm_node(device)?, derive))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn drm_node(device: &str) -> Result<DrmNode, FFPipelineError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let rdev = std::fs::metadata(device)
+        .map_err(|e| {
+            FFPipelineError::VulkanCapabilitiesError(format!("cannot stat {device}: {e}"))
+        })?
+        .rdev();
+    // same as glibc major() and minor()
+    let major = ((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff);
+    let minor = (rdev & 0xff) | ((rdev >> 12) & !0xff);
+
+    Ok(DrmNode {
+        major: major as i64,
+        minor: minor as i64,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn drm_node(_device: &str) -> Result<DrmNode, FFPipelineError> {
+    Err(FFPipelineError::VulkanCapabilitiesError(
+        "DRM devices are only supported on Linux".into(),
+    ))
 }
 
 /// Lets another API target the same GPU that [`VulkanCapabilities::probe`] would pick
@@ -200,10 +268,21 @@ unsafe fn with_instance<T>(
     }
 }
 
-unsafe fn get_device_identity(vk: &VkLib, device: VkPhysicalDevice) -> DeviceIdentity {
+unsafe fn get_device_identity(
+    vk: &VkLib,
+    device: VkPhysicalDevice,
+    ext_names: &HashSet<String>,
+) -> DeviceIdentity {
     unsafe {
+        let has_drm = ext_names.contains(VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME);
+        let mut drm_props: VkPhysicalDeviceDrmPropertiesEXT = std::mem::zeroed();
+        drm_props.s_type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT;
+
         let mut id_props: VkPhysicalDeviceIDProperties = std::mem::zeroed();
         id_props.s_type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        if has_drm {
+            id_props.p_next = &raw mut drm_props as *mut c_void;
+        }
 
         let mut props2: VkPhysicalDeviceProperties2 = std::mem::zeroed();
         props2.s_type = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
@@ -218,7 +297,17 @@ unsafe fn get_device_identity(vk: &VkLib, device: VkPhysicalDevice) -> DeviceIde
             device_type: props2.properties.device_type,
             vendor_id: props2.properties.vendor_id,
             device_uuid: (id_props.device_uuid != [0u8; 16]).then_some(id_props.device_uuid),
+            pci_device_id: props2.properties.device_id,
             device_luid: (id_props.device_luid_valid != 0).then_some(id_props.device_luid),
+            drm_nodes: [
+                (drm_props.has_primary != 0)
+                    .then_some((drm_props.primary_major, drm_props.primary_minor)),
+                (drm_props.has_render != 0)
+                    .then_some((drm_props.render_major, drm_props.render_minor)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
         }
     }
 }
@@ -263,6 +352,39 @@ fn select_device(
                     format_uuid(uuid)
                 ))
             }),
+        DeviceTarget::Vaapi(node, derive) => {
+            let matched = identities
+                .iter()
+                .position(|identity| identity.drm_nodes.contains(&(node.major, node.minor)))
+                .ok_or_else(|| {
+                    FFPipelineError::VulkanCapabilitiesError(format!(
+                        "no Vulkan device matches DRM node {}:{}",
+                        node.major, node.minor
+                    ))
+                })?;
+
+            // ffmpeg ignores the DRM node here. It uses the PCI id, then the vendor string, then device 0.
+            let ffmpeg_choice = match derive {
+                VaapiDerive {
+                    pci_device_id: Some(pci_device_id),
+                    ..
+                } => identities
+                    .iter()
+                    .position(|identity| identity.pci_device_id == pci_device_id),
+                VaapiDerive { is_amd: true, .. } => identities
+                    .iter()
+                    .position(|identity| identity.vendor_id == VENDOR_ID_AMD),
+                _ => Some(0),
+            };
+            if ffmpeg_choice != Some(matched) {
+                return Err(FFPipelineError::VulkanCapabilitiesError(format!(
+                    "ffmpeg would derive Vulkan device {:?} instead of {} for DRM node {}:{}",
+                    ffmpeg_choice, matched, node.major, node.minor
+                )));
+            }
+
+            Ok(matched)
+        }
     }
 }
 
@@ -305,19 +427,21 @@ unsafe fn enumerate_devices(
         let mut extensions = Vec::with_capacity(devices.len());
 
         for (i, &device) in devices.iter().enumerate() {
-            let identity = get_device_identity(vk, device);
             let ext_names = enumerate_device_extensions(vk, device)?;
+            let identity = get_device_identity(vk, device, &ext_names);
             let video_ext_count = VIDEO_EXTENSIONS
                 .iter()
                 .filter(|e| ext_names.contains(**e))
                 .count();
 
             log::debug!(
-                "[vulkan]   device {}: \"{}\" ({}), vendor 0x{:04x}, uuid {}, {} video extension(s)",
+                "[vulkan]   device {}: \"{}\" ({}), vendor 0x{:04x}, device 0x{:04x}, drm {:?}, uuid {}, {} video extension(s)",
                 i,
                 identity.name,
                 device_type_name(identity.device_type),
                 identity.vendor_id,
+                identity.pci_device_id,
+                identity.drm_nodes,
                 identity.device_uuid.map_or("none".into(), format_uuid),
                 video_ext_count,
             );
@@ -402,10 +526,15 @@ unsafe fn probe_with_instance(
             }
         }
 
+        let can_import_drm_prime = DRM_PRIME_IMPORT_EXTENSIONS
+            .iter()
+            .all(|e| ext_names.contains(*e));
+
         Ok(VulkanCapabilities {
             device_index,
             supported_decoders,
             supported_encoders,
+            can_import_drm_prime,
         })
     }
 }

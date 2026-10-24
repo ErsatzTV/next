@@ -75,6 +75,17 @@ impl VaapiCapabilities {
             }
         };
 
+        let pci_device_id = unsafe {
+            let mut attr = VADisplayAttribute {
+                type_: VA_DISPLAY_PCIID,
+                ..Default::default()
+            };
+            let status = (va.vaGetDisplayAttributes)(display, &mut attr, 1);
+            (status == VA_STATUS_SUCCESS && attr.flags != VA_DISPLAY_ATTRIB_NOT_SUPPORTED)
+                .then_some(attr.value as u32 & 0xffff)
+                .filter(|&id| id != 0)
+        };
+
         let max_profiles = unsafe { (va.vaMaxNumProfiles)(display) } as usize;
         let mut profiles = vec![0i32; max_profiles];
         let mut num_profiles = 0i32;
@@ -336,6 +347,7 @@ impl VaapiCapabilities {
             rotation_flags,
             rate_control,
             amd_encode_engine,
+            pci_device_id,
         })
     }
 

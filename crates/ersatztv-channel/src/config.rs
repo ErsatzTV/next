@@ -670,12 +670,23 @@ impl HardwareAccel {
                                 ffpipeline::capabilities::opencl::OpenCLCapabilities::probe()
                                     .unwrap_or_default();
 
+                            let vulkan_capabilities =
+                                ffpipeline::capabilities::vulkan::VulkanCapabilities::probe_for_vaapi(
+                                    vaapi_device.to_str()?,
+                                    &capabilities,
+                                )
+                                .inspect_err(|e| {
+                                    log::debug!("Vulkan unavailable for VAAPI libplacebo: {e}")
+                                })
+                                .ok();
+
                             Some(ffpipeline::hw_accel::HardwareAccel::Vaapi(
                                 ffpipeline::accel::vaapi::Vaapi {
                                     device: vaapi_device.to_str()?.to_owned(),
                                     driver,
                                     capabilities,
                                     opencl_capabilities,
+                                    vulkan_capabilities,
                                 },
                             ))
                         }

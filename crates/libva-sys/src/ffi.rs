@@ -5,7 +5,7 @@ use std::ffi::{c_char, c_int, c_uint, c_void};
 use libloading::Library;
 
 use crate::{
-    VAConfigAttrib, VAConfigID, VAContextID, VADisplay, VAEntrypoint,
+    VAConfigAttrib, VAConfigID, VAContextID, VADisplay, VADisplayAttribute, VAEntrypoint,
     VAProcFilterCapHighDynamicRange, VAProcFilterType, VAProcPipelineCaps, VAProfile, VAStatus,
     VASurfaceAttrib, VASurfaceID,
 };
@@ -17,6 +17,8 @@ pub struct VaLib {
     pub vaInitialize: unsafe extern "C" fn(VADisplay, *mut c_int, *mut c_int) -> VAStatus,
     pub vaTerminate: unsafe extern "C" fn(VADisplay) -> VAStatus,
     pub vaQueryVendorString: unsafe extern "C" fn(VADisplay) -> *const c_char,
+    pub vaGetDisplayAttributes:
+        unsafe extern "C" fn(VADisplay, *mut VADisplayAttribute, c_int) -> VAStatus,
     pub vaMaxNumProfiles: unsafe extern "C" fn(VADisplay) -> c_int,
     pub vaMaxNumEntrypoints: unsafe extern "C" fn(VADisplay) -> c_int,
     pub vaQueryConfigProfiles:
@@ -91,6 +93,7 @@ impl VaLib {
             let vaInitialize = *lib.get(b"vaInitialize\0")?;
             let vaTerminate = *lib.get(b"vaTerminate\0")?;
             let vaQueryVendorString = *lib.get(b"vaQueryVendorString\0")?;
+            let vaGetDisplayAttributes = *lib.get(b"vaGetDisplayAttributes\0")?;
             let vaMaxNumProfiles = *lib.get(b"vaMaxNumProfiles\0")?;
             let vaMaxNumEntrypoints = *lib.get(b"vaMaxNumEntrypoints\0")?;
             let vaQueryConfigProfiles = *lib.get(b"vaQueryConfigProfiles\0")?;
@@ -115,6 +118,7 @@ impl VaLib {
                 vaInitialize,
                 vaTerminate,
                 vaQueryVendorString,
+                vaGetDisplayAttributes,
                 vaMaxNumProfiles,
                 vaMaxNumEntrypoints,
                 vaQueryConfigProfiles,
