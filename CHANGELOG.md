@@ -11,7 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `libplacebo` is preferred over `tonemap_opencl` and `tonemap_vaapi`, and shows Dolby Vision profile 5 with correct colors
   - Padding right after the tonemap is drawn by `libplacebo` in the same pass instead of by a separate (or, on AMD, software) pad
   - Requires ErsatzTV-ffmpeg `8.1.2-6`
-- Channel config `0.1.3`: `normalization.video.vaapi_low_power` (`auto` or `never`, default `auto`)
+- Channel config `0.1.3`:
+  - `normalization.video.vaapi_low_power` (`auto` or `never`, default `auto`)
+  - `fallback.background_image`, a still image shown instead of black when there is nothing to play or an item fails
+    - Black is used for the rest of the session if the image fails to play
 
 ### Changed
 - VAAPI: encode HEVC with the low-power entrypoint when the GPU also has the default entrypoint and low-power supports bitrate rate control
