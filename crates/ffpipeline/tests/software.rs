@@ -60,6 +60,13 @@ async fn copy_seek(
     .await;
 }
 
+/// Fixtures don't depend on the accel, so only the software suite checks them.
+#[test]
+#[ignore]
+fn fixture_properties() {
+    common::fixtures::check_all();
+}
+
 // Negative control: progressive encoder metadata does not prove deinterlacing.
 #[rstest]
 #[tokio::test]
