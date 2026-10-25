@@ -55,6 +55,9 @@ pub struct TestCase {
     /// Output pixel that a burned-in subtitle must make white
     pub burned_point: Option<(u32, u32)>,
     pub check_av_alignment: bool,
+    /// Tones (Hz) each output channel must carry, in channel order. Every other listed tone
+    /// must be absent from that channel.
+    pub channel_tones: Option<&'static [&'static [u32]]>,
 }
 
 #[allow(dead_code)]
@@ -267,6 +270,9 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         accel,
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
+    if let Some(channel_tones) = test_case.channel_tones {
+        assert_channel_tones(&test_env.ffmpeg, &output_probe, &segment, channel_tones).await;
+    }
     // reference is only the scaled source. without bars, nothing else catches green output.
     let plain_picture = scaling_mode == ScalingMode::Crop
         || (!source_is_hdr
@@ -1404,6 +1410,90 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
         })
         .expect("no audio stream found in output");
     assert_eq!(audio.codec, codec, "unexpected audio codec");
+}
+
+/// How far below the quietest wanted tone a leaked tone must be. Encoded and downmixed
+/// output measures 20+ dB of separation.
+const TONE_SEPARATION_DB: f64 = 15.0;
+
+pub async fn assert_channel_tones(
+    ffmpeg: &Path,
+    probe: &ProbeResult,
+    path: &Path,
+    channel_tones: &[&[u32]],
+) {
+    let channels = probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Audio(a) => Some(a.channels),
+            _ => None,
+        })
+        .expect("no audio stream found in output");
+    assert_eq!(
+        channels as usize,
+        channel_tones.len(),
+        "unexpected audio channel count"
+    );
+    let all: std::collections::BTreeSet<u32> = channel_tones
+        .iter()
+        .flat_map(|t| t.iter().copied())
+        .collect();
+    for (channel, wanted) in channel_tones.iter().enumerate() {
+        let mut levels = Vec::new();
+        for &tone in &all {
+            levels.push((tone, tone_level(ffmpeg, path, channel, tone).await));
+        }
+        let quietest_wanted = levels
+            .iter()
+            .filter(|(t, _)| wanted.contains(t))
+            .map(|(_, l)| *l)
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            quietest_wanted > -40.0,
+            "channel {channel} is missing a tone in {wanted:?}: {levels:?}"
+        );
+        for (tone, level) in levels.iter().filter(|(t, _)| !wanted.contains(t)) {
+            assert!(
+                *level < quietest_wanted - TONE_SEPARATION_DB,
+                "channel {channel} carries {tone} Hz, which belongs elsewhere: {levels:?}"
+            );
+        }
+    }
+}
+
+/// Mean level (dBFS) of one channel through a narrow band-pass around `tone`.
+pub async fn tone_level(ffmpeg: &Path, path: &Path, channel: usize, tone: u32) -> f64 {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-hide_banner", "-nostats", "-i"])
+            .arg(path)
+            .args(["-map", "0:a:0", "-af"])
+            .arg(tone_filter(channel, tone))
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("tone check timed out")
+    .expect("failed to decode output audio");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    mean_volume(&stderr)
+        .unwrap_or_else(|| panic!("no mean_volume for channel {channel} at {tone} Hz:\n{stderr}"))
+}
+
+pub fn tone_filter(channel: usize, tone: u32) -> String {
+    format!("pan=mono|c0=c{channel},bandpass=f={tone}:t=q:w=20,volumedetect")
+}
+
+pub fn mean_volume(volumedetect_log: &str) -> Option<f64> {
+    volumedetect_log
+        .split("mean_volume: ")
+        .nth(1)?
+        .split(' ')
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// one 30 fps video frame plus one AAC frame

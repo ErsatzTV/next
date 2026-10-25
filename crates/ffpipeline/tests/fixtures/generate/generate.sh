@@ -84,6 +84,20 @@ gen_480p_h264_a53cc.ts() {
         "$out/480p_h264_a53cc.ts"
 }
 
+# one tone per channel at sine's default amplitude, so downmix and layout routing can be measured.
+# aevalsrc rather than join: join of several sine inputs isn't deterministic at EOF.
+tones() { # layout hz...
+    local layout=$1 expr=""
+    shift
+    for hz in "$@"; do expr+="|sin(2*PI*$hz*t)/8"; done
+    echo -f lavfi -i "aevalsrc=${expr#|}:c=$layout:s=48000:d=2"
+}
+
+gen_480p_h264_ac3_51.ts() {
+    ff -f lavfi -i "testsrc2=s=640x480:r=30:d=2" $(tones "5.1(side)" 250 500 1000 60 2000 4000) \
+        -c:v libx264 -c:a ac3 -b:a 384k "$out/480p_h264_ac3_51.ts"
+}
+
 gen_480p_h264_video_only.mkv() {
     ff -f lavfi -i "testsrc2=s=640x480:r=30:d=2" -c:v libx264 "$out/480p_h264_video_only.mkv"
 }

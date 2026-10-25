@@ -637,6 +637,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         expected_copy: CopyDecisions::default(),
         burned_point: None,
         check_av_alignment: false,
+        channel_tones: None,
     }
 }
 
@@ -652,6 +653,7 @@ fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
         expected_copy: CopyDecisions::default(),
         burned_point: None,
         check_av_alignment: false,
+        channel_tones: None,
     }
 }
 

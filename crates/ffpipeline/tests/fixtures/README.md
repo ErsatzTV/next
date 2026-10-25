@@ -42,7 +42,8 @@ Checked against the committed files with ffmpeg n8.1.2-etv.6, x265 4.3, dovi_too
 and GPAC 26.07, the script gives:
 
 - **byte-identical:** `1080p_hevc_10_bt2020_4x3.ts`, `1080p_hevc_10_hdr_scope.ts`, the
-  `long_gop_*` .mp4/.ts files, `subtitle*`, `watermark.*` and `background*`;
+  `long_gop_*` .mp4/.ts files, `480p_h264_ac3_51.ts`, `subtitle*`, `watermark.*` and
+  `background*`;
 - **identical decoded frames:** the DV fixtures, `1080p_av1_10_hdr.mkv`,
   `1080p_h264_cropped_pgs.mkv`, `480i_h264_motion.ts`, `480i_mpeg2.ts`,
   `480p_h264_anamorphic.ts`, `480p_h264_video_only.mkv`, `480p_h264_10.ts`,
@@ -72,6 +73,7 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `480p_h264_anamorphic.ts` | 720x480 with SAR 32:27 (16:9 display), progressive | `pipeline`, `crop`, `stretch_anamorphic_same_size`, `watermark*` |
 | `480p_h264_sps_change.ts` | The SPS changes mid-stream (level 3.0 to 5.1) without a size or format change. Two TS files joined, so timestamps are irregular and `r_frame_rate` probes as 240 | `pipeline`, `watermark` |
 | `480p_h264_a53cc.ts` | ATSC A53 caption SEI on every frame. The cc_data is padding only (no caption text), written by `generate/insert_a53cc.py`. 1 kHz tone, 800 kb/s, no B-frames | `pipeline` |
+| `480p_h264_ac3_51.ts` | AC-3 5.1(side) with one tone per channel: FL 250 Hz, FR 500, FC 1000, LFE 60, SL 2000, SR 4000, so a downmix or layout change shows up as a tone in the wrong channel | `surround_audio` |
 | `480p_h264_video_only.mkv` | No audio stream | `video_only` |
 | `720p_h264_rotated.mp4` | `720p_h264.ts` remuxed with a 90° display matrix | `rotated` |
 | `720p_h264_audio_longer.mkv` | 4 s at 25 fps; audio runs 80 ms past the video | `watermark_periodic_audio_longer` |

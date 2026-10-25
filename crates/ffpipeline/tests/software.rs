@@ -3,6 +3,7 @@ mod common;
 use common::*;
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
+use ffpipeline::pipeline::AudioFormat;
 use rstest::rstest;
 
 async fn accel() -> Option<HardwareAccel> {
@@ -19,7 +20,7 @@ async fn scale_flags() {
         "480p_h264.ts",
         "1920x1080".parse().unwrap(),
         ("h264", 8),
-        ffpipeline::pipeline::AudioFormat::Aac,
+        AudioFormat::Aac,
     );
     test_case.params.filter_options.scale.flags = Some(String::from("lanczos"));
     let args = run_test_case(env, test_case).await;
@@ -58,6 +59,30 @@ async fn copy_seek(
         open_gop,
     })
     .await;
+}
+
+/// Audio is never processed on the accel, so only the software suite checks it.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn surround_audio(
+    #[values(AudioFormat::Aac, AudioFormat::Ac3)] af: AudioFormat,
+    #[values(2, 6)] channels: u32,
+) {
+    // the fixture's tone per channel: FL 250, FR 500, FC 1000, LFE 60, SL 2000, SR 4000.
+    // Stereo leaves LFE out, so whether a downmix keeps it isn't pinned.
+    const STEREO: &[&[u32]] = &[&[250, 1000, 2000], &[500, 1000, 4000]];
+    const SURROUND: &[&[u32]] = &[&[250], &[500], &[1000], &[60], &[2000], &[4000]];
+    let env = test_env().await.unwrap();
+    let mut test_case = shared::transcode(
+        "480p_h264_ac3_51.ts",
+        "640x480".parse().unwrap(),
+        ("h264", 8),
+        af,
+    );
+    test_case.params.audio_channels = Some(channels);
+    test_case.channel_tones = Some(if channels == 2 { STEREO } else { SURROUND });
+    run_test_case(env, test_case).await;
 }
 
 /// Fixtures don't depend on the accel, so only the software suite checks them.
