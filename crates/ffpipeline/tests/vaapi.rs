@@ -64,6 +64,7 @@ fn probe() -> Option<HardwareAccel> {
         capabilities,
         opencl_capabilities,
         vulkan_capabilities,
+        prefer_low_power: std::env::var("ETV_TEST_VAAPI_LOW_POWER").as_deref() != Ok("never"),
     }))
 }
 

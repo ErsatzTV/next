@@ -14,7 +14,7 @@ use crate::error::{ChannelError, IoContext};
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 1,
-    compatible: 2,
+    compatible: 3,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
@@ -283,6 +283,10 @@ pub struct VideoNormalizationConfig {
     pub vaapi_device: Option<PathBuf>,
     /// VAAPI driver. Unset lets libva select the driver for `vaapi_device`.
     pub vaapi_driver: Option<VaapiDriver>,
+    /// Whether VAAPI HEVC encoding may use the low-power entrypoint (Intel VDEnc) when the GPU also
+    /// has the default one. Default `auto`.
+    #[serde(default)]
+    pub vaapi_low_power: VaapiLowPower,
     /// Deinterlace interlaced sources. Progressive sources are not changed.
     #[serde(default)]
     pub deinterlace: bool,
@@ -514,6 +518,18 @@ pub enum VaapiDriver {
     RadeonSI,
 }
 
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(title = "VaapiLowPower")]
+pub enum VaapiLowPower {
+    /// Use low-power for HEVC when it supports bitrate rate control. Faster on Intel iGPUs with
+    /// both entrypoints; slightly lower quality on grainy sources.
+    #[default]
+    Auto,
+    /// Use the default entrypoint when the GPU has it.
+    Never,
+}
+
 impl From<VaapiDriver> for ffpipeline::accel::vaapi::VaapiDriver {
     fn from(value: VaapiDriver) -> Self {
         match value {
@@ -687,6 +703,7 @@ impl HardwareAccel {
                                     capabilities,
                                     opencl_capabilities,
                                     vulkan_capabilities,
+                                    prefer_low_power: video.vaapi_low_power == VaapiLowPower::Auto,
                                 },
                             ))
                         }
