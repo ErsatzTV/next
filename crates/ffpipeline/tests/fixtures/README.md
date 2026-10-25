@@ -89,7 +89,7 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `480i_mpeg2.ts` | Interlaced (TFF) MPEG-2, GOP 12, no B-frames | `deinterlace`, `copy_codec_*` |
 | `1080i_h264.ts` | 16:9 interlaced (TFF), so no pad is needed and hardware frames can stay on the device | `interlaced_no_deinterlace`, `custom_frame_rate` |
 | `1080i_mpeg2.ts`, `720p_mpeg2.ts` | ATSC-style MPEG-2 with B-frames and AC-3 stereo: 29.97i (TFF) and 59.94p. `testsrc`, since MPEG-2 can't make `testsrc2` small | `source_video_codec` |
-| `480p_mpeg4.avi` | Xvid (MPEG-4 Part 2 ASP) with B-frames and MP3 in AVI, 29.97 fps. Not DivX packed bitstream, which ffmpeg can't write | `source_video_codec` |
+| `480p_mpeg4.avi` | Xvid (MPEG-4 Part 2 ASP) with B-frames and MP3 in AVI, 29.97 fps. libxvid packs the B-frames (DivX-style packed bitstream; ffmpeg warns "packed B-frames" when decoding) | `source_video_codec` |
 | `1080p_vp9.webm`, `1080p_vp9_10.webm` | VP9 profile 0 (`testsrc2`, 30 fps) and profile 2 (10-bit `testsrc`, 24 fps, no colour tags), Opus mono | `source_video_codec` |
 | `1080p_av1.mkv` | 8-bit AV1 SDR (SVT-AV1) | `source_video_codec` |
 | `1080p_h264_23976.mkv`, `720p_h264_50.ts` | Film (23.976) and 50p broadcast rates | `source_format`, `custom_frame_rate` |

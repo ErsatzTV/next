@@ -160,6 +160,13 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Private media from `$ETV_TEST_MEDIA/manifest.json` (`common/media.rs`).
+        #[::tokio::test]
+        #[ignore]
+        async fn external_media() {
+            $crate::common::media::run_all($accel().await).await;
+        }
+
         /// Target size differs from the source; copy must ignore it.
         #[::tokio::test]
         #[ignore]

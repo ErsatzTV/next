@@ -210,6 +210,12 @@ async fn subtitle_convert(
     assert_eq!(cue.settings, settings);
 }
 
+#[test]
+#[ignore]
+fn external_media_properties() {
+    common::media::check_properties();
+}
+
 /// Fixtures don't depend on the accel, so only the software suite checks them.
 #[test]
 #[ignore]

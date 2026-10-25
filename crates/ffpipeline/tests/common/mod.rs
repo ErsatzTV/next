@@ -29,6 +29,7 @@ use tokio::sync::OnceCell;
 
 pub mod copy_seek;
 pub mod fixtures;
+pub mod media;
 pub mod shared;
 
 static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
@@ -271,11 +272,11 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     assert_video(
         &output_probe,
         &test_case.expected_video_codec,
-        test_case.expected_video_size.width,
-        test_case.expected_video_size.height,
+        test_case.expected_video_size,
         &expected_frame_rate,
         (!video_copied).then_some(bit_depth),
         accel,
+        source_video.sample_aspect_ratio.as_deref(),
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
     if let Some(channel_tones) = test_case.channel_tones {
@@ -854,10 +855,12 @@ pub async fn assert_matches_source(
             .args(["-t", "1", "-i"])
             .arg(source)
             .arg("-filter_complex")
+            // pair frames by index: matroska's millisecond timestamps misalign 23.976
+            // sources against the output's
             .arg(format!(
-                "[0:v]setsar=1,format=yuv420p,setpts=PTS-STARTPTS[out];\
+                "[0:v]setsar=1,format=yuv420p,settb=1/25,setpts=N[out];\
                  [1:v]scale=iw*sar:ih,setsar=1,{fit},\
-                 format=yuv420p,setpts=PTS-STARTPTS[ref];\
+                 format=yuv420p,settb=1/25,setpts=N[ref];\
                  [out][ref]ssim=shortest=1"
             ))
             .args(["-f", "null", "-"])
@@ -1352,11 +1355,11 @@ pub fn find_first_segment(dir: &Path) -> PathBuf {
 pub fn assert_video(
     probe: &ProbeResult,
     codec: &str,
-    width: u32,
-    height: u32,
+    size: FrameSize,
     frame_rate: &FrameRate,
     bit_depth: Option<u8>,
     accel: Option<HardwareAccel>,
+    source_sar: Option<&str>,
 ) {
     let video = probe
         .streams
@@ -1381,8 +1384,8 @@ pub fn assert_video(
             video.pix_fmt
         );
     }
-    assert_eq!(video.width, Some(width), "unexpected video width");
-    assert_eq!(video.height, Some(height), "unexpected video height");
+    assert_eq!(video.width, Some(size.width), "unexpected video width");
+    assert_eq!(video.height, Some(size.height), "unexpected video height");
     assert!(
         frame_rates_equal(&video.frame_rate, frame_rate),
         "unexpected video frame rate: expected {}, got {}",
@@ -1390,8 +1393,11 @@ pub fn assert_video(
         video.frame_rate.r_frame_rate
     );
 
-    // RKMPP encoders don't seem to set SAR
-    if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) {
+    // RKMPP encoders don't seem to set SAR. Without scaling, nothing adds one to a source
+    // that has none, and players read a missing SAR as square.
+    let source_has_no_sar = source_sar.is_none_or(|sar| ["N/A", "0:1"].contains(&sar));
+    let untagged_passthrough = source_has_no_sar && video.sample_aspect_ratio.is_none();
+    if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) && !untagged_passthrough {
         assert_eq!(
             video.sample_aspect_ratio,
             Some(String::from("1:1")),

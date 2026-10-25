@@ -11,7 +11,7 @@ use serde_json::Value;
 use super::{find_binaries, fixture_dir, mean_volume, tone_filter};
 
 #[derive(Clone, Copy, Debug)]
-enum Fact {
+pub enum Fact {
     /// codec, profile, size, SAR, pix_fmt, average frame rate
     Video,
     /// codec, sample rate, channel layout (`?` when unset); `none` when absent
@@ -744,30 +744,62 @@ pub fn check_all() {
 
     for (name, facts) in FIXTURES {
         let path = dir.join(name);
-        if !path.exists() {
-            continue;
-        }
-        let streams = run(
-            &ffprobe,
-            &["-v", "error", "-show_streams", "-of", "json"],
-            &path,
-        );
-        let streams: Value = serde_json::from_str(&streams).expect("ffprobe streams json");
-        let probe = Probe {
-            ffmpeg: &ffmpeg,
-            ffprobe: &ffprobe,
-            path: &path,
-            streams: streams["streams"].as_array().cloned().unwrap_or_default(),
-        };
-        for (fact, expected) in *facts {
-            let actual = probe.fact(*fact, expected);
-            if !matches(*fact, &actual, expected) {
-                failures.push(format!(
-                    "{name}: {fact:?} expected \"{expected}\", got \"{actual}\""
-                ));
-            }
+        if path.exists() {
+            failures.extend(check_file(&ffmpeg, &ffprobe, &path, facts.iter().copied()));
         }
     }
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// Fact names as written in the external media manifest.
+pub fn parse_fact(name: &str) -> Option<Fact> {
+    [
+        Video,
+        Audio,
+        Tones,
+        Subtitle,
+        Scan,
+        Color,
+        StreamSideData,
+        FrameSideData,
+        DolbyVision,
+        Rotation,
+        Frames,
+        Keyframes,
+        RandomAccess,
+        Levels,
+        AudioOutlastsVideo,
+    ]
+    .into_iter()
+    .find(|fact| format!("{fact:?}") == name)
+}
+
+pub fn check_file<'a>(
+    ffmpeg: &Path,
+    ffprobe: &Path,
+    path: &Path,
+    facts: impl IntoIterator<Item = (Fact, &'a str)>,
+) -> Vec<String> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let streams = run(
+        ffprobe,
+        &["-v", "error", "-show_streams", "-of", "json"],
+        path,
+    );
+    let streams: Value = serde_json::from_str(&streams).expect("ffprobe streams json");
+    let probe = Probe {
+        ffmpeg,
+        ffprobe,
+        path,
+        streams: streams["streams"].as_array().cloned().unwrap_or_default(),
+    };
+    facts
+        .into_iter()
+        .filter_map(|(fact, expected)| {
+            let actual = probe.fact(fact, expected);
+            (!matches(fact, &actual, expected))
+                .then(|| format!("{name}: {fact:?} expected \"{expected}\", got \"{actual}\""))
+        })
+        .collect()
 }
