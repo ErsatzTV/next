@@ -216,6 +216,52 @@ const FIXTURES: &[Expectation] = &[
         &[(Video, "av1 Main 1920x1080 1:1 yuv420p 30/1")],
     ),
     (
+        "1080p_h264_23976.mkv",
+        &[(Video, "h264 High 1920x1080 1:1 yuv420p 24000/1001")],
+    ),
+    (
+        "720p_h264_50.ts",
+        &[(Video, "h264 High 1280x720 1:1 yuv420p 50/1")],
+    ),
+    (
+        "576i_mpeg2.ts",
+        &[
+            (Video, "mpeg2video Main 720x576 64:45 yuv420p 25/1"),
+            (Scan, "tff"),
+            (Audio, "mp2 48000 stereo"),
+        ],
+    ),
+    (
+        "1080p_h264_1916x796.mkv",
+        &[(Video, "h264 High 1916x796 1:1 yuv420p 24000/1001")],
+    ),
+    (
+        "480p_h264_sar_10x11.ts",
+        &[(Video, "h264 High 720x480 10:11 yuv420p 30000/1001")],
+    ),
+    (
+        "2160p_h264.ts",
+        &[
+            (Video, "h264 High 3840x2160 1:1 yuv420p 30/1"),
+            (Levels, "51"),
+        ],
+    ),
+    (
+        "2160p_hevc_10_hdr.ts",
+        &[
+            (Video, "hevc Main 10 3840x2160 1:1 yuv420p10le 24/1"),
+            HDR10,
+            HDR10_SEI,
+        ],
+    ),
+    (
+        "1080p_hevc_10_hlg.ts",
+        &[
+            (Video, "hevc Main 10 1920x1080 1:1 yuv420p10le 24/1"),
+            (Color, "tv bt2020nc arib-std-b67 bt2020"),
+        ],
+    ),
+    (
         "1080p_hevc_10_hdr.ts",
         &[
             (Video, "hevc Main 10 1920x1080 1:1 yuv420p10le 24/1"),
