@@ -166,6 +166,44 @@ gen_480i_mpeg2.ts() {
         -c:a aac -ac 1 -shortest "$out/480i_mpeg2.ts"
 }
 
+# Source codecs other than h264/hevc, each in the container and with the audio it usually
+# comes with. Quality is low to keep the files small; the ssim check compares against
+# the fixture, not the pattern.
+
+# ATSC broadcast: 29.97i and 59.94p MPEG-2 with B-frames, AC-3 stereo.
+# testsrc rather than testsrc2: MPEG-2 can't make testsrc2 small.
+gen_1080i_mpeg2.ts() {
+    ff -f lavfi -i "testsrc=s=1920x1080:r=30000/1001:d=2" $(tone 2) \
+        -c:v mpeg2video -q:v 4 -g 15 -bf 2 -flags +ildct+ilme -top 1 \
+        -c:a ac3 -ac 2 "$out/1080i_mpeg2.ts"
+}
+gen_720p_mpeg2.ts() {
+    ff -f lavfi -i "testsrc=s=1280x720:r=60000/1001:d=2" $(tone 2) \
+        -c:v mpeg2video -q:v 4 -g 15 -bf 2 -c:a ac3 -ac 2 "$out/720p_mpeg2.ts"
+}
+
+# Xvid (MPEG-4 Part 2 ASP) with B-frames and MP3 in AVI. ffmpeg can't write DivX packed B-frames.
+gen_480p_mpeg4.avi() {
+    ff -f lavfi -i "testsrc2=s=640x480:r=30000/1001:d=2" $(tone 2) \
+        -c:v libxvid -q:v 8 -bf 2 -vtag XVID -c:a libmp3lame -ac 1 -b:a 64k "$out/480p_mpeg4.avi"
+}
+
+# bitexact: matroska and webm otherwise write a random segment UID
+vp9() { # name pattern rate pix_fmt
+    ff -f lavfi -i "$2=s=1920x1080:r=$3:d=2" $(tone 2) \
+        -c:v libvpx-vp9 -pix_fmt "$4" -crf 55 -b:v 0 -cpu-used 4 -c:a libopus -ac 1 \
+        -fflags +bitexact "$out/$1"
+}
+gen_1080p_vp9.webm() { vp9 1080p_vp9.webm testsrc2 30 yuv420p; }
+# profile 2, like the other 10-bit sources: testsrc at 24 fps, no colour tags
+gen_1080p_vp9_10.webm() { vp9 1080p_vp9_10.webm testsrc 24 yuv420p10le; }
+
+gen_1080p_av1.mkv() {
+    ff -f lavfi -i "testsrc2=s=1920x1080:r=30:d=2" $(tone 2) \
+        -c:v libsvtav1 -preset 8 -crf 55 -c:a aac -ac 1 -fflags +bitexact "$out/1080p_av1.mkv" \
+        2>&1 | { grep -v ^Svt || true; }
+}
+
 # BT.2020 matrix from swscale; the other bars fixtures keep smptehdbars' BT.709 values
 gen_1080p_hevc_10_hdr.ts() {
     bars_hevc 1080p_hevc_10_hdr.ts 1920x1080 "$HDR10" medium 128k scale=out_color_matrix=bt2020

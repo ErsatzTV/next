@@ -183,6 +183,39 @@ const FIXTURES: &[Expectation] = &[
     ),
     ("1080i_h264.ts", &[H264_1080, (Scan, "tff")]),
     (
+        "1080i_mpeg2.ts",
+        &[
+            (Video, "mpeg2video Main 1920x1080 1:1 yuv420p 30000/1001"),
+            (Scan, "tff"),
+        ],
+    ),
+    (
+        "720p_mpeg2.ts",
+        &[
+            (Video, "mpeg2video Main 1280x720 1:1 yuv420p 60000/1001"),
+            (Scan, "progressive"),
+        ],
+    ),
+    (
+        "480p_mpeg4.avi",
+        &[(
+            Video,
+            "mpeg4 Advanced Simple Profile 640x480 1:1 yuv420p 30000/1001",
+        )],
+    ),
+    (
+        "1080p_vp9.webm",
+        &[(Video, "vp9 Profile 0 1920x1080 1:1 yuv420p 30/1")],
+    ),
+    (
+        "1080p_vp9_10.webm",
+        &[(Video, "vp9 Profile 2 1920x1080 1:1 yuv420p10le 24/1")],
+    ),
+    (
+        "1080p_av1.mkv",
+        &[(Video, "av1 Main 1920x1080 1:1 yuv420p 30/1")],
+    ),
+    (
         "1080p_hevc_10_hdr.ts",
         &[
             (Video, "hevc Main 10 1920x1080 1:1 yuv420p10le 24/1"),

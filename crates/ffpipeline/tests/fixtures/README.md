@@ -42,8 +42,9 @@ Checked against the committed files with ffmpeg n8.1.2-etv.6, x265 4.3, dovi_too
 and GPAC 26.07, the script gives:
 
 - **byte-identical:** `1080p_hevc_10_bt2020_4x3.ts`, `1080p_hevc_10_hdr_scope.ts`, the
-  `long_gop_*` .mp4/.ts files, `480p_h264_ac3_51.ts`, the audio codec `.mkv` files,
-  `subtitle*`, `watermark.*` and `background*`;
+  `long_gop_*` .mp4/.ts files, `480p_h264_ac3_51.ts`, the audio codec `.mkv` files, the
+  VP9, AV1, MPEG-4 and `*_mpeg2.ts` source codec files, `subtitle*`, `watermark.*` and
+  `background*`;
 - **identical decoded frames:** the DV fixtures, `1080p_av1_10_hdr.mkv`,
   `1080p_h264_cropped_pgs.mkv`, `480i_h264_motion.ts`, `480i_mpeg2.ts`,
   `480p_h264_anamorphic.ts`, `480p_h264_video_only.mkv`, `480p_h264_10.ts`,
@@ -85,6 +86,10 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `480i_h264_motion.ts` | TFF fields from 60p: an 81px bar that moves 8px per field on near-black, so dropped or woven fields leave combing that `motion_combing_score` measures | `deinterlace_motion`, `motion_check_rejects_missing_deinterlace` |
 | `480i_mpeg2.ts` | Interlaced (TFF) MPEG-2, GOP 12, no B-frames | `deinterlace`, `copy_codec_*` |
 | `1080i_h264.ts` | 16:9 interlaced (TFF), so no pad is needed and hardware frames can stay on the device | `interlaced_no_deinterlace`, `custom_frame_rate` |
+| `1080i_mpeg2.ts`, `720p_mpeg2.ts` | ATSC-style MPEG-2 with B-frames and AC-3 stereo: 29.97i (TFF) and 59.94p. `testsrc`, since MPEG-2 can't make `testsrc2` small | `source_video_codec` |
+| `480p_mpeg4.avi` | Xvid (MPEG-4 Part 2 ASP) with B-frames and MP3 in AVI, 29.97 fps. Not DivX packed bitstream, which ffmpeg can't write | `source_video_codec` |
+| `1080p_vp9.webm`, `1080p_vp9_10.webm` | VP9 profile 0 (`testsrc2`, 30 fps) and profile 2 (10-bit `testsrc`, 24 fps, no colour tags), Opus mono | `source_video_codec` |
+| `1080p_av1.mkv` | 8-bit AV1 SDR (SVT-AV1) | `source_video_codec` |
 | `1080p_hevc_10_hdr.ts` | HDR10 (PQ, BT.2020, mastering display and MaxCLL SEI) `smptehdbars`. Converted to the BT.2020 matrix, unlike the other bars fixtures | `tonemap_hdr*`, `custom_frame_rate` |
 | `1080p_hevc_10_hdr_4x3.ts` | 1440x1080 centre cut of `1080p_hevc_10_hdr.ts`, audio copied: HDR that needs pillarboxing | `tonemap_hdr*`, `pad_color`, vaapi `pad_*` |
 | `1080p_hevc_10_hdr_scope.ts` | 1920x800 HDR10: HDR that needs letterboxing | `pad_color`, vaapi `pad_*` |
