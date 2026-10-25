@@ -132,6 +132,36 @@ async fn subtitle_force_style() {
     run_test_case(env, test_case).await;
 }
 
+/// "ETV Box" exists only in the fonts folder. A fallback font's "A" leaves the checked
+/// corner of the glyph empty.
+#[tokio::test]
+#[ignore]
+async fn subtitle_fonts_folder() {
+    run_fonts_folder_test(true).await;
+}
+
+#[tokio::test]
+#[ignore]
+#[should_panic(expected = "no burned-in subtitle")]
+async fn subtitle_fonts_folder_negative_control() {
+    run_fonts_folder_test(false).await;
+}
+
+async fn run_fonts_folder_test(fonts_folder: bool) {
+    let env = test_env().await.unwrap();
+    let mut test_case = shared::transcode(
+        "1080p_h264_subtitles.mkv",
+        "1920x1080".parse().unwrap(),
+        ("h264", 8),
+        AudioFormat::Aac,
+    );
+    test_case.subtitle_fixture = Some("subtitle_font.ass");
+    test_case.burned_point = Some((220, 220));
+    test_case.params.fonts_folder =
+        fonts_folder.then(|| fixture_dir().join("fonts").to_string_lossy().into_owned());
+    run_test_case(env, test_case).await;
+}
+
 /// Convert mode runs outside the pipeline: the channel extracts the cues itself.
 #[rstest]
 #[case::embedded_srt("1080p_h264_subtitles.mkv", 2, "Embedded subrip", "")]

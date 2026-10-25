@@ -1200,6 +1200,7 @@ pub struct TestOutputParams {
     pub in_point: Duration,
     pub duration: Duration,
     pub subtitle_force_style: Option<String>,
+    pub fonts_folder: Option<String>,
 }
 
 impl Default for TestOutputParams {
@@ -1226,6 +1227,7 @@ impl Default for TestOutputParams {
             in_point: Duration::ZERO,
             duration: Duration::from_secs(1),
             subtitle_force_style: None,
+            fonts_folder: None,
         }
     }
 }
@@ -1267,7 +1269,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         is_live: false,
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
-        fonts_folder: None,
+        fonts_folder: params.fonts_folder,
         subtitle_force_style: params.subtitle_force_style,
         reports_folder: None,
         report_id: None,

@@ -4,8 +4,9 @@
 #
 # usage: generate.sh <out-dir> [fixture ...]   (no fixture names: all of them)
 #
-# FFMPEG must be an ErsatzTV ffmpeg build (libx264, libx265, libsvtav1, libdav1d, libwebp).
-# The Dolby Vision fixtures also need the x265 CLI, dovi_tool and GPAC's MP4Box.
+# FFMPEG must be an ErsatzTV ffmpeg build (libx264, libx265, libsvtav1, libdav1d, libwebp,
+# libvpx, libxvid, libopus, libmp3lame). The Dolby Vision fixtures also need the x265 CLI,
+# dovi_tool and GPAC's MP4Box; fonts/etv_box.ttf needs Python's fontTools.
 set -euo pipefail
 
 FFMPEG=${FFMPEG:-ffmpeg}
@@ -375,6 +376,29 @@ gen_long_gop_hevc_open.ts() {
 }
 
 gen_subtitle_pgs.sup() { python3 "$here/make_pgs.py" "$out/subtitle_pgs.sup"; }
+
+gen_fonts/etv_box.ttf() {
+    mkdir -p "$out/fonts"
+    python3 "$here/make_font.py" "$out/fonts/etv_box.ttf"
+}
+
+gen_subtitle_font.ass() {
+    # needs fonts/etv_box.ttf, which no system has
+    cat > "$out/subtitle_font.ass" << 'EOF'
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,ETV Box,200,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,{\pos(200,200)}A
+EOF
+}
 
 gen_subtitle.srt() {
     printf '1\n00:00:00,000 --> 00:00:10,000\nCopy channel burned subtitle\n' > "$out/subtitle.srt"
