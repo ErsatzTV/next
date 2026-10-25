@@ -355,6 +355,7 @@ const FIXTURES: &[Expectation] = &[
     ),
     ("subtitle.srt", &[(Subtitle, "subrip ?x?")]),
     ("subtitle.vtt", &[(Subtitle, "webvtt ?x?")]),
+    ("subtitle_font.ass", &[(Subtitle, "ass ?x?")]),
     (
         "1080p_h264_subtitles.mkv",
         &[
