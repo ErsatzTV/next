@@ -129,6 +129,8 @@ pub async fn run_all(accel: Option<HardwareAccel>) {
                 continue;
             };
             test_case.params.in_point = Duration::from_millis(entry.in_point_ms);
+            // a mid-GOP capture holds its first picture for up to 2 s
+            test_case.params.duration = Duration::from_secs(4);
             // film grain fails the ssim check at the fixtures' 5 Mb/s; picture correctness,
             // not rate control, is what this checks
             test_case.params.video_bitrate = Some(Kbps(20000));
