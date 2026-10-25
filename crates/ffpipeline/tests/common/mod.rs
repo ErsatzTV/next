@@ -28,6 +28,7 @@ use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 
 pub mod copy_seek;
+pub mod fixtures;
 pub mod shared;
 
 static TEST_ENV: OnceCell<Option<TestEnv>> = OnceCell::const_new();
@@ -1003,11 +1004,20 @@ pub async fn load_ffmpeg_info(ffmpeg: &Path, disabled_filters: &[String]) -> Ffm
         .expect("failed to load ffmpeg info")
 }
 
+/// `ETV_TEST_FIXTURES` points the tests at a regenerated set (see `fixtures/README.md`).
+pub fn fixture_dir() -> PathBuf {
+    std::env::var_os("ETV_TEST_FIXTURES").map_or_else(
+        || {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("fixtures")
+        },
+        PathBuf::from,
+    )
+}
+
 pub fn fixture_path(name: &str) -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join(name);
+    let path = fixture_dir().join(name);
     assert!(path.exists(), "fixture not found: {}", path.display());
     path
 }
