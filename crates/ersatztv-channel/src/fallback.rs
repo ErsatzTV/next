@@ -85,26 +85,26 @@ impl FallbackReason {
     pub fn log(&self, now: &OffsetDateTime) {
         match self {
             FallbackReason::ScheduledGap { next_start } => log::debug!(
-                "no playout item covers {now}, replacing with black/silence until {}",
+                "no playout item covers {now}, replacing with fallback until {}",
                 next_start.map_or_else(|| String::from("the next reload"), |s| s.to_string())
             ),
-            FallbackReason::ItemSelectionFailed(error) => log::error!(
-                "no item could be selected for {now}, replacing with black/silence: {error}"
-            ),
+            FallbackReason::ItemSelectionFailed(error) => {
+                log::error!("no item could be selected for {now}, replacing with fallback: {error}")
+            }
             FallbackReason::TranscodeFailed {
                 item_id,
                 start,
                 finish,
                 error,
             } => log::error!(
-                "item {item_id} ({start} .. {finish}) failed, replacing with black/silence: {error}"
+                "item {item_id} ({start} .. {finish}) failed, replacing with fallback: {error}"
             ),
             FallbackReason::SourceEnded {
                 item_id,
                 reached,
                 finish,
             } => log::warn!(
-                "item {item_id} source ended at {reached}, replacing with black/silence until {finish}"
+                "item {item_id} source ended at {reached}, replacing with fallback until {finish}"
             ),
         }
     }

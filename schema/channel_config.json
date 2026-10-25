@@ -251,6 +251,13 @@
       "description": "Controls the content that replaces scheduled content when there is nothing to play\n(a gap in the playout) or when the scheduled item fails",
       "type": "object",
       "properties": {
+        "background_image": {
+          "description": "Still image shown instead of black, scaled and padded to the output size. Black is used\nif the image fails to play.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "duration_seconds": {
           "description": "Fallback length in seconds when the fallback has no end time, e.g. after a failed\ndynamic source. Default 60. Raised to the source's `retry_budget_ms` if shorter.",
           "type": [

@@ -131,6 +131,8 @@ pub struct ChannelSession {
     ended_item_id: Option<String>,
     input_starts: HashMap<(String, u32), Option<InputStart>>,
     dynamic_http_client: reqwest::Client,
+    // after one failure, fallbacks use black so the fallback itself can't keep failing
+    background_image_failed: bool,
 }
 
 impl ChannelSession {
@@ -242,6 +244,7 @@ impl ChannelSession {
             ended_item_id: None,
             input_starts: HashMap::new(),
             dynamic_http_client,
+            background_image_failed: false,
         })
     }
 
@@ -506,6 +509,10 @@ impl ChannelSession {
                 }
                 let reason = FallbackReason::from_transcode_error(&current_item, e);
                 reason.log(&self.transcoded_until);
+                if is_fallback && let Some(image) = self.background_image() {
+                    log::warn!("fallback background image {image} failed, using black instead");
+                    self.background_image_failed = true;
+                }
                 let fallback_item = self.fallback_playout_item(&reason, Duration::ZERO).await;
                 // the failed pass may have output segments
                 let pts_duration = match self.pts_scanner.get_last_pts().await {
@@ -1428,8 +1435,16 @@ impl ChannelSession {
             FrameSize { width, height },
             target_frame_rate(&self.channel_config.normalization).unwrap_or_default(),
             duration,
+            self.background_image(),
             subtitle,
         )
+    }
+
+    fn background_image(&self) -> Option<&str> {
+        if self.background_image_failed {
+            return None;
+        }
+        self.channel_config.fallback.background_image.as_deref()
     }
 
     async fn write_error_card(
@@ -1875,6 +1890,7 @@ fn fallback_item(
     size: FrameSize,
     frame_rate: FrameRate,
     duration: Duration,
+    background_image: Option<&str>,
     subtitle: Option<TrackSelection>,
 ) -> PlayoutItem {
     // lavfi defaults to 25fps, but the gop comes from the hinted rate; they must agree
@@ -1904,26 +1920,34 @@ fn fallback_item(
                 stream_index: None,
             }),
             video: Some(TrackSelection {
-                source: Some(PlayoutItemSource::Lavfi {
-                    params: format!(
-                        "color=c=black:s={}x{}:r={frame_rate}",
-                        size.width, size.height
-                    ),
-                    probe_hint: Some(ProbeHint {
-                        video: vec![VideoHint {
-                            frame_rate: Some(frame_rate),
-                            ..VideoHint::new(
-                                String::from("rawvideo"),
-                                size.width,
-                                size.height,
-                                String::from("yuv420p"),
-                            )
-                        }],
-                        audio: Vec::new(),
-                        subtitle: Vec::new(),
-                        format_name: Some(String::from("mpegts")),
-                        duration_ms: Some(duration.as_millis() as u64),
-                    }),
+                source: Some(match background_image {
+                    Some(path) => PlayoutItemSource::Local {
+                        path: path.to_owned(),
+                        in_point_ms: None,
+                        out_point_ms: None,
+                        probe_hint: None,
+                    },
+                    None => PlayoutItemSource::Lavfi {
+                        params: format!(
+                            "color=c=black:s={}x{}:r={frame_rate}",
+                            size.width, size.height
+                        ),
+                        probe_hint: Some(ProbeHint {
+                            video: vec![VideoHint {
+                                frame_rate: Some(frame_rate),
+                                ..VideoHint::new(
+                                    String::from("rawvideo"),
+                                    size.width,
+                                    size.height,
+                                    String::from("yuv420p"),
+                                )
+                            }],
+                            audio: Vec::new(),
+                            subtitle: Vec::new(),
+                            format_name: Some(String::from("mpegts")),
+                            duration_ms: Some(duration.as_millis() as u64),
+                        }),
+                    },
                 }),
                 stream_index: None,
             }),
@@ -2308,6 +2332,7 @@ mod tests {
             },
             FrameRate::default(),
             duration,
+            None,
             Some(error_card_track(String::from("fallback.ass"), duration)),
         );
         let tracks = item.tracks.as_ref().unwrap();
@@ -2430,6 +2455,37 @@ mod tests {
     }
 
     #[test]
+    fn fallback_uses_background_image_as_video() {
+        let start = datetime!(2026-01-01 12:00 UTC);
+        let item = fallback_item(
+            start,
+            start + Duration::from_mins(1),
+            FrameSize {
+                width: 1920,
+                height: 1080,
+            },
+            FrameRate::default(),
+            Duration::from_mins(1),
+            Some("/config/background.png"),
+            None,
+        );
+        let tracks = item.tracks.unwrap();
+        let Some(PlayoutItemSource::Local {
+            path,
+            probe_hint: None,
+            ..
+        }) = tracks.video.unwrap().source
+        else {
+            panic!("fallback video should be the unhinted local image")
+        };
+        assert_eq!(path, "/config/background.png");
+        assert!(matches!(
+            tracks.audio.unwrap().source,
+            Some(PlayoutItemSource::Lavfi { .. })
+        ));
+    }
+
+    #[test]
     fn fallback_video_rate_matches_hint() {
         let start = datetime!(2026-01-01 12:00 UTC);
         for (frame_rate, expected) in [
@@ -2445,6 +2501,7 @@ mod tests {
                 },
                 frame_rate,
                 Duration::from_mins(1),
+                None,
                 None,
             );
             let video = item.tracks.unwrap().video.unwrap().source.unwrap();

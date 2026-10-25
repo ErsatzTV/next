@@ -24,6 +24,7 @@ pub const PATH_FIELDS: &[&str] = &[
     "/ffmpeg/ffmpeg_path",
     "/ffmpeg/ffprobe_path",
     "/ffmpeg/reports_folder",
+    "/fallback/background_image",
     "/normalization/subtitle/fonts_folder",
 ];
 
@@ -102,6 +103,10 @@ pub struct FallbackConfig {
     /// dynamic source. Default 60. Raised to the source's `retry_budget_ms` if shorter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_seconds: Option<NonZeroU32>,
+    /// Still image shown instead of black, scaled and padded to the output size. Black is used
+    /// if the image fails to play.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_image: Option<String>,
 }
 
 impl FallbackConfig {
