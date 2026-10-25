@@ -204,6 +204,39 @@ gen_1080p_av1.mkv() {
         2>&1 | { grep -v ^Svt || true; }
 }
 
+# frame rates outside the 30 fps family
+gen_1080p_h264_23976.mkv() {
+    ff -f lavfi -i "testsrc2=s=1920x1080:r=24000/1001:d=2" $(tone 2) \
+        -c:v libx264 -crf 35 -c:a aac -ac 1 -fflags +bitexact "$out/1080p_h264_23976.mkv"
+}
+gen_720p_h264_50.ts() {
+    ff -f lavfi -i "testsrc2=s=1280x720:r=50:d=2" $(tone 2) \
+        -c:v libx264 -crf 35 -c:a aac -ac 1 "$out/720p_h264_50.ts"
+}
+# PAL DVD: 16:9 anamorphic 576i25 with MP2 audio. testsrc, since MPEG-2 can't make testsrc2 small.
+gen_576i_mpeg2.ts() {
+    ff -f lavfi -i "testsrc=s=720x576:r=25:d=2" $(tone 2) -vf setsar=64/45 \
+        -c:v mpeg2video -q:v 4 -g 12 -bf 2 -flags +ildct+ilme -top 1 \
+        -c:a mp2 -ac 2 -b:a 192k "$out/576i_mpeg2.ts"
+}
+
+# sizes that don't divide evenly: a cropped scope encode, and 4:3 NTSC (ITU SAR 10:11),
+# whose display width (654.5) isn't a whole number
+gen_1080p_h264_1916x796.mkv() {
+    ff -f lavfi -i "testsrc2=s=1916x796:r=24000/1001:d=2" $(tone 2) \
+        -c:v libx264 -crf 35 -c:a aac -ac 1 -fflags +bitexact "$out/1080p_h264_1916x796.mkv"
+}
+gen_480p_h264_sar_10x11.ts() {
+    ff -f lavfi -i "testsrc2=s=720x480:r=30000/1001:d=2" $(tone 2) -vf setsar=10/11 \
+        -c:v libx264 -crf 25 -c:a aac -ac 1 "$out/480p_h264_sar_10x11.ts"
+}
+
+# testsrc is rgb, which x264 would keep as 4:4:4
+gen_2160p_h264.ts() {
+    ff -f lavfi -i "testsrc=s=3840x2160:r=30:d=2" $(tone 2) \
+        -c:v libx264 -pix_fmt yuv420p -level 5.1 -crf 30 -c:a aac -ac 1 "$out/2160p_h264.ts"
+}
+
 # BT.2020 matrix from swscale; the other bars fixtures keep smptehdbars' BT.709 values
 gen_1080p_hevc_10_hdr.ts() {
     bars_hevc 1080p_hevc_10_hdr.ts 1920x1080 "$HDR10" medium 128k scale=out_color_matrix=bt2020
@@ -217,6 +250,13 @@ gen_1080p_hevc_10_hdr_4x3.ts() {
 gen_1080p_hevc_10_hdr_scope.ts() { bars_hevc 1080p_hevc_10_hdr_scope.ts 1920x800 "$HDR10"; }
 gen_1080p_hevc_10_bt2020_4x3.ts() {
     bars_hevc 1080p_hevc_10_bt2020_4x3.ts 1440x1080 "$BT2020:transfer=bt2020-10"
+}
+gen_1080p_hevc_10_hlg.ts() {
+    bars_hevc 1080p_hevc_10_hlg.ts 1920x1080 "$BT2020:transfer=arib-std-b67" ultrafast "" \
+        scale=out_color_matrix=bt2020
+}
+gen_2160p_hevc_10_hdr.ts() {
+    bars_hevc 2160p_hevc_10_hdr.ts 3840x2160 "$HDR10" ultrafast "" scale=out_color_matrix=bt2020
 }
 
 gen_1080p_av1_10_hdr.mkv() {

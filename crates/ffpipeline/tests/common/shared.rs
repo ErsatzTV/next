@@ -130,6 +130,38 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Source frame rates and geometry the other fixtures don't have. Without frame rate
+        /// normalization the output keeps the source rate; scale-and-pad checks the bars.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn source_format(
+            #[values(
+                "1080p_h264_23976.mkv",
+                "720p_h264_50.ts",
+                "576i_mpeg2.ts",
+                "1080p_h264_1916x796.mkv",
+                "480p_h264_sar_10x11.ts",
+                "2160p_h264.ts"
+            )]
+            src: &'static str,
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::deinterlace(
+                    src,
+                    ::ffpipeline::frame_size::FrameSize {
+                        width: 1920,
+                        height: 1080,
+                    },
+                    ("h264", 8),
+                    ::ffpipeline::pipeline::AudioFormat::Aac,
+                    true,
+                ),
+            )
+            .await;
+        }
+
         /// Target size differs from the source; copy must ignore it.
         #[::tokio::test]
         #[ignore]
@@ -280,6 +312,9 @@ macro_rules! shared_tests {
         #[case::up_ntsc("720p_h264.ts", "60000/1001", false)]
         #[case::deinterlaced("1080i_h264.ts", "25", true)]
         #[case::hdr("1080p_hevc_10_hdr.ts", "30", false)]
+        #[case::film_to_ntsc("1080p_h264_23976.mkv", "30000/1001", false)]
+        #[case::pal_to_ntsc("576i_mpeg2.ts", "30000/1001", true)]
+        #[case::pal_50p_to_ntsc("720p_h264_50.ts", "60000/1001", false)]
         #[::tokio::test]
         #[ignore]
         async fn custom_frame_rate(
@@ -323,6 +358,31 @@ macro_rules! shared_tests {
             $crate::common::shared::run(
                 $accel().await,
                 $crate::common::shared::tonemap(src, res, vf, af, false),
+            )
+            .await;
+        }
+
+        /// HDR sources outside the `tonemap_hdr` matrix: 4K HDR10 (decode limits on older
+        /// hardware) and HLG.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn tonemap_source(
+            #[values("2160p_hevc_10_hdr.ts", "1080p_hevc_10_hlg.ts")] src: &'static str,
+            #[values(("h264", 8), ("hevc", 10))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::tonemap(
+                    src,
+                    ::ffpipeline::frame_size::FrameSize {
+                        width: 1920,
+                        height: 1080,
+                    },
+                    vf,
+                    ::ffpipeline::pipeline::AudioFormat::Aac,
+                    false,
+                ),
             )
             .await;
         }

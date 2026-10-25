@@ -43,7 +43,8 @@ and GPAC 26.07, the script gives:
 
 - **byte-identical:** `1080p_hevc_10_bt2020_4x3.ts`, `1080p_hevc_10_hdr_scope.ts`, the
   `long_gop_*` .mp4/.ts files, `480p_h264_ac3_51.ts`, the audio codec `.mkv` files, the
-  VP9, AV1, MPEG-4 and `*_mpeg2.ts` source codec files, `subtitle*`, `watermark.*` and
+  VP9, AV1, MPEG-4 and `*_mpeg2.ts` source codec files, the frame rate, size, 4K and HLG
+  files from `source_format` and `tonemap_source`, `subtitle*`, `watermark.*` and
   `background*`;
 - **identical decoded frames:** the DV fixtures, `1080p_av1_10_hdr.mkv`,
   `1080p_h264_cropped_pgs.mkv`, `480i_h264_motion.ts`, `480i_mpeg2.ts`,
@@ -90,6 +91,13 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `480p_mpeg4.avi` | Xvid (MPEG-4 Part 2 ASP) with B-frames and MP3 in AVI, 29.97 fps. Not DivX packed bitstream, which ffmpeg can't write | `source_video_codec` |
 | `1080p_vp9.webm`, `1080p_vp9_10.webm` | VP9 profile 0 (`testsrc2`, 30 fps) and profile 2 (10-bit `testsrc`, 24 fps, no colour tags), Opus mono | `source_video_codec` |
 | `1080p_av1.mkv` | 8-bit AV1 SDR (SVT-AV1) | `source_video_codec` |
+| `1080p_h264_23976.mkv`, `720p_h264_50.ts` | Film (23.976) and 50p broadcast rates | `source_format`, `custom_frame_rate` |
+| `576i_mpeg2.ts` | PAL DVD: 720x576 SAR 64:45 (16:9), interlaced (TFF) 25 fps MPEG-2 with B-frames, MP2 stereo. `testsrc` | `source_format`, `custom_frame_rate` |
+| `1080p_h264_1916x796.mkv` | A cropped scope encode: neither dimension is a multiple of 8 | `source_format` |
+| `480p_h264_sar_10x11.ts` | 4:3 NTSC with the ITU SAR 10:11, so the display width (654.5) isn't a whole number | `source_format` |
+| `2160p_h264.ts` | 4K H.264 at level 5.1 (`testsrc`, `-pix_fmt yuv420p`) | `source_format` |
+| `2160p_hevc_10_hdr.ts` | 4K HDR10 `smptehdbars`, made like `1080p_hevc_10_hdr.ts` with the ultrafast preset | `tonemap_source` |
+| `1080p_hevc_10_hlg.ts` | HLG (`arib-std-b67`, BT.2020) `smptehdbars` without Dolby Vision. No mastering metadata | `tonemap_source` |
 | `1080p_hevc_10_hdr.ts` | HDR10 (PQ, BT.2020, mastering display and MaxCLL SEI) `smptehdbars`. Converted to the BT.2020 matrix, unlike the other bars fixtures | `tonemap_hdr*`, `custom_frame_rate` |
 | `1080p_hevc_10_hdr_4x3.ts` | 1440x1080 centre cut of `1080p_hevc_10_hdr.ts`, audio copied: HDR that needs pillarboxing | `tonemap_hdr*`, `pad_color`, vaapi `pad_*` |
 | `1080p_hevc_10_hdr_scope.ts` | 1920x800 HDR10: HDR that needs letterboxing | `pad_color`, vaapi `pad_*` |
