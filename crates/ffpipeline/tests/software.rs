@@ -61,8 +61,8 @@ async fn copy_seek(
     .await;
 }
 
-// The audio fixtures carry one tone per channel: FL 250, FR 500, FC 1000, LFE 60, SL (or BL)
-// 2000, SR (or BR) 4000. Downmixes leave LFE out, so whether they keep it isn't pinned.
+// Fixture tones: FL 250, FR 500, FC 1000, LFE 60, SL/BL 2000, SR/BR 4000. LFE is left out
+// of the downmix lists, so whether a downmix keeps it isn't pinned.
 const DOWNMIX_TONES: &[&[u32]] = &[&[250, 1000, 2000], &[500, 1000, 4000]];
 const SURROUND_TONES: &[&[u32]] = &[&[250], &[500], &[1000], &[60], &[2000], &[4000]];
 const STEREO_TONES: &[&[u32]] = &[&[250], &[500]];
@@ -117,6 +117,67 @@ async fn run_audio_test(
     test_case.params.audio_channels = Some(channels);
     test_case.channel_tones = Some(tones);
     run_test_case(env, test_case).await;
+}
+
+/// Text subtitles are always drawn in system memory, so the software suite covers styling.
+#[tokio::test]
+#[ignore]
+async fn subtitle_force_style() {
+    let env = test_env().await.unwrap();
+    let mut test_case = shared::embedded_subtitle("1080p_h264_subtitles.mkv", 2, None, None);
+    // ASS colours are &HBBGGRR
+    test_case.params.subtitle_force_style =
+        Some(String::from("PrimaryColour=&H000000FF,Fontsize=72,Bold=1"));
+    test_case.text_color = Some([255, 0, 0]);
+    run_test_case(env, test_case).await;
+}
+
+/// Convert mode runs outside the pipeline: the channel extracts the cues itself.
+#[rstest]
+#[case::embedded_srt("1080p_h264_subtitles.mkv", 2, "Embedded subrip", "")]
+#[case::embedded_ass("1080p_h264_subtitles.mkv", 3, "Embedded ass", "")]
+#[case::mov_text("720p_h264_mov_text.mp4", 2, "Embedded mov_text", "")]
+#[case::sidecar_srt("subtitle.srt", 0, "Copy channel burned subtitle", "")]
+#[case::sidecar_vtt("subtitle.vtt", 0, "WebVTT sidecar", "line:10% align:start")]
+#[tokio::test]
+#[ignore]
+async fn subtitle_convert(
+    #[case] src: &'static str,
+    #[case] stream: u32,
+    #[case] text: &str,
+    #[case] settings: &str,
+) {
+    let env = test_env().await.unwrap();
+    let path = fixture_path(src);
+    let probe = probe_file(&env.ffmpeg, &env.ffprobe, &path).await;
+    let input = local_input(&path, probe, std::time::Duration::from_secs(2));
+    let subtitle = input
+        .probe_result
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ffpipeline::probe::ProbeResultStream::Video(v) if v.stream_index == stream => Some(v),
+            _ => None,
+        })
+        .expect("no subtitle stream at that index");
+    let vtt = ffpipeline::web_vtt::convert_to_vtt(&env.ffmpeg, &input, subtitle)
+        .await
+        .expect("conversion failed");
+    let cues = ffpipeline::web_vtt::parse_file(vtt.path())
+        .await
+        .expect("converted file doesn't parse");
+    let cue = cues
+        .iter()
+        .find(|c| c.text.contains(text))
+        .unwrap_or_else(|| {
+            panic!(
+                "no cue with {text:?}: {:?}",
+                cues.iter().map(|c| &c.text).collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(cue.start, std::time::Duration::ZERO);
+    assert_eq!(cue.end, std::time::Duration::from_secs(10));
+    assert_eq!(cue.settings, settings);
 }
 
 /// Fixtures don't depend on the accel, so only the software suite checks them.

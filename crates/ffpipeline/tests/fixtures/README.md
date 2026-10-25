@@ -44,8 +44,8 @@ and GPAC 26.07, the script gives:
 - **byte-identical:** `1080p_hevc_10_bt2020_4x3.ts`, `1080p_hevc_10_hdr_scope.ts`, the
   `long_gop_*` .mp4/.ts files, `480p_h264_ac3_51.ts`, the audio codec `.mkv` files, the
   VP9, AV1, MPEG-4 and `*_mpeg2.ts` source codec files, the frame rate, size, 4K and HLG
-  files from `source_format` and `tonemap_source`, `subtitle*`, `watermark.*` and
-  `background*`;
+  files from `source_format` and `tonemap_source`, `subtitle*`, the embedded subtitle
+  files, `watermark.*` and `background*`;
 - **identical decoded frames:** the DV fixtures, `1080p_av1_10_hdr.mkv`,
   `1080p_h264_cropped_pgs.mkv`, `480i_h264_motion.ts`, `480i_mpeg2.ts`,
   `480p_h264_anamorphic.ts`, `480p_h264_video_only.mkv`, `480p_h264_10.ts`,
@@ -111,6 +111,9 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `1080p_h264_cropped_pgs.mkv` | 8 s, 1920x1040 video with a 1920x1080 PGS track that starts at 6 s, past ffprobe's 5 s window, so probing can't find the subtitle size (#335). x264 veryslow, ref 16, level 5.1 | `image_subtitle_unknown_size` |
 | `subtitle_pgs.sup` | PGS: one opaque white box from 0 to 10 s, written by `generate/make_pgs.py` | `copy_image_subtitle`, source for the cropped PGS fixture |
 | `subtitle.srt` | One cue from 0 to 10 s | `copy_text_subtitle` |
+| `subtitle.vtt` | One cue from 0 to 10 s with cue settings (`line:10% align:start`), which conversion must keep | `subtitle_convert` |
+| `1080p_h264_subtitles.mkv` | Flat dark blue video with three embedded tracks: SRT (stream 2), ASS (3) with a 400x80 box drawn at 100,100 so the burn check doesn't depend on fonts, and the PGS from `subtitle_pgs.sup` (4). Text comes first, so a burn that ignores the selected index shows the SRT | `embedded_subtitle`, `subtitle_force_style`, `subtitle_convert` |
+| `720p_h264_mov_text.mp4` | MP4 with an embedded mov_text track | `embedded_subtitle`, `subtitle_convert` |
 | `watermark.png` | 200x200 `testsrc2` frame cut to a circle: RGBA with binary alpha | every watermark test (default) |
 | `watermark.jpg` | `watermark.png` on grey: no alpha | `watermark_no_alpha` |
 | `watermark.webp` | `watermark.png` as lossy WebP: yuva420p | `watermark_yuva` |

@@ -97,9 +97,8 @@ macro_rules! shared_tests {
             .await;
         }
 
-        /// One case per source codec, since hardware decode support varies by codec and
-        /// generation. Deinterlace is on, as for a broadcast channel; it only applies to
-        /// 1080i.
+        /// Hardware decode support varies by codec and generation. Deinterlace is on, as
+        /// for a broadcast channel; it only affects 1080i.
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
@@ -130,8 +129,7 @@ macro_rules! shared_tests {
             .await;
         }
 
-        /// Source frame rates and geometry the other fixtures don't have. Without frame rate
-        /// normalization the output keeps the source rate; scale-and-pad checks the bars.
+        /// Without frame rate normalization the output must keep the source rate.
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
@@ -216,6 +214,28 @@ macro_rules! shared_tests {
             $crate::common::shared::run(
                 $accel().await,
                 $crate::common::shared::image_subtitle_unknown_size(res),
+            )
+            .await;
+        }
+
+        /// The fixture lists srt, ass, then pgs, so a burn that ignores the selected index
+        /// shows the srt.
+        #[::rstest::rstest]
+        #[case::srt("1080p_h264_subtitles.mkv", 2, None, Some([255, 255, 255]))]
+        #[case::ass("1080p_h264_subtitles.mkv", 3, Some((300, 140)), None)]
+        #[case::pgs("1080p_h264_subtitles.mkv", 4, Some((1060, 980)), None)]
+        #[case::mov_text("720p_h264_mov_text.mp4", 2, None, Some([255, 255, 255]))]
+        #[::tokio::test]
+        #[ignore]
+        async fn embedded_subtitle(
+            #[case] src: &'static str,
+            #[case] stream: u32,
+            #[case] burned_point: Option<(u32, u32)>,
+            #[case] text_color: Option<[u8; 3]>,
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::embedded_subtitle(src, stream, burned_point, text_color),
             )
             .await;
         }
@@ -362,8 +382,7 @@ macro_rules! shared_tests {
             .await;
         }
 
-        /// HDR sources outside the `tonemap_hdr` matrix: 4K HDR10 (decode limits on older
-        /// hardware) and HLG.
+        /// Kept out of the `tonemap_hdr` matrix. 4K hits decode limits on older hardware.
         #[::rstest::rstest]
         #[::tokio::test]
         #[ignore]
@@ -717,6 +736,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         fixture_name: src,
         audio_source: None,
         subtitle_fixture: None,
+        subtitle_stream: None,
         params: TestOutputParams {
             audio_format: af,
             video_format,
@@ -729,6 +749,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         expected_audio_codec: af.to_string(),
         expected_copy: CopyDecisions::default(),
         burned_point: None,
+        text_color: None,
         check_av_alignment: false,
         channel_tones: None,
     }
@@ -739,12 +760,14 @@ fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
         fixture_name: src,
         audio_source: None,
         subtitle_fixture: None,
+        subtitle_stream: None,
         params: TestOutputParams::default(),
         expected_video_codec: String::from("h264"),
         expected_video_size: size,
         expected_audio_codec: String::from("aac"),
         expected_copy: CopyDecisions::default(),
         burned_point: None,
+        text_color: None,
         check_av_alignment: false,
         channel_tones: None,
     }
@@ -852,6 +875,20 @@ pub fn image_subtitle_unknown_size(res: FrameSize) -> TestCase {
     let x = (f64::from(res.width) - 1920.0 * scale) / 2.0 + 1060.0 * scale;
     let y = (f64::from(res.height) - 1080.0 * scale) / 2.0 + 952.0 * scale;
     test_case.burned_point = Some((x as u32, y as u32));
+    test_case
+}
+
+pub fn embedded_subtitle(
+    src: &'static str,
+    stream: u32,
+    burned_point: Option<(u32, u32)>,
+    text_color: Option<[u8; 3]>,
+) -> TestCase {
+    let mut test_case = transcode(src, SIZE_1080P, ("h264", 8), AudioFormat::Aac);
+    test_case.subtitle_fixture = Some(src);
+    test_case.subtitle_stream = Some(stream);
+    test_case.burned_point = burned_point;
+    test_case.text_color = text_color;
     test_case
 }
 

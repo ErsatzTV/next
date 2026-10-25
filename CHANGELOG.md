@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Set `normalization.video.vaapi_low_power` to `never` to keep the previous behavior
 
 ### Fixed
+- Fix burning the wrong embedded text subtitle when a file has more than one subtitle stream
+  - The first subtitle stream in the file was burned regardless of the selected stream index
 - Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed
   - `pad_opencl` and `tonemap_opencl` are now only used with an Intel VAAPI driver and an OpenCL device that supports `cl_intel_va_api_media_sharing`
 

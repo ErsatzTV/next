@@ -25,19 +25,16 @@ ff() { "$FFMPEG" -nostdin -hide_banner -loglevel error -y "$@"; }
 tone() { echo -f lavfi -i "sine=f=${2:-440}:r=48000:d=$1"; }
 silence() { echo -f lavfi -i "anullsrc=r=48000:cl=stereo:d=$1"; }
 
-# 8-bit progressive h264: testsrc2, 30 fps, x264 defaults, mono tone
 progressive_h264() { # name size
     ff -f lavfi -i "testsrc2=s=$2:r=30:d=2" $(tone 2) \
         -c:v libx264 -c:a aac -ac 1 "$out/$1"
 }
 
-# 10-bit sources: testsrc, 24 fps, silent stereo
 ten_bit() { # name size codec
     ff -f lavfi -i "testsrc=s=$2:r=24:d=2" $(silence 2) \
         -c:v "$3" -pix_fmt yuv420p10le -c:a aac -shortest "$out/$1"
 }
 
-# smptehdbars HEVC Main 10 with x265 params, 24 fps, mono tone
 bars_hevc() { # name size x265-params [preset [audio-bitrate [filters]]]
     ff -f lavfi -i "smptehdbars=s=$2:r=24" $(tone 2) -t 2 ${6:+-vf $6} \
         -c:v libx265 -preset "${4:-ultrafast}" -crf 28 -pix_fmt yuv420p10le \
@@ -64,7 +61,7 @@ gen_480p_h264_anamorphic.ts() {
 }
 
 gen_480p_h264_sps_change.ts() {
-    # 15 frames at level 3.0, then 30 at 5.1: the SPS changes without a size or format change
+    # the SPS level changes; size and format don't
     local list=$work/sps_change.txt
     ff -f lavfi -i "testsrc2=s=640x480:r=30:d=0.5" $(silence 0.5) \
         -c:v libx264 -level 3.0 -g 15 -c:a aac -shortest "$work/sps_0.ts"
@@ -84,8 +81,8 @@ gen_480p_h264_a53cc.ts() {
         "$out/480p_h264_a53cc.ts"
 }
 
-# one tone per channel at sine's default amplitude, so downmix and layout routing can be measured.
-# aevalsrc rather than join: join of several sine inputs isn't deterministic at EOF.
+# one tone per channel, so downmix and layout routing can be measured; /8 is sine's default amplitude.
+# aevalsrc, not join: join of several sine inputs isn't deterministic at EOF.
 tones() { # layout hz...
     local layout=$1 expr=""
     shift
@@ -166,12 +163,9 @@ gen_480i_mpeg2.ts() {
         -c:a aac -ac 1 -shortest "$out/480i_mpeg2.ts"
 }
 
-# Source codecs other than h264/hevc, each in the container and with the audio it usually
-# comes with. Quality is low to keep the files small; the ssim check compares against
-# the fixture, not the pattern.
+# Low quality keeps these small; the ssim check compares against the fixture, not the pattern.
 
-# ATSC broadcast: 29.97i and 59.94p MPEG-2 with B-frames, AC-3 stereo.
-# testsrc rather than testsrc2: MPEG-2 can't make testsrc2 small.
+# testsrc, not testsrc2: MPEG-2 can't make testsrc2 small
 gen_1080i_mpeg2.ts() {
     ff -f lavfi -i "testsrc=s=1920x1080:r=30000/1001:d=2" $(tone 2) \
         -c:v mpeg2video -q:v 4 -g 15 -bf 2 -flags +ildct+ilme -top 1 \
@@ -182,7 +176,7 @@ gen_720p_mpeg2.ts() {
         -c:v mpeg2video -q:v 4 -g 15 -bf 2 -c:a ac3 -ac 2 "$out/720p_mpeg2.ts"
 }
 
-# Xvid (MPEG-4 Part 2 ASP) with B-frames and MP3 in AVI. ffmpeg can't write DivX packed B-frames.
+# not DivX packed B-frames: ffmpeg can't write them
 gen_480p_mpeg4.avi() {
     ff -f lavfi -i "testsrc2=s=640x480:r=30000/1001:d=2" $(tone 2) \
         -c:v libxvid -q:v 8 -bf 2 -vtag XVID -c:a libmp3lame -ac 1 -b:a 64k "$out/480p_mpeg4.avi"
@@ -195,7 +189,6 @@ vp9() { # name pattern rate pix_fmt
         -fflags +bitexact "$out/$1"
 }
 gen_1080p_vp9.webm() { vp9 1080p_vp9.webm testsrc2 30 yuv420p; }
-# profile 2, like the other 10-bit sources: testsrc at 24 fps, no colour tags
 gen_1080p_vp9_10.webm() { vp9 1080p_vp9_10.webm testsrc 24 yuv420p10le; }
 
 gen_1080p_av1.mkv() {
@@ -204,7 +197,6 @@ gen_1080p_av1.mkv() {
         2>&1 | { grep -v ^Svt || true; }
 }
 
-# frame rates outside the 30 fps family
 gen_1080p_h264_23976.mkv() {
     ff -f lavfi -i "testsrc2=s=1920x1080:r=24000/1001:d=2" $(tone 2) \
         -c:v libx264 -crf 35 -c:a aac -ac 1 -fflags +bitexact "$out/1080p_h264_23976.mkv"
@@ -213,15 +205,14 @@ gen_720p_h264_50.ts() {
     ff -f lavfi -i "testsrc2=s=1280x720:r=50:d=2" $(tone 2) \
         -c:v libx264 -crf 35 -c:a aac -ac 1 "$out/720p_h264_50.ts"
 }
-# PAL DVD: 16:9 anamorphic 576i25 with MP2 audio. testsrc, since MPEG-2 can't make testsrc2 small.
+# testsrc: MPEG-2 can't make testsrc2 small
 gen_576i_mpeg2.ts() {
     ff -f lavfi -i "testsrc=s=720x576:r=25:d=2" $(tone 2) -vf setsar=64/45 \
         -c:v mpeg2video -q:v 4 -g 12 -bf 2 -flags +ildct+ilme -top 1 \
         -c:a mp2 -ac 2 -b:a 192k "$out/576i_mpeg2.ts"
 }
 
-# sizes that don't divide evenly: a cropped scope encode, and 4:3 NTSC (ITU SAR 10:11),
-# whose display width (654.5) isn't a whole number
+# sizes that don't divide evenly; SAR 10:11 gives a 654.5 display width
 gen_1080p_h264_1916x796.mkv() {
     ff -f lavfi -i "testsrc2=s=1916x796:r=24000/1001:d=2" $(tone 2) \
         -c:v libx264 -crf 35 -c:a aac -ac 1 -fflags +bitexact "$out/1080p_h264_1916x796.mkv"
@@ -242,7 +233,6 @@ gen_1080p_hevc_10_hdr.ts() {
     bars_hevc 1080p_hevc_10_hdr.ts 1920x1080 "$HDR10" medium 128k scale=out_color_matrix=bt2020
 }
 gen_1080p_hevc_10_hdr_4x3.ts() {
-    # centre cut of the 16:9 fixture, audio copied
     [ -f "$out/1080p_hevc_10_hdr.ts" ] || gen_1080p_hevc_10_hdr.ts
     ff -i "$out/1080p_hevc_10_hdr.ts" -vf crop=1440:1080 -c:v libx265 -preset ultrafast -crf 28 \
         -pix_fmt yuv420p10le -x265-params "log-level=0:$HDR10" -c:a copy "$out/1080p_hevc_10_hdr_4x3.ts"
@@ -346,7 +336,6 @@ gen_1080p_hevc_10_dv84.mp4() {
 }
 
 gen_1080p_hevc_10_dv7.mp4() {
-    # dual layer: HDR10 base layer plus a 960x540 enhancement layer carrying the RPU
     dv_source && dv_rpu 8.1
     dv_x265 "$work/dv7_bl.hevc" "${DV_HDR10[@]}" --hdr10
     ff -i "$work/dv.y4m" -vf scale=960:540 -strict -1 "$work/dv_el.y4m"
@@ -362,7 +351,7 @@ gen_1080p_hevc_10_dv7.mp4() {
 long_gop_src() { echo -f lavfi -i "testsrc2=s=256x144:r=30000/1001:d=24" $(tone 24); }
 
 gen_long_gop_h264.mp4() {
-    # one keyframe per 150 frames (5 s): longer than an HLS segment
+    # keyframes 5 s apart: longer than an HLS segment
     ff $(long_gop_src) -c:v libx264 -preset veryfast -crf 42 -g 150 -bf 3 \
         -keyint_min 150 -sc_threshold 0 -c:a aac -b:a 16k -ac 1 -shortest "$out/long_gop_h264.mp4"
 }
@@ -391,10 +380,50 @@ gen_subtitle.srt() {
     printf '1\n00:00:00,000 --> 00:00:10,000\nCopy channel burned subtitle\n' > "$out/subtitle.srt"
 }
 
+gen_subtitle.vtt() {
+    # cue settings: the webvtt encoder drops them, so conversion must copy
+    printf 'WEBVTT\n\n00:00:00.000 --> 00:00:10.000 line:10%% align:start\nWebVTT sidecar\n' \
+        > "$out/subtitle.vtt"
+}
+
+gen_1080p_h264_subtitles.mkv() {
+    [ -f "$out/subtitle_pgs.sup" ] || gen_subtitle_pgs.sup
+    printf '1\n00:00:00,000 --> 00:00:10,000\nEmbedded subrip\n' > "$work/embedded.srt"
+    # a drawn box gives a burned-in pixel that doesn't depend on fonts
+    cat > "$work/embedded.ass" << 'EOF'
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,0,0,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,Embedded ass
+Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,{\an7\pos(100,100)\p1}m 0 0 l 400 0 400 80 0 80{\p0}
+EOF
+    # one track of each kind, text first: a burn that ignores the selected index picks the srt
+    ff -f lavfi -i "color=c=0x1f3a93:s=1920x1080:r=24:d=2" $(tone 2) \
+        -i "$work/embedded.srt" -i "$work/embedded.ass" -i "$out/subtitle_pgs.sup" \
+        -map 0:v -map 1:a -map 2:s -map 3:s -map 4:s \
+        -c:v libx264 -crf 35 -c:a aac -ac 1 -c:s:0 srt -c:s:1 ass -c:s:2 copy -t 2 \
+        -fflags +bitexact "$out/1080p_h264_subtitles.mkv"
+}
+
+gen_720p_h264_mov_text.mp4() {
+    printf '1\n00:00:00,000 --> 00:00:10,000\nEmbedded mov_text\n' > "$work/mov_text.srt"
+    ff -f lavfi -i "color=c=0x1f3a93:s=1280x720:r=24:d=2" $(tone 2) -i "$work/mov_text.srt" \
+        -map 0:v -map 1:a -map 2:s -c:v libx264 -crf 35 -c:a aac -ac 1 -c:s mov_text -t 2 \
+        -fflags +bitexact "$out/720p_h264_mov_text.mp4"
+}
+
 gen_1080p_h264_cropped_pgs.mkv() {
     [ -f "$out/subtitle_pgs.sup" ] || gen_subtitle_pgs.sup
-    # cropped (1920x1040) video with a 1920x1080 PGS track whose first display set is
-    # past ffprobe's 5s window, so probing can't find the subtitle size (#335)
+    # the first PGS display set is past ffprobe's 5 s window, so probing can't find the
+    # subtitle size and ffmpeg sizes the canvas from the 1920x1040 video (#335)
     ff -f lavfi -i "color=c=0x1f3a93:s=1920x1040:r=24000/1001:d=8" -f lavfi -i "sine=f=440:d=8:r=48000" \
         -itsoffset 6 -i "$out/subtitle_pgs.sup" -map 0:v -map 1:a -map 2:s \
         -c:v libx264 -preset veryslow -crf 23 -g 24 -pix_fmt yuv420p \
@@ -402,7 +431,7 @@ gen_1080p_h264_cropped_pgs.mkv() {
 }
 
 gen_watermark.png() {
-    # testsrc2 cut to a circle: a binary alpha channel
+    # binary alpha
     ff -f lavfi -i "testsrc2=s=200x200:d=1" \
         -vf "format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(hypot(X-100,Y-100),95),255,0)'" \
         -frames:v 1 "$out/watermark.png"
@@ -417,7 +446,6 @@ gen_watermark.webp() {
     ff -i "$out/watermark.png" -c:v libwebp -quality 80 "$out/watermark.webp"
 }
 gen_watermark.gif() {
-    # animated, 10 frames at 10 fps
     ff -f lavfi -i "testsrc2=s=120x120:r=10:d=1" \
         -vf "format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(hypot(X-60,Y-60),55),255,0)',split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse=alpha_threshold=128" \
         "$out/watermark.gif"
