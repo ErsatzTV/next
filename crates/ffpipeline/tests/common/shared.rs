@@ -324,6 +324,17 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Starts 12 frames past a keyframe, so the decoder sees frames before the in point.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn seek_mid_gop(
+            #[values("480p_h264_scroll.mkv", "480p_mpeg2_scroll.mkv")] src: &'static str,
+        ) {
+            $crate::common::shared::run($accel().await, $crate::common::shared::seek_mid_gop(src))
+                .await;
+        }
+
         #[::tokio::test]
         #[ignore]
         async fn loudness_normalization() {
@@ -989,6 +1000,15 @@ pub fn video_only(in_point: Duration, copy_video: bool) -> TestCase {
         ]);
     }
     test_case.params.in_point = in_point;
+    test_case.check_av_alignment = true;
+    test_case
+}
+
+pub fn seek_mid_gop(src: &'static str) -> TestCase {
+    let mut test_case = source_sized(src, SIZE_480P);
+    // a target size turns on the ssim check, which is what catches late frames
+    test_case.params.video_size = Some(SIZE_480P);
+    test_case.params.in_point = Duration::from_millis(1400);
     test_case.check_av_alignment = true;
     test_case
 }

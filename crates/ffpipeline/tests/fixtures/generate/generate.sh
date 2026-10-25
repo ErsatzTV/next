@@ -122,6 +122,19 @@ gen_480p_h264_video_only.mkv() {
     ff -f lavfi -i "testsrc2=s=640x480:r=30:d=2" -c:v libx264 "$out/480p_h264_video_only.mkv"
 }
 
+# The whole picture scrolls ~3 px a frame, so output one frame off scores below 0.9 ssim.
+# Keyframes every 1 s (H.264) and 0.5 s (MPEG-2) leave 12 frames before a 1.4 s seek.
+scroll_src() { echo -f lavfi -i "$1=s=640x480:r=$2:d=3,scroll=h=0.005"; }
+gen_480p_h264_scroll.mkv() {
+    ff $(scroll_src testsrc2 30) $(tone 3) -c:v libx264 -preset veryfast -crf 30 -g 30 \
+        -keyint_min 30 -c:a aac -ac 1 "$out/480p_h264_scroll.mkv"
+}
+# testsrc, not testsrc2: MPEG-2 can't make testsrc2 small. GOPs after the first are open
+gen_480p_mpeg2_scroll.mkv() {
+    ff $(scroll_src testsrc 30000/1001) $(tone 3) -c:v mpeg2video -q:v 6 -g 15 -bf 2 \
+        -c:a ac3 -ac 2 "$out/480p_mpeg2_scroll.mkv"
+}
+
 gen_720p_h264_rotated.mp4() {
     [ -f "$out/720p_h264.ts" ] || gen_720p_h264.ts
     ff -display_rotation 90 -i "$out/720p_h264.ts" -c copy "$out/720p_h264_rotated.mp4"
