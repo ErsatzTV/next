@@ -61,6 +61,12 @@ async fn copy_seek(
     .await;
 }
 
+// The audio fixtures carry one tone per channel: FL 250, FR 500, FC 1000, LFE 60, SL (or BL)
+// 2000, SR (or BR) 4000. Downmixes leave LFE out, so whether they keep it isn't pinned.
+const DOWNMIX_TONES: &[&[u32]] = &[&[250, 1000, 2000], &[500, 1000, 4000]];
+const SURROUND_TONES: &[&[u32]] = &[&[250], &[500], &[1000], &[60], &[2000], &[4000]];
+const STEREO_TONES: &[&[u32]] = &[&[250], &[500]];
+
 /// Audio is never processed on the accel, so only the software suite checks it.
 #[rstest]
 #[tokio::test]
@@ -69,19 +75,47 @@ async fn surround_audio(
     #[values(AudioFormat::Aac, AudioFormat::Ac3)] af: AudioFormat,
     #[values(2, 6)] channels: u32,
 ) {
-    // the fixture's tone per channel: FL 250, FR 500, FC 1000, LFE 60, SL 2000, SR 4000.
-    // Stereo leaves LFE out, so whether a downmix keeps it isn't pinned.
-    const STEREO: &[&[u32]] = &[&[250, 1000, 2000], &[500, 1000, 4000]];
-    const SURROUND: &[&[u32]] = &[&[250], &[500], &[1000], &[60], &[2000], &[4000]];
+    let tones = if channels == 2 {
+        DOWNMIX_TONES
+    } else {
+        SURROUND_TONES
+    };
+    run_audio_test("480p_h264_ac3_51.ts", af, channels, tones).await;
+}
+
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn source_audio_codec(
+    #[values(
+        ("480p_h264_eac3_51.mkv", 2, DOWNMIX_TONES),
+        ("480p_h264_eac3_51.mkv", 6, SURROUND_TONES),
+        ("480p_h264_dts_51.mkv", 2, DOWNMIX_TONES),
+        ("480p_h264_dts_51.mkv", 6, SURROUND_TONES),
+        ("480p_h264_truehd_51.mkv", 2, DOWNMIX_TONES),
+        ("480p_h264_truehd_51.mkv", 6, SURROUND_TONES),
+        ("480p_h264_opus_51.mkv", 2, DOWNMIX_TONES),
+        ("480p_h264_opus_51.mkv", 6, SURROUND_TONES),
+        ("480p_h264_flac.mkv", 2, STEREO_TONES),
+        ("480p_h264_mp3.mkv", 2, STEREO_TONES),
+        ("480p_h264_pcm_s24le.mkv", 2, STEREO_TONES)
+    )]
+    case: (&'static str, u32, &'static [&'static [u32]]),
+) {
+    let (src, channels, tones) = case;
+    run_audio_test(src, AudioFormat::Aac, channels, tones).await;
+}
+
+async fn run_audio_test(
+    src: &'static str,
+    af: AudioFormat,
+    channels: u32,
+    tones: &'static [&'static [u32]],
+) {
     let env = test_env().await.unwrap();
-    let mut test_case = shared::transcode(
-        "480p_h264_ac3_51.ts",
-        "640x480".parse().unwrap(),
-        ("h264", 8),
-        af,
-    );
+    let mut test_case = shared::transcode(src, "640x480".parse().unwrap(), ("h264", 8), af);
     test_case.params.audio_channels = Some(channels);
-    test_case.channel_tones = Some(if channels == 2 { STEREO } else { SURROUND });
+    test_case.channel_tones = Some(tones);
     run_test_case(env, test_case).await;
 }
 

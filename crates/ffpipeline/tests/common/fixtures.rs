@@ -15,7 +15,7 @@ use super::{find_binaries, fixture_dir, mean_volume, tone_filter};
 enum Fact {
     /// codec, profile, size, SAR, pix_fmt, average frame rate
     Video,
-    /// codec, sample rate, channel layout; `none` when absent
+    /// codec, sample rate, channel layout (`?` when unset); `none` when absent
     Audio,
     /// the loudest of the listed tones (Hz) in each audio channel, in channel order
     Tones,
@@ -55,6 +55,9 @@ const HDR10_SEI: (Fact, &str) = (
 );
 const LONG_GOP: (Fact, &str) = (Keyframes, "0 5.005 10.01 15.015 20.02");
 const DV_VIDEO: (Fact, &str) = (Video, "hevc Main 10 1920x1080 1:1 yuv420p10le 24/1");
+const H264_480: (Fact, &str) = (Video, "h264 High 640x480 1:1 yuv420p 30/1");
+const SURROUND_TONES: (Fact, &str) = (Tones, "250 500 1000 60 2000 4000");
+const STEREO_TONES: (Fact, &str) = (Tones, "250 500");
 
 const FIXTURES: &[Expectation] = &[
     ("1080p_h264.ts", &[H264_1080, (Scan, "progressive")]),
@@ -111,11 +114,35 @@ const FIXTURES: &[Expectation] = &[
     ),
     (
         "480p_h264_ac3_51.ts",
-        &[
-            (Video, "h264 High 640x480 1:1 yuv420p 30/1"),
-            (Audio, "ac3 48000 5.1(side)"),
-            (Tones, "250 500 1000 60 2000 4000"),
-        ],
+        &[H264_480, (Audio, "ac3 48000 5.1(side)"), SURROUND_TONES],
+    ),
+    (
+        "480p_h264_eac3_51.mkv",
+        &[H264_480, (Audio, "eac3 48000 5.1(side)"), SURROUND_TONES],
+    ),
+    (
+        "480p_h264_dts_51.mkv",
+        &[H264_480, (Audio, "dts 48000 5.1(side)"), SURROUND_TONES],
+    ),
+    (
+        "480p_h264_truehd_51.mkv",
+        &[H264_480, (Audio, "truehd 48000 5.1(side)"), SURROUND_TONES],
+    ),
+    (
+        "480p_h264_opus_51.mkv",
+        &[H264_480, (Audio, "opus 48000 5.1"), SURROUND_TONES],
+    ),
+    (
+        "480p_h264_flac.mkv",
+        &[H264_480, (Audio, "flac 48000 stereo"), STEREO_TONES],
+    ),
+    (
+        "480p_h264_mp3.mkv",
+        &[H264_480, (Audio, "mp3 48000 stereo"), STEREO_TONES],
+    ),
+    (
+        "480p_h264_pcm_s24le.mkv",
+        &[H264_480, (Audio, "pcm_s24le 48000 ?"), STEREO_TONES],
     ),
     (
         "480p_h264_video_only.mkv",

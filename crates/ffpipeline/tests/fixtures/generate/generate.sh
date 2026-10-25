@@ -98,6 +98,28 @@ gen_480p_h264_ac3_51.ts() {
         -c:v libx264 -c:a ac3 -b:a 384k "$out/480p_h264_ac3_51.ts"
 }
 
+# the audio is what these are for, so the video is cheap
+# bitexact: matroska otherwise writes a random segment UID
+audio_codec() { # name layout codec-args...
+    local name=$1 layout=$2 hz=(250 500 1000 60 2000 4000)
+    shift 2
+    [ "$layout" = stereo ] && hz=(250 500)
+    ff -f lavfi -i "testsrc2=s=640x480:r=30:d=2" $(tones "$layout" "${hz[@]}") \
+        -c:v libx264 -crf 35 "$@" -fflags +bitexact "$out/$name"
+}
+
+gen_480p_h264_eac3_51.mkv() { audio_codec 480p_h264_eac3_51.mkv "5.1(side)" -c:a eac3 -b:a 384k; }
+# dca and truehd are experimental encoders: DTS core only (no DTS-HD MA), TrueHD without Atmos
+gen_480p_h264_dts_51.mkv() { audio_codec 480p_h264_dts_51.mkv "5.1(side)" -c:a dca -strict -2 -b:a 768k; }
+gen_480p_h264_truehd_51.mkv() { audio_codec 480p_h264_truehd_51.mkv "5.1(side)" -c:a truehd -strict -2; }
+# libopus's surround mapping only takes the back layout
+gen_480p_h264_opus_51.mkv() {
+    audio_codec 480p_h264_opus_51.mkv 5.1 -c:a libopus -b:a 256k -mapping_family 1
+}
+gen_480p_h264_flac.mkv() { audio_codec 480p_h264_flac.mkv stereo -c:a flac; }
+gen_480p_h264_mp3.mkv() { audio_codec 480p_h264_mp3.mkv stereo -c:a libmp3lame -b:a 192k; }
+gen_480p_h264_pcm_s24le.mkv() { audio_codec 480p_h264_pcm_s24le.mkv stereo -c:a pcm_s24le; }
+
 gen_480p_h264_video_only.mkv() {
     ff -f lavfi -i "testsrc2=s=640x480:r=30:d=2" -c:v libx264 "$out/480p_h264_video_only.mkv"
 }
