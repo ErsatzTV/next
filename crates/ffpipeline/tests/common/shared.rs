@@ -97,6 +97,39 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// One case per source codec, since hardware decode support varies by codec and
+        /// generation. Deinterlace is on, as for a broadcast channel; it only applies to
+        /// 1080i.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn source_video_codec(
+            #[values(
+                "1080p_vp9.webm",
+                "1080p_vp9_10.webm",
+                "1080p_av1.mkv",
+                "480p_mpeg4.avi",
+                "720p_mpeg2.ts",
+                "1080i_mpeg2.ts"
+            )]
+            src: &'static str,
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::deinterlace(
+                    src,
+                    ::ffpipeline::frame_size::FrameSize {
+                        width: 1920,
+                        height: 1080,
+                    },
+                    ("h264", 8),
+                    ::ffpipeline::pipeline::AudioFormat::Aac,
+                    true,
+                ),
+            )
+            .await;
+        }
+
         /// Target size differs from the source; copy must ignore it.
         #[::tokio::test]
         #[ignore]
