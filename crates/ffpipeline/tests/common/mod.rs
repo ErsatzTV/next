@@ -295,7 +295,16 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         && plain_picture
         && let Some(size) = video_size
     {
-        assert_matches_source(&test_env.ffmpeg, &segment, &source, size, scaling_mode).await;
+        assert_matches_source(
+            test_env,
+            dir.path(),
+            &source,
+            &output_probe,
+            test_case.audio_source.is_none(),
+            size,
+            scaling_mode,
+        )
+        .await;
     }
     if !video_copied
         && scaling_mode == ScalingMode::ScaleAndPad
@@ -825,13 +834,22 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
 }
 
 /// Wrong scale or non-square pixels score about 0.7. Green output scores 0.
+///
+/// Frames are paired by time from a shared origin, so a picture that is late against
+/// audio fails too; one frame either way is tolerated.
 pub async fn assert_matches_source(
-    ffmpeg: &Path,
-    path: &Path,
+    test_env: &TestEnv,
+    output_dir: &Path,
     source: &Path,
+    output_probe: &ProbeResult,
+    audio_from_source: bool,
     size: FrameSize,
     scaling_mode: ScalingMode,
 ) {
+    const MIN_SSIM: f64 = 0.9;
+    // the largest offset reported by name; beyond it the picture just fails to match
+    const MAX_OFFSET: i32 = 8;
+
     let (w, h) = (size.width, size.height);
     let (fit, description) = match scaling_mode {
         ScalingMode::Crop => (
@@ -847,39 +865,116 @@ pub async fn assert_matches_source(
         ),
         ScalingMode::Stretch => (format!("scale={w}:{h}"), "a stretch"),
     };
-    let output = tokio::time::timeout(
-        Duration::from_secs(30),
-        ersatztv_core::process::command(ffmpeg)
-            .args(["-nostdin", "-v", "info", "-i"])
-            .arg(path)
-            .args(["-t", "1", "-i"])
-            .arg(source)
-            .arg("-filter_complex")
-            // pair frames by index: matroska's millisecond timestamps misalign 23.976
-            // sources against the output's
-            .arg(format!(
-                "[0:v]setsar=1,format=yuv420p,settb=1/25,setpts=N[out];\
-                 [1:v]scale=iw*sar:ih,setsar=1,{fit},\
-                 format=yuv420p,settb=1/25,setpts=N[ref];\
-                 [out][ref]ssim=shortest=1"
-            ))
-            .args(["-f", "null", "-"])
-            .output(),
-    )
-    .await
-    .expect("ssim check timed out")
-    .expect("failed to spawn ffmpeg for ssim check");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "ssim check failed:\n{stderr}");
-    let ssim = stderr
-        .rsplit_once(" All:")
-        .and_then(|(_, rest)| rest.split_whitespace().next())
-        .and_then(|value| value.parse::<f64>().ok())
-        .unwrap_or_else(|| panic!("no ssim in output:\n{stderr}"));
-    assert!(
-        ssim > 0.9,
-        "output does not match {description} of the source: ssim {ssim:.3}"
-    );
+    let rate = output_probe
+        .streams
+        .iter()
+        .find_map(|s| match s {
+            ProbeResultStream::Video(v) => Some(v.frame_rate.clone()),
+            _ => None,
+        })
+        .expect("no video stream in output");
+    // the first segment can be shorter than a source's leading hold
+    let segments: Vec<String> = find_segments(output_dir)
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let output = PathBuf::from(format!("concat:{}", segments.join("|")));
+
+    // the origin is the earliest decoded frame of either stream: the source may hold
+    // undecodable video (a mid-GOP capture) that the output replaces with its first picture
+    let origin = async |path: &Path| {
+        let video = first_frame_time(&test_env.ffprobe, path, "v:0")
+            .await
+            .expect("no decodable video frame");
+        let audio = match audio_from_source {
+            true => first_frame_time(&test_env.ffprobe, path, "a:0").await,
+            false => None,
+        };
+        (video, audio.map_or(video, |audio| audio.min(video)))
+    };
+    let (out_video, out_origin) = origin(&output).await;
+    let (ref_video, ref_origin) = origin(source).await;
+    // compare from the first source picture; before it the output holds that picture
+    let start = (ref_video - ref_origin).max(out_video - out_origin);
+    let end = start + 1.0;
+
+    // a positive offset pairs each output frame with an earlier source frame
+    let ssim_at = async |offset: i32| {
+        let ref_shift = ref_origin - f64::from(offset) / rate.parsed_frame_rate;
+        let fps = &rate.r_frame_rate;
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            ersatztv_core::process::command(&test_env.ffmpeg)
+                // keep the timestamps ffprobe reported
+                .args(["-nostdin", "-v", "info", "-copyts", "-i"])
+                .arg(&output)
+                .args(["-t", &format!("{:.3}", end + 2.0), "-i"])
+                .arg(source)
+                .arg("-filter_complex")
+                // fps on both sides snaps millisecond (matroska, asf) timestamps to one grid
+                // and repeats soft-telecine frames like the output's cfr does
+                .arg(format!(
+                    "[0:v]setpts=PTS-{out_origin}/TB,fps={fps},trim=start={start}:end={end},\
+                     setsar=1,format=yuv420p[out];\
+                     [1:v]setpts=PTS-{ref_shift}/TB,fps={fps},trim=start={start}:end={end},\
+                     scale=iw*sar:ih,setsar=1,{fit},format=yuv420p[ref];\
+                     [out][ref]ssim=shortest=1"
+                ))
+                .args(["-an", "-f", "null", "-"])
+                .output(),
+        )
+        .await
+        .expect("ssim check timed out")
+        .expect("failed to spawn ffmpeg for ssim check");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(result.status.success(), "ssim check failed:\n{stderr}");
+        stderr
+            .rsplit_once(" All:")
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or_else(|| panic!("no ssim in output:\n{stderr}"))
+    };
+
+    let ssim = ssim_at(0).await;
+    if ssim > MIN_SSIM {
+        return;
+    }
+    let mut best = (0, ssim);
+    for offset in (1..=MAX_OFFSET).flat_map(|n| [n, -n]) {
+        let score = ssim_at(offset).await;
+        if score > best.1 {
+            best = (offset, score);
+        }
+        if offset.abs() == 1 && best.1 > MIN_SSIM {
+            return;
+        }
+    }
+    let (offset, score) = best;
+    if score > MIN_SSIM {
+        panic!(
+            "output matches {description} of the source {} frames {} (ssim {score:.3}, {ssim:.3} \
+             in time)",
+            offset.abs(),
+            if offset > 0 { "late" } else { "early" },
+        );
+    }
+    panic!("output does not match {description} of the source: ssim {ssim:.3}");
+}
+
+async fn first_frame_time(ffprobe: &Path, path: &Path, stream: &str) -> Option<f64> {
+    let output = ersatztv_core::process::command(ffprobe)
+        .args(["-v", "error", "-select_streams", stream])
+        .args(["-read_intervals", "%+5", "-show_entries"])
+        // ffmpeg filters see the best-effort timestamp; asf frames carry no pts
+        .arg("frame=best_effort_timestamp_time")
+        .args(["-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to run ffprobe");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().trim_end_matches(',').parse::<f64>().ok())
 }
 
 /// Checks all channels: zero YUV (green) has dark luma.
@@ -1335,6 +1430,10 @@ pub async fn probe_avg_frame_rate(ffprobe: &Path, path: &Path) -> FrameRate {
 }
 
 pub fn find_first_segment(dir: &Path) -> PathBuf {
+    find_segments(dir).swap_remove(0)
+}
+
+pub fn find_segments(dir: &Path) -> Vec<PathBuf> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .expect("failed to read output dir")
         .filter_map(|e| e.ok())
@@ -1349,7 +1448,7 @@ pub fn find_first_segment(dir: &Path) -> PathBuf {
         "no segment files found in {}",
         dir.display()
     );
-    entries[0].path()
+    entries.into_iter().map(|e| e.path()).collect()
 }
 
 pub fn assert_video(
