@@ -177,7 +177,7 @@ gen_720p_mpeg2.ts() {
         -c:v mpeg2video -q:v 4 -g 15 -bf 2 -c:a ac3 -ac 2 "$out/720p_mpeg2.ts"
 }
 
-# not DivX packed B-frames: ffmpeg can't write them
+# libxvid packs the B-frames in AVI (DivX-style packed bitstream)
 gen_480p_mpeg4.avi() {
     ff -f lavfi -i "testsrc2=s=640x480:r=30000/1001:d=2" $(tone 2) \
         -c:v libxvid -q:v 8 -bf 2 -vtag XVID -c:a libmp3lame -ac 1 -b:a 64k "$out/480p_mpeg4.avi"
