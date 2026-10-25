@@ -1,6 +1,5 @@
-//! The property each fixture exists to provide, checked with ffprobe so that a replaced or
-//! regenerated file can't quietly stop exercising its tests. `fixtures/README.md` says why
-//! each property matters and `fixtures/generate/generate.sh` recreates the files.
+//! Checks the property each fixture exists for, so a replaced or regenerated file can't
+//! silently stop testing it. `fixtures/README.md` says why each property matters.
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,7 +18,7 @@ enum Fact {
     Audio,
     /// the loudest of the listed tones (Hz) in each audio channel, in channel order
     Tones,
-    /// codec and size; `?x?` when probing can't find the size
+    /// codec and size of each subtitle stream; `?x?` when probing can't find the size
     Subtitle,
     /// field order of the decoded frames: progressive, tff or bff
     Scan,
@@ -355,6 +354,21 @@ const FIXTURES: &[Expectation] = &[
         &[(Subtitle, "hdmv_pgs_subtitle 1920x1080")],
     ),
     ("subtitle.srt", &[(Subtitle, "subrip ?x?")]),
+    ("subtitle.vtt", &[(Subtitle, "webvtt ?x?")]),
+    (
+        "1080p_h264_subtitles.mkv",
+        &[
+            (Video, "h264 High 1920x1080 1:1 yuv420p 24/1"),
+            (Subtitle, "subrip ?x?, ass ?x?, hdmv_pgs_subtitle 1920x1080"),
+        ],
+    ),
+    (
+        "720p_h264_mov_text.mp4",
+        &[
+            (Video, "h264 High 1280x720 1:1 yuv420p 24/1"),
+            (Subtitle, "mov_text ?x?"),
+        ],
+    ),
     ("watermark.png", &[(Video, "png 200x200 1:1 rgba 25/1")]),
     (
         "watermark.jpg",
@@ -470,7 +484,7 @@ impl Probe<'_> {
         mean_volume(&String::from_utf8_lossy(&output.stderr)).unwrap_or(f64::NEG_INFINITY)
     }
 
-    /// `expected` is only read by facts that measure against it, e.g. the candidate tones.
+    /// Only `Tones` reads `expected`: it lists the tones to measure.
     fn fact(&self, fact: Fact, expected: &str) -> String {
         match fact {
             Video => self.stream("video").map_or("none".into(), |s| {
@@ -492,14 +506,26 @@ impl Probe<'_> {
                     field(s, "channel_layout")
                 )
             }),
-            Subtitle => self.stream("subtitle").map_or("none".into(), |s| {
-                format!(
-                    "{} {}x{}",
-                    field(s, "codec_name"),
-                    field(s, "width"),
-                    field(s, "height")
-                )
-            }),
+            Subtitle => {
+                let subtitles: Vec<String> = self
+                    .streams
+                    .iter()
+                    .filter(|s| s["codec_type"] == "subtitle")
+                    .map(|s| {
+                        format!(
+                            "{} {}x{}",
+                            field(s, "codec_name"),
+                            field(s, "width"),
+                            field(s, "height")
+                        )
+                    })
+                    .collect();
+                if subtitles.is_empty() {
+                    "none".into()
+                } else {
+                    subtitles.join(", ")
+                }
+            }
             Scan => {
                 let scans: BTreeSet<&str> = self
                     .video_frames()
@@ -588,8 +614,8 @@ impl Probe<'_> {
                     .join(" ")
             }
             RandomAccess => {
-                // Only key packets count: ffmpeg traces some packets twice, and the TS
-                // demuxer can split a CRA access unit across two packets.
+                // count key packets only: ffmpeg traces some packets twice, and the TS
+                // demuxer can split a CRA access unit across two packets
                 let mut pictures: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
                 let mut pts = String::new();
                 for line in self.trace_headers("debug").lines() {
@@ -604,7 +630,7 @@ impl Probe<'_> {
                         .into();
                         continue;
                     }
-                    // the per-NAL summary lines look like "nal_unit_type: 5(IDR), ..."
+                    // e.g. "nal_unit_type: 5(IDR), ..."
                     let Some(rest) = line.split("nal_unit_type: ").nth(1) else {
                         continue;
                     };
@@ -682,7 +708,7 @@ fn side_data_types(list: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Side data facts list what must be present; the others must match exactly.
+/// Side data facts list what must be present; others must match exactly.
 fn matches(fact: Fact, actual: &str, expected: &str) -> bool {
     match fact {
         StreamSideData | FrameSideData => {

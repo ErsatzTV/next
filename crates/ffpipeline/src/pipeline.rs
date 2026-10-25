@@ -31,7 +31,7 @@ use crate::output_settings::{
 use crate::overlay_filter::{
     FramePoint, OverlayFilter, OverlayKind, OverlaySource, SoftwareOverlay,
 };
-use crate::probe::{ProbeResultAudioStream, ProbeResultVideoStream};
+use crate::probe::{CodecType, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream};
 use crate::video_codec::{MetadataBsf, VideoCodec, VideoEncoder};
 use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
@@ -730,9 +730,23 @@ impl Pipeline {
                     final_force_style = final_output_settings.subtitle_force_style;
                 }
 
+                let subtitle_index = subtitle_input
+                    .probe_result
+                    .streams
+                    .iter()
+                    .filter_map(|s| match s {
+                        ProbeResultStream::Video(v) if v.codec_type == CodecType::Subtitle => {
+                            Some(v.stream_index)
+                        }
+                        _ => None,
+                    })
+                    .position(|index| index == subtitle_stream.stream_index)
+                    .unwrap_or(0);
+
                 filters.push(PipelineFilter::Video(
                     SubtitlesFilter {
                         path: subtitle_input.probe_result.path.to_owned(),
+                        subtitle_index,
                         seek: subtitle_input.in_point,
                         fonts_folder: final_output_settings.fonts_folder.to_owned(),
                         force_style: final_force_style,

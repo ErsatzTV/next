@@ -47,6 +47,8 @@ pub struct TestCase {
     /// `None`: audio comes from `fixture_name`
     pub audio_source: Option<TestAudioSource>,
     pub subtitle_fixture: Option<&'static str>,
+    /// Embedded subtitle stream index; `None` picks the first image subtitle
+    pub subtitle_stream: Option<u32>,
     pub params: TestOutputParams,
     pub expected_video_codec: String,
     pub expected_video_size: FrameSize,
@@ -54,9 +56,11 @@ pub struct TestCase {
     pub expected_copy: CopyDecisions,
     /// Output pixel that a burned-in subtitle must make white
     pub burned_point: Option<(u32, u32)>,
+    /// Color that burned-in text must show in the bottom quarter of the frame
+    pub text_color: Option<[u8; 3]>,
     pub check_av_alignment: bool,
-    /// Tones (Hz) each output channel must carry, in channel order. Every other listed tone
-    /// must be absent from that channel.
+    /// Tones (Hz) each output channel must carry, in channel order. The other listed
+    /// tones must be absent.
     pub channel_tones: Option<&'static [&'static [u32]]>,
 }
 
@@ -194,7 +198,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         let mut subtitle_input = local_input(&path, probe, duration);
         // embedded tracks are only selected by index
         if subtitle_fixture == test_case.fixture_name {
-            subtitle_input.stream_index =
+            subtitle_input.stream_index = test_case.subtitle_stream.or_else(|| {
                 subtitle_input
                     .probe_result
                     .streams
@@ -204,7 +208,8 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
                             Some(v.stream_index)
                         }
                         _ => None,
-                    });
+                    })
+            });
         }
         input.subtitle_input = Some(subtitle_input);
     }
@@ -255,6 +260,9 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
     assert_decodes_cleanly(&test_env.ffmpeg, &segment).await;
     if let Some((x, y)) = test_case.burned_point {
         assert_burned_in(&test_env.ffmpeg, &segment, x, y).await;
+    }
+    if let Some(rgb) = test_case.text_color {
+        assert_text_color(&test_env.ffmpeg, &segment, rgb).await;
     }
     if test_case.check_av_alignment {
         assert_av_aligned(&test_env.ffprobe, &segment).await;
@@ -736,6 +744,41 @@ pub async fn assert_burned_in(ffmpeg: &Path, path: &Path, x: u32, y: u32) {
     );
 }
 
+/// Glyphs vary by font, so this only needs a few pixels of the color where subtitles are
+/// drawn. Relies on the subtitle fixtures' flat dark blue background.
+pub async fn assert_text_color(ffmpeg: &Path, path: &Path, rgb: [u8; 3]) {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(path)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg("select=gte(n\\,10),crop=iw:ih/4:0:ih*3/4,format=rgb24")
+            .args(["-frames:v", "1", "-f", "rawvideo", "-"])
+            .output(),
+    )
+    .await
+    .expect("text colour check timed out")
+    .expect("failed to decode output");
+    assert!(
+        output.status.success() && !output.stdout.is_empty(),
+        "text colour check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let pixels = output.stdout.len() / 3;
+    let matching = output
+        .stdout
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|p| p.iter().zip(rgb).all(|(a, b)| a.abs_diff(b) < 60))
+        .count();
+    assert!(
+        matching * 1000 > pixels,
+        "no burned-in text of color {rgb:?}: {matching} of {pixels} pixels"
+    );
+}
+
 /// A quarter-turn source is taller than it is wide, so scale-and-pad output must have black
 /// pillars on both sides with the picture in the middle. Stretched or sideways output has
 /// picture at the edges instead.
@@ -1088,7 +1131,7 @@ pub fn build_input(
     }
 }
 
-fn local_input(path: &Path, probe: ProbeResult, duration: Duration) -> ProbedInput {
+pub fn local_input(path: &Path, probe: ProbeResult, duration: Duration) -> ProbedInput {
     ProbedInput {
         input_source: InputSource::Local(LocalInputSource {
             path: path.to_string_lossy().into_owned(),
@@ -1156,6 +1199,7 @@ pub struct TestOutputParams {
     pub disabled_filters: Vec<&'static str>,
     pub in_point: Duration,
     pub duration: Duration,
+    pub subtitle_force_style: Option<String>,
 }
 
 impl Default for TestOutputParams {
@@ -1181,6 +1225,7 @@ impl Default for TestOutputParams {
             disabled_filters: Vec::new(),
             in_point: Duration::ZERO,
             duration: Duration::from_secs(1),
+            subtitle_force_style: None,
         }
     }
 }
@@ -1223,7 +1268,7 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         frame_rate: params.frame_rate,
         subtitle_mode: SubtitleMode::Burn,
         fonts_folder: None,
-        subtitle_force_style: None,
+        subtitle_force_style: params.subtitle_force_style,
         reports_folder: None,
         report_id: None,
     }
@@ -1412,8 +1457,8 @@ pub fn assert_audio(probe: &ProbeResult, codec: &str) {
     assert_eq!(audio.codec, codec, "unexpected audio codec");
 }
 
-/// How far below the quietest wanted tone a leaked tone must be. Encoded and downmixed
-/// output measures 20+ dB of separation.
+/// Leaked tones must be this far below the quietest wanted tone. Encoded and downmixed
+/// output measures 20+ dB.
 const TONE_SEPARATION_DB: f64 = 15.0;
 
 pub async fn assert_channel_tones(
@@ -1462,7 +1507,6 @@ pub async fn assert_channel_tones(
     }
 }
 
-/// Mean level (dBFS) of one channel through a narrow band-pass around `tone`.
 pub async fn tone_level(ffmpeg: &Path, path: &Path, channel: usize, tone: u32) -> f64 {
     let output = tokio::time::timeout(
         Duration::from_secs(30),

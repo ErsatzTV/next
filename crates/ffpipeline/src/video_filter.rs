@@ -589,6 +589,8 @@ impl VideoFilterOp for HwMapFilter {
 #[derive(Debug, Clone)]
 pub struct SubtitlesFilter {
     pub path: String,
+    /// position among the file's subtitle streams; libass otherwise burns the first one
+    pub subtitle_index: usize,
     pub seek: Duration,
     pub fonts_folder: Option<String>,
     pub force_style: Option<String>,
@@ -612,25 +614,22 @@ impl VideoFilterOp for SubtitlesFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        let filter_args = match (self.fonts_folder.as_ref(), self.force_style.as_ref()) {
-            (Some(fonts_folder), Some(force_style)) => format!(
-                "{}:fontsdir={}:force_style={}",
-                FfmpegInfo::escape_path(&self.path),
-                FfmpegInfo::escape_path(fonts_folder),
+        let mut filter_args = FfmpegInfo::escape_path(&self.path);
+        if self.subtitle_index > 0 {
+            filter_args.push_str(&format!(":si={}", self.subtitle_index));
+        }
+        if let Some(fonts_folder) = &self.fonts_folder {
+            filter_args.push_str(&format!(
+                ":fontsdir={}",
+                FfmpegInfo::escape_path(fonts_folder)
+            ));
+        }
+        if let Some(force_style) = &self.force_style {
+            filter_args.push_str(&format!(
+                ":force_style={}",
                 FfmpegInfo::escape_filter_value(force_style)
-            ),
-            (Some(fonts_folder), None) => format!(
-                "{}:fontsdir={}",
-                FfmpegInfo::escape_path(&self.path),
-                FfmpegInfo::escape_path(fonts_folder),
-            ),
-            (None, Some(force_style)) => format!(
-                "{}:force_style={}",
-                FfmpegInfo::escape_path(&self.path),
-                FfmpegInfo::escape_filter_value(force_style)
-            ),
-            (None, None) => FfmpegInfo::escape_path(&self.path),
-        };
+            ));
+        }
 
         if self.seek > Duration::ZERO {
             Some(format!(
@@ -1026,6 +1025,21 @@ mod tests {
     use time::{Date, Month, Time, UtcOffset};
 
     use super::*;
+
+    #[test]
+    fn subtitles_filter_selects_stream_after_the_first() {
+        let filter = |subtitle_index| SubtitlesFilter {
+            path: String::from("/media/movie.mkv"),
+            subtitle_index,
+            seek: Duration::ZERO,
+            fonts_folder: Some(String::from("/fonts")),
+            force_style: None,
+        };
+        let first = filter(0).as_arg().unwrap();
+        let second = filter(1).as_arg().unwrap();
+        assert!(!first.contains(":si="), "{first}");
+        assert!(second.contains(":si=1:fontsdir="), "{second}");
+    }
 
     fn scale_filter(flags: Option<&str>) -> VideoFilter {
         ScaleFilter {
