@@ -289,7 +289,6 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             && test_case.subtitle_fixture.is_none()
             && !source_video.is_quarter_turn()
             && !(deinterlace && source_video.is_interlaced())
-            && in_point.is_zero()
             && !frame_rate_normalized);
     if !video_copied
         && plain_picture
@@ -300,6 +299,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             dir.path(),
             &source,
             &output_probe,
+            in_point,
             test_case.audio_source.is_none(),
             size,
             scaling_mode,
@@ -837,11 +837,13 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
 ///
 /// Frames are paired by time from a shared origin, so a picture that is late against
 /// audio fails too; one frame either way is tolerated.
+#[allow(clippy::too_many_arguments)]
 pub async fn assert_matches_source(
     test_env: &TestEnv,
     output_dir: &Path,
     source: &Path,
     output_probe: &ProbeResult,
+    in_point: Duration,
     audio_from_source: bool,
     size: FrameSize,
     scaling_mode: ScalingMode,
@@ -893,10 +895,20 @@ pub async fn assert_matches_source(
         (video, audio.map_or(video, |audio| audio.min(video)))
     };
     let (out_video, out_origin) = origin(&output).await;
-    let (ref_video, ref_origin) = origin(source).await;
+    let (ref_start, ref_origin) = if in_point.is_zero() {
+        let (ref_video, ref_origin) = origin(source).await;
+        (ref_video - ref_origin, ref_origin)
+    } else {
+        // ffmpeg's -ss counts from the container start
+        let start = format_start_time(&test_env.ffprobe, source).await;
+        (0.0, start + in_point.as_secs_f64())
+    };
     // compare from the first source picture; before it the output holds that picture
-    let start = (ref_video - ref_origin).max(out_video - out_origin);
+    let start = ref_start.max(out_video - out_origin);
     let end = start + 1.0;
+    // decode the reference from a keyframe a little before the in point
+    let ref_seek = (in_point.as_secs_f64() - 5.0).max(0.0);
+    let ref_seek_arg = format!("{ref_seek:.3}");
 
     // a positive offset pairs each output frame with an earlier source frame
     let ssim_at = async |offset: i32| {
@@ -908,7 +920,16 @@ pub async fn assert_matches_source(
                 // keep the timestamps ffprobe reported
                 .args(["-nostdin", "-v", "info", "-copyts", "-i"])
                 .arg(&output)
-                .args(["-t", &format!("{:.3}", end + 2.0), "-i"])
+                // seeking to 0 isn't a no-op: avi's packed B-frames come back with other timestamps
+                .args(match ref_seek > 0.0 {
+                    true => vec!["-noaccurate_seek", "-ss", &ref_seek_arg],
+                    false => vec![],
+                })
+                .args([
+                    "-t",
+                    &format!("{:.3}", in_point.as_secs_f64() - ref_seek + end + 2.0),
+                ])
+                .arg("-i")
                 .arg(source)
                 .arg("-filter_complex")
                 // fps on both sides snaps millisecond (matroska, asf) timestamps to one grid
@@ -959,6 +980,20 @@ pub async fn assert_matches_source(
         );
     }
     panic!("output does not match {description} of the source: ssim {ssim:.3}");
+}
+
+async fn format_start_time(ffprobe: &Path, path: &Path) -> f64 {
+    let output = ersatztv_core::process::command(ffprobe)
+        .args(["-v", "error", "-show_entries", "format=start_time"])
+        .args(["-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .await
+        .expect("failed to run ffprobe");
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0.0)
 }
 
 async fn first_frame_time(ffprobe: &Path, path: &Path, stream: &str) -> Option<f64> {

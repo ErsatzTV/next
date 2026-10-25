@@ -150,6 +150,14 @@ const FIXTURES: &[Expectation] = &[
             (Audio, "none"),
         ],
     ),
+    ("480p_h264_scroll.mkv", &[H264_480, (Keyframes, "0 1 2")]),
+    (
+        "480p_mpeg2_scroll.mkv",
+        &[
+            (Video, "mpeg2video Main 640x480 1:1 yuv420p 30000/1001"),
+            (Keyframes, "0 0.501 1.001 1.502 2.002 2.503 2.97"),
+        ],
+    ),
     (
         "720p_h264_rotated.mp4",
         &[(StreamSideData, "Display Matrix"), (Rotation, "90")],

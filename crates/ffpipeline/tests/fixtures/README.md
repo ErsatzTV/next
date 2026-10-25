@@ -81,6 +81,7 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `480p_h264_opus_51.mkv` | The same six tones as Opus 5.1 (back surrounds; libopus's surround mapping rejects 5.1(side)). Opus stores channels in Vorbis order, so the decoder has to reorder them | `source_audio_codec` |
 | `480p_h264_flac.mkv`, `_mp3.mkv`, `_pcm_s24le.mkv` | Stereo, L 250 Hz and R 500 Hz, as 24-bit FLAC, MP3 and 24-bit PCM. Matroska stores no channel layout for PCM, so ffprobe reports none | `source_audio_codec` |
 | `480p_h264_video_only.mkv` | No audio stream | `video_only` |
+| `480p_h264_scroll.mkv`, `480p_mpeg2_scroll.mkv` | 3 s; the whole picture scrolls ~3 px a frame, so the ssim check fails output that is one frame early or late (a still `testsrc2` scores 0.905 five frames off). H.264 with B-frames and a keyframe every 1 s; MPEG-2 (`testsrc`, AC-3) with B-frames and open GOPs every 0.5 s | `seek_mid_gop` |
 | `720p_h264_rotated.mp4` | `720p_h264.ts` remuxed with a 90° display matrix | `rotated` |
 | `720p_h264_audio_longer.mkv` | 4 s at 25 fps; audio runs 80 ms past the video | `watermark_periodic_audio_longer` |
 | `480i_h264.ts` | Interlaced H.264, coded bottom field first even though ffprobe reports the stream as `tt` | `deinterlace` |
