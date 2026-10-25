@@ -9,14 +9,16 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use super::{find_binaries, fixture_dir};
+use super::{find_binaries, fixture_dir, mean_volume, tone_filter};
 
 #[derive(Clone, Copy, Debug)]
 enum Fact {
     /// codec, profile, size, SAR, pix_fmt, average frame rate
     Video,
-    /// codec, sample rate, channels; `none` when absent
+    /// codec, sample rate, channel layout; `none` when absent
     Audio,
+    /// the loudest of the listed tones (Hz) in each audio channel, in channel order
+    Tones,
     /// codec and size; `?x?` when probing can't find the size
     Subtitle,
     /// field order of the decoded frames: progressive, tff or bff
@@ -106,6 +108,14 @@ const FIXTURES: &[Expectation] = &[
     (
         "480p_h264_a53cc.ts",
         &[(FrameSideData, "ATSC A53 Part 4 Closed Captions")],
+    ),
+    (
+        "480p_h264_ac3_51.ts",
+        &[
+            (Video, "h264 High 640x480 1:1 yuv420p 30/1"),
+            (Audio, "ac3 48000 5.1(side)"),
+            (Tones, "250 500 1000 60 2000 4000"),
+        ],
     ),
     (
         "480p_h264_video_only.mkv",
@@ -336,7 +346,26 @@ impl Probe<'_> {
             .fold(0.0, f64::max)
     }
 
-    fn fact(&self, fact: Fact) -> String {
+    fn tone_level(&self, channel: usize, tone: u32) -> f64 {
+        let output = Command::new(self.ffmpeg)
+            .args(["-hide_banner", "-nostdin", "-nostats", "-i"])
+            .arg(self.path)
+            .args([
+                "-map",
+                "0:a:0",
+                "-af",
+                &tone_filter(channel, tone),
+                "-f",
+                "null",
+                "-",
+            ])
+            .output()
+            .expect("failed to run ffmpeg");
+        mean_volume(&String::from_utf8_lossy(&output.stderr)).unwrap_or(f64::NEG_INFINITY)
+    }
+
+    /// `expected` is only read by facts that measure against it, e.g. the candidate tones.
+    fn fact(&self, fact: Fact, expected: &str) -> String {
         match fact {
             Video => self.stream("video").map_or("none".into(), |s| {
                 let mut parts = vec![field(s, "codec_name")];
@@ -351,10 +380,10 @@ impl Probe<'_> {
             }),
             Audio => self.stream("audio").map_or("none".into(), |s| {
                 format!(
-                    "{} {} {}ch",
+                    "{} {} {}",
                     field(s, "codec_name"),
                     field(s, "sample_rate"),
-                    field(s, "channels")
+                    field(s, "channel_layout")
                 )
             }),
             Subtitle => self.stream("subtitle").map_or("none".into(), |s| {
@@ -416,6 +445,23 @@ impl Probe<'_> {
                         d["dv_profile"], d["dv_bl_signal_compatibility_id"]
                     )
                 }),
+            Tones => {
+                let tones: Vec<u32> = expected.split(' ').filter_map(|t| t.parse().ok()).collect();
+                let channels = self
+                    .stream("audio")
+                    .and_then(|s| s["channels"].as_u64())
+                    .unwrap_or(0) as usize;
+                (0..channels)
+                    .map(|channel| {
+                        tones
+                            .iter()
+                            .map(|&tone| (tone, self.tone_level(channel, tone)))
+                            .max_by(|a, b| a.1.total_cmp(&b.1))
+                            .map_or("?".into(), |(tone, _)| tone.to_string())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
             Rotation => self
                 .stream("video")
                 .and_then(|s| s["side_data_list"].as_array())
@@ -581,7 +627,7 @@ pub fn check_all() {
             streams: streams["streams"].as_array().cloned().unwrap_or_default(),
         };
         for (fact, expected) in *facts {
-            let actual = probe.fact(*fact);
+            let actual = probe.fact(*fact, expected);
             if !matches(*fact, &actual, expected) {
                 failures.push(format!(
                     "{name}: {fact:?} expected \"{expected}\", got \"{actual}\""
