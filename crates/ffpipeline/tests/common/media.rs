@@ -13,7 +13,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, Once};
+use std::time::{Duration, Instant};
 
 use ffpipeline::frame_size::FrameSize;
 use ffpipeline::hw_accel::HardwareAccel;
@@ -111,12 +112,121 @@ fn test_case(path: &'static str, check: &str) -> Option<TestCase> {
     })
 }
 
+tokio::task_local! {
+    static CAPTURED: Arc<Mutex<Vec<String>>>;
+}
+
+/// False outside a check, so the caller logs as usual.
+pub(super) fn capture(line: String) -> bool {
+    CAPTURED
+        .try_with(|lines| lines.lock().unwrap().push(line))
+        .is_ok()
+}
+
+/// The summary reports the message; the default hook would print it again.
+fn quiet_check_panics() {
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if CAPTURED.try_with(|_| ()).is_err() {
+                default(info);
+            }
+        }));
+    });
+}
+
+const MAX_DETAIL_LINES: usize = 40;
+
+/// The address in `[h264 @ 0x55d0…]` (`@ 000000f0…` on Windows) differs per thread, so
+/// repeats would not fold.
+fn strip_pointers(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(" @ ") {
+        let after = &rest[at + 3..];
+        let digits = after.strip_prefix("0x").unwrap_or(after);
+        let hex = digits.len()
+            - digits
+                .trim_start_matches(|c: char| c.is_ascii_hexdigit())
+                .len();
+        if hex > 0 && digits[hex..].starts_with(']') {
+            out.push_str(&rest[..at]);
+            rest = &digits[hex..];
+        } else {
+            out.push_str(&rest[..at + 3]);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// ffmpeg repeats lines per frame; show each once with a count.
+fn fold_repeats(text: &str) -> String {
+    let mut lines: Vec<(String, usize)> = Vec::new();
+    for line in text.lines().map(strip_pointers) {
+        match lines.iter_mut().find(|(seen, _)| *seen == line) {
+            Some((_, count)) => *count += 1,
+            None => lines.push((line, 1)),
+        }
+    }
+    let skipped = lines.len().saturating_sub(MAX_DETAIL_LINES);
+    let mut out = Vec::new();
+    if skipped > 0 {
+        out.push(format!("... {skipped} earlier lines omitted"));
+    }
+    for (line, count) in &lines[skipped..] {
+        out.push(match count {
+            1 => line.clone(),
+            n => format!("{line} (x{n})"),
+        });
+    }
+    out.join("\n")
+}
+
+/// Adds the next line when the first only introduces it ("ffmpeg failed:").
+fn headline(message: &str) -> String {
+    let mut lines = message.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.next().unwrap_or_default();
+    let line = match lines.next() {
+        Some(next) if first.ends_with(':') => format!("{first} {next}"),
+        _ => first.to_string(),
+    };
+    strip_pointers(&line)
+}
+
+fn panic_message(e: tokio::task::JoinError) -> String {
+    e.try_into_panic()
+        .ok()
+        .and_then(|p| {
+            p.downcast_ref::<String>()
+                .cloned()
+                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+        })
+        .unwrap_or_else(|| String::from("cancelled"))
+}
+
+struct Failure {
+    label: String,
+    message: String,
+    log: Vec<String>,
+}
+
 /// One test for all entries, so a manifest change needs no code change. Each check runs in
-/// its own task so one failure doesn't stop the rest.
+/// its own task so one failure doesn't stop the rest. `ETV_TEST_MEDIA_FILTER` runs only
+/// checks whose `file [check]` label contains it.
 pub async fn run_all(accel: Option<HardwareAccel>) {
     let Some(dir) = media_dir() else {
         return;
     };
+    quiet_check_panics();
+    // libtest's "test external_media ... " has no newline
+    println!();
+    let suite = env!("CARGO_CRATE_NAME");
+    let filter = std::env::var("ETV_TEST_MEDIA_FILTER").ok();
+    let mut passed = 0;
+    let mut filtered = 0;
     let mut failures = Vec::new();
     for entry in manifest(&dir).media {
         // `TestCase` names its source with a `'static` str; an absolute path replaces the
@@ -124,8 +234,17 @@ pub async fn run_all(accel: Option<HardwareAccel>) {
         let path: &'static str = dir.join(&entry.file).to_string_lossy().into_owned().leak();
         for check in &entry.checks {
             let label = format!("{} [{check}]", entry.file);
+            if filter.as_ref().is_some_and(|f| !label.contains(f.as_str())) {
+                filtered += 1;
+                continue;
+            }
             let Some(mut test_case) = test_case(path, check) else {
-                failures.push(format!("{label}: unknown check"));
+                println!("FAIL         {label}: unknown check");
+                failures.push(Failure {
+                    label,
+                    message: String::from("unknown check"),
+                    log: Vec::new(),
+                });
                 continue;
             };
             test_case.params.in_point = Duration::from_millis(entry.in_point_ms);
@@ -135,24 +254,58 @@ pub async fn run_all(accel: Option<HardwareAccel>) {
             // not rate control, is what this checks
             test_case.params.video_bitrate = Some(Kbps(20000));
             test_case.params.video_buffer = Some(Kbps(40000));
-            if let Err(e) = tokio::spawn(shared::run(accel.clone(), test_case)).await {
-                let message = e
-                    .try_into_panic()
-                    .ok()
-                    .and_then(|p| {
-                        p.downcast_ref::<String>()
-                            .cloned()
-                            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                    })
-                    .unwrap_or_else(|| String::from("cancelled"));
-                failures.push(format!("{label}: {message}"));
+
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let started = Instant::now();
+            let result =
+                tokio::spawn(CAPTURED.scope(log.clone(), shared::run(accel.clone(), test_case)))
+                    .await;
+            let secs = started.elapsed().as_secs_f64();
+            match result {
+                Ok(()) => {
+                    passed += 1;
+                    println!("PASS  {secs:5.1}s  {label}");
+                }
+                Err(e) => {
+                    let message = panic_message(e);
+                    println!("FAIL  {secs:5.1}s  {label}: {}", headline(&message));
+                    let log = std::mem::take(&mut *log.lock().unwrap());
+                    failures.push(Failure {
+                        label,
+                        message,
+                        log,
+                    });
+                }
             }
         }
     }
-    assert!(
-        failures.is_empty(),
-        "{} external media checks failed:\n{}",
-        failures.len(),
-        failures.join("\n\n")
+
+    let mut summary = format!(
+        "{suite} external_media: {passed} passed, {} failed",
+        failures.len()
     );
+    if filtered > 0 {
+        summary.push_str(&format!(", {filtered} filtered out"));
+    }
+    assert!(
+        passed + failures.len() > 0,
+        "ETV_TEST_MEDIA_FILTER={filter:?} matched no checks"
+    );
+    println!("{summary}");
+    if failures.is_empty() {
+        return;
+    }
+    for f in &failures {
+        println!("\n--- {}\n{}", f.label, fold_repeats(&f.message));
+        for line in &f.log {
+            println!("log: {line}");
+        }
+        println!(
+            "rerun: ETV_TEST_MEDIA_FILTER=\"{}\" cargo test -p ffpipeline --test {suite} -- \
+             --ignored --nocapture external_media",
+            f.label
+        );
+    }
+    // skips the panic hook, whose stderr copy of the summary can land mid-output in CI
+    std::panic::resume_unwind(Box::new(summary));
 }
