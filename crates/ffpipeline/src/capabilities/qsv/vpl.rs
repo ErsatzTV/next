@@ -99,6 +99,9 @@ impl QsvCapabilities {
             });
         }
 
+        #[cfg(target_os = "linux")]
+        retain_va_decoders(&mut supported_decoders);
+
         Ok(QsvCapabilities {
             supported_decoders,
             supported_encoders,
@@ -110,6 +113,58 @@ impl QsvCapabilities {
             runtime_api,
         })
     }
+}
+
+/// VPL lists decoders the VA driver has disabled (e.g. VC-1 and VP8 on DG2,
+/// intel/media-driver#1658); those fail at decoder init.
+#[cfg(target_os = "linux")]
+fn retain_va_decoders(decoders: &mut HashMap<VideoFormat, Vec<u8>>) {
+    let Some(profiles) = legacy::display::VaDisplay::open().and_then(|d| d.decode_profiles())
+    else {
+        log::debug!("[qsv] no VA decode profiles; keeping the VPL decoder list");
+        return;
+    };
+
+    filter_decoders(decoders, &profiles);
+}
+
+#[cfg(target_os = "linux")]
+fn filter_decoders(
+    decoders: &mut HashMap<VideoFormat, Vec<u8>>,
+    profiles: &HashSet<libva_sys::VAProfile>,
+) {
+    use libva_sys::*;
+
+    const VA_DECODE_PROFILES: &[(VideoFormat, VAProfile, u8)] = &[
+        (VideoFormat::Av1, VA_PROFILE_AV1_PROFILE0, 8),
+        (VideoFormat::Av1, VA_PROFILE_AV1_PROFILE0, 10),
+        (VideoFormat::H264, VA_PROFILE_H264_CONSTRAINED_BASELINE, 8),
+        (VideoFormat::H264, VA_PROFILE_H264_MAIN, 8),
+        (VideoFormat::H264, VA_PROFILE_H264_HIGH, 8),
+        (VideoFormat::H264, VA_PROFILE_H264_HIGH10, 10),
+        (VideoFormat::Hevc, VA_PROFILE_HEVC_MAIN, 8),
+        (VideoFormat::Hevc, VA_PROFILE_HEVC_MAIN10, 10),
+        (VideoFormat::Mpeg2Video, VA_PROFILE_MPEG2_SIMPLE, 8),
+        (VideoFormat::Mpeg2Video, VA_PROFILE_MPEG2_MAIN, 8),
+        (VideoFormat::Vc1, VA_PROFILE_VC1_SIMPLE, 8),
+        (VideoFormat::Vc1, VA_PROFILE_VC1_MAIN, 8),
+        (VideoFormat::Vc1, VA_PROFILE_VC1_ADVANCED, 8),
+        (VideoFormat::Vp8, VA_PROFILE_VP8_VERSION0_3, 8),
+        (VideoFormat::Vp9, VA_PROFILE_VP9_PROFILE0, 8),
+        (VideoFormat::Vp9, VA_PROFILE_VP9_PROFILE2, 10),
+    ];
+
+    decoders.retain(|format, depths| {
+        depths.retain(|depth| {
+            VA_DECODE_PROFILES
+                .iter()
+                .any(|(f, profile, d)| f == format && d == depth && profiles.contains(profile))
+        });
+        if depths.is_empty() {
+            log::debug!("[qsv] VA driver has no decode profile for {format}; dropping it");
+        }
+        !depths.is_empty()
+    });
 }
 
 /// Returns true if the decoder description lists the given codec.
@@ -248,6 +303,45 @@ fn walk_filters(vpp: &mfxVPPDescription) -> FilterTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn va_filter_drops_decoders_the_driver_does_not_list() {
+        use libva_sys::*;
+
+        let mut decoders: HashMap<VideoFormat, Vec<u8>> = legacy::CODECS
+            .iter()
+            .map(|(format, _)| (*format, vec![8u8, 10u8]))
+            .collect();
+        // DG2 on iHD 26.3: no VC-1, VP8 or H.264 High 10
+        let profiles: HashSet<VAProfile> = [
+            VA_PROFILE_MPEG2_SIMPLE,
+            VA_PROFILE_MPEG2_MAIN,
+            VA_PROFILE_H264_MAIN,
+            VA_PROFILE_H264_HIGH,
+            VA_PROFILE_H264_CONSTRAINED_BASELINE,
+            VA_PROFILE_HEVC_MAIN,
+            VA_PROFILE_HEVC_MAIN10,
+            VA_PROFILE_VP9_PROFILE0,
+            VA_PROFILE_VP9_PROFILE2,
+            VA_PROFILE_AV1_PROFILE0,
+        ]
+        .into();
+
+        filter_decoders(&mut decoders, &profiles);
+
+        let mut result: Vec<_> = decoders.into_iter().collect();
+        result.sort_by_key(|(format, _)| format.to_string());
+        let mut expected = vec![
+            (VideoFormat::Av1, vec![8, 10]),
+            (VideoFormat::H264, vec![8]),
+            (VideoFormat::Hevc, vec![8, 10]),
+            (VideoFormat::Mpeg2Video, vec![8]),
+            (VideoFormat::Vp9, vec![8, 10]),
+        ];
+        expected.sort_by_key(|(format, _)| format.to_string());
+        assert_eq!(result, expected);
+    }
 
     #[test]
     fn rotation_requires_a_same_format_pair_in_the_rotation_filter() {
