@@ -496,23 +496,24 @@ fn profile_for(codec_id: u32, bit_depth: u8) -> u16 {
 }
 
 #[cfg(target_os = "linux")]
-mod display {
+pub(super) mod display {
+    use std::collections::HashSet;
     use std::ffi::{CStr, c_void};
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
-    use libva_sys::{VA_STATUS_SUCCESS, VADisplay, VaLib};
+    use libva_sys::{VA_ENTRYPOINT_VLD, VA_STATUS_SUCCESS, VADisplay, VAProfile, VaLib};
 
     /// A VA display on an Intel render node. it must stay open for as long as the
     /// Media SDK session that uses it.
-    pub(super) struct VaDisplay {
+    pub(in crate::capabilities::qsv) struct VaDisplay {
         va: VaLib,
         _device: File,
         display: VADisplay,
     }
 
     impl VaDisplay {
-        pub(super) fn open() -> Option<Self> {
+        pub(in crate::capabilities::qsv) fn open() -> Option<Self> {
             let va = VaLib::load().ok()?;
 
             for node in 128..136 {
@@ -564,6 +565,46 @@ mod display {
 
         pub(super) fn handle(&self) -> *mut c_void {
             self.display
+        }
+
+        pub(in crate::capabilities::qsv) fn decode_profiles(&self) -> Option<HashSet<VAProfile>> {
+            let max_profiles = unsafe { (self.va.vaMaxNumProfiles)(self.display) }.max(0);
+            let mut profiles = vec![0; max_profiles as usize];
+            let mut num_profiles = 0;
+            let status = unsafe {
+                (self.va.vaQueryConfigProfiles)(
+                    self.display,
+                    profiles.as_mut_ptr(),
+                    &mut num_profiles,
+                )
+            };
+            if status != VA_STATUS_SUCCESS {
+                log::debug!("[qsv] vaQueryConfigProfiles failed: {status}");
+                return None;
+            }
+            profiles.truncate(num_profiles.max(0) as usize);
+
+            let max_entrypoints = unsafe { (self.va.vaMaxNumEntrypoints)(self.display) }.max(0);
+            let decode = profiles
+                .into_iter()
+                .filter(|profile| {
+                    let mut entrypoints = vec![0; max_entrypoints as usize];
+                    let mut num_entrypoints = 0;
+                    let status = unsafe {
+                        (self.va.vaQueryConfigEntrypoints)(
+                            self.display,
+                            *profile,
+                            entrypoints.as_mut_ptr(),
+                            &mut num_entrypoints,
+                        )
+                    };
+                    status == VA_STATUS_SUCCESS
+                        && entrypoints[..num_entrypoints.max(0) as usize]
+                            .contains(&VA_ENTRYPOINT_VLD)
+                })
+                .collect();
+
+            Some(decode)
         }
     }
 

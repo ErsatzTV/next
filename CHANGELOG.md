@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - The first subtitle stream in the file was burned regardless of the selected stream index
 - Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed
   - `pad_opencl` and `tonemap_opencl` are now only used with an Intel VAAPI driver and an OpenCL device that supports `cl_intel_va_api_media_sharing`
+- Fix QSV stream failing to start on Linux when the VPL runtime reports a decoder the VA driver has disabled (e.g. VC-1 and VP8 on Arc)
+  - Those formats are now decoded in software
 
 ## [0.2.3] - 2026-10-23
 ### Added
