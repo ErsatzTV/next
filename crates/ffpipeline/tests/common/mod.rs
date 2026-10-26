@@ -93,13 +93,40 @@ impl Default for TestWatermark {
     }
 }
 
+/// During a media check, records go to `media::capture` so only failing checks show them.
+struct CaptureLogger(env_logger::Logger);
+
+impl log::Log for CaptureLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.0.matches(record) {
+            return;
+        }
+        let line = format!("[{} {}] {}", record.level(), record.target(), record.args());
+        if !media::capture(line) {
+            self.0.log(record);
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
+}
+
 pub async fn test_env() -> Option<&'static TestEnv> {
     TEST_ENV
         .get_or_init(|| async {
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-                .is_test(true)
-                .try_init()
-                .ok();
+            let logger =
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                    .is_test(true)
+                    .build();
+            let max_level = logger.filter();
+            if log::set_boxed_logger(Box::new(CaptureLogger(logger))).is_ok() {
+                log::set_max_level(max_level);
+            }
 
             let disabled_filters: Vec<String> = std::env::var("ETV_TEST_DISABLED_FILTERS")
                 .ok()
