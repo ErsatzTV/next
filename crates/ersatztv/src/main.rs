@@ -331,8 +331,10 @@ async fn channel_playlist(
 
         // TODO: kodiprop when user agent starts with "kodi"
         content.push_str(&format!(
-            "#EXTINF:0 tvg-id=\"{}\" tvg-name=\"{}\"{}{}, {}\n",
+            "#EXTINF:0 tvg-id=\"{}\" tvg-chno=\"{}\" channel-number=\"{}\" tvg-name=\"{}\"{}{}, {}\n",
             channel.tvg_id(),
+            channel.number(),
+            channel.number(),
             channel.name(),
             logo,
             group,

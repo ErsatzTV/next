@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `normalization.video.vaapi_low_power` (`auto` or `never`, default `auto`)
   - `fallback.background_image`, a still image shown instead of black when there is nothing to play or an item fails
     - Black is used for the rest of the session if the image fails to play
+- `/channels.m3u` includes each channel's number as `tvg-chno` and `channel-number`
+  - Clients that number channels from the playlist (e.g. Channels DVR) no longer assign their own numbers
 
 ### Changed
 - VAAPI: encode HEVC with the low-power entrypoint when the GPU also has the default entrypoint and low-power supports bitrate rate control
