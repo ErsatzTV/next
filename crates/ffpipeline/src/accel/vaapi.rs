@@ -254,7 +254,8 @@ impl HwAccel for Vaapi {
         if entrypoint.is_some_and(|e| e.low_power) {
             options.extend(args!["-low_power", "1"]);
         }
-        if entrypoint.is_some_and(|e| e.rate_control == Some(RateControlMode::Cqp)) {
+        let cqp = entrypoint.is_some_and(|e| e.rate_control == Some(RateControlMode::Cqp));
+        if cqp {
             options.extend(args!["-rc_mode", "1"]);
         }
 
@@ -262,6 +263,9 @@ impl HwAccel for Vaapi {
             EncodeFormat::H264 => {
                 if self.capabilities.h264_needs_serial_encode() {
                     options.extend(args!["-async_depth", "1"]);
+                }
+                if let Some(qp) = self.capabilities.h264_min_qp().filter(|_| !cqp) {
+                    options.extend(args!["-qmin", qp.to_string()]);
                 }
 
                 Some(VideoCodec {
@@ -1014,6 +1018,50 @@ mod tests {
                 !options(EncodeFormat::Hevc).contains("-async_depth"),
                 "{engine:?}"
             );
+        }
+    }
+
+    #[test]
+    fn qmin_only_for_i965_h264_with_bitrate_control() {
+        use libva_sys::*;
+
+        for (vendor, rc, expected) in [
+            (
+                "Intel i965 driver for Intel(R) Haswell Desktop - 2.4.1",
+                VA_RC_CBR,
+                true,
+            ),
+            (
+                "Intel i965 driver for Intel(R) Haswell Desktop - 2.4.1",
+                VA_RC_CQP,
+                false,
+            ),
+            (
+                "Intel iHD driver for Intel(R) Gen Graphics - 25.3.4",
+                VA_RC_CBR,
+                false,
+            ),
+        ] {
+            let mut vaapi = make_vaapi();
+            vaapi.capabilities.vendor = vendor.to_string();
+            for profile in [VA_PROFILE_H264_MAIN, VA_PROFILE_HEVC_MAIN] {
+                let key = (profile, VA_ENTRYPOINT_ENC_SLICE);
+                vaapi.capabilities.supported.insert(key);
+                vaapi.capabilities.rate_control.insert(key, rc);
+            }
+            let options = |format| {
+                vaapi
+                    .codec_for_format(&format, 8, None)
+                    .unwrap()
+                    .options
+                    .join(" ")
+            };
+            assert_eq!(
+                options(EncodeFormat::H264).contains("-qmin 24"),
+                expected,
+                "{vendor} {rc}"
+            );
+            assert!(!options(EncodeFormat::Hevc).contains("-qmin"), "{vendor}");
         }
     }
 

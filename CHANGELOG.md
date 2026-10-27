@@ -29,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `pad_opencl` and `tonemap_opencl` are now only used with an Intel VAAPI driver and an OpenCL device that supports `cl_intel_va_api_media_sharing`
 - Fix QSV stream failing to start on Linux when the VPL runtime reports a decoder the VA driver has disabled (e.g. VC-1 and VP8 on Arc)
   - Those formats are now decoded in software
+- Fix brief heavy blocking in VAAPI H.264 output with the `i965` driver after static scenes
+  - H.264 encodes on `i965` now use a minimum QP of 24
 
 ## [0.2.3] - 2026-10-23
 ### Added
