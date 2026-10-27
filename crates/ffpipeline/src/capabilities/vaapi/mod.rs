@@ -186,6 +186,13 @@ impl VaapiCapabilities {
         self.amd_encode_engine == Some(AmdEncodeEngine::Vce)
     }
 
+    /// i965 H.264 rate control drops QP to ~3 on static frames, so the next motion overshoots
+    /// the buffer and pins QP at 51 for ~1 s. 24 limits the swing and keeps simple content
+    /// above 0.99 SSIM.
+    pub fn h264_min_qp(&self) -> Option<u8> {
+        self.vendor.starts_with("Intel i965 driver").then_some(24)
+    }
+
     pub fn amd_encode_engine(&self) -> Option<AmdEncodeEngine> {
         self.amd_encode_engine
     }
