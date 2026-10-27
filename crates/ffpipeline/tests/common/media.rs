@@ -73,7 +73,7 @@ pub fn check_properties() {
         .filter_map(Result::ok)
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let is_doc = name == "manifest.json" || name.ends_with(".md");
+        let is_doc = name == "manifest.json" || name == "SHA256SUMS" || name.ends_with(".md");
         if entry.path().is_file() && !is_doc && !listed.contains(name.as_str()) {
             failures.push(format!("{name}: not listed in manifest.json"));
         }
