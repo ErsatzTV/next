@@ -314,6 +314,8 @@ pub enum PipelineInput {
         decoder: AudioDecoder,
         /// Open the file again for audio, even when it is also the video input.
         own_input: bool,
+        /// A second demuxer of this file keeps the video's start time.
+        own_input_keeps_sync: bool,
     },
     Video {
         input_source: InputSource,
@@ -659,6 +661,13 @@ impl Pipeline {
                 decoder: AudioDecoder::new(audio_stream, &final_output_settings),
                 // decided in optimize, once overlay surfaces are resolved
                 own_input: false,
+                own_input_keeps_sync: own_input_keeps_sync(
+                    input_settings
+                        .audio_input
+                        .probe_result
+                        .format_name
+                        .as_deref(),
+                ),
             },
             PipelineInput::Video {
                 input_source: input_settings.video_input.input_source.to_owned(),
@@ -1219,8 +1228,9 @@ impl Pipeline {
         }
     }
 
-    /// loudnorm holds back ~3 s of audio, so a shared demuxer keeps decoding video ahead of a
-    /// slow canvas. The qsv frames queued for overlay_qsv exhaust fixed pools (runtime < 2.9).
+    /// With a shared demuxer, video read ahead of late audio waits in overlay_qsv or -shortest
+    /// and uses up a fixed qsv pool (runtime < 2.9). Audio is late when loudnorm holds back ~3 s
+    /// behind a slow canvas, or when the file stores it seconds after the video (some ASF).
     fn audio_needs_own_input(&self) -> bool {
         // rkmpp tests time out with loudnorm
         if let Some(HardwareAccel::Rkmpp(_)) = &self.accel
@@ -1255,7 +1265,19 @@ impl Pipeline {
             )
         });
 
-        qsv.capabilities.requires_fixed_pool() && self.has_loudnorm() && qsv_overlays_canvas
+        let loudnorm_with_canvas = self.has_loudnorm() && qsv_overlays_canvas;
+
+        let keeps_sync = self.inputs.iter().any(|i| {
+            matches!(
+                i,
+                PipelineInput::Audio {
+                    own_input_keeps_sync: true,
+                    ..
+                }
+            )
+        });
+
+        qsv.capabilities.requires_fixed_pool() && (loudnorm_with_canvas || keeps_sync)
     }
 
     /// loudnorm delays audio by ~3 s, so -shortest queues video until audio arrives.
@@ -1622,6 +1644,25 @@ pub fn generate_pipeline(
     output_settings: OutputSettings,
 ) -> Result<Pipeline, FFPipelineError> {
     Pipeline::full(ffmpeg_info, input_settings, output_settings)
+}
+
+/// For AVFMT_TS_DISCONT formats, ffmpeg starts the input at its earliest used stream, so an
+/// audio-only second input would shift audio against video. Unknown formats count as discontinuous.
+fn own_input_keeps_sync(format_name: Option<&str>) -> bool {
+    const TS_DISCONT: [&str; 11] = [
+        "dhav",
+        "dvdvideo",
+        "flv",
+        "hls",
+        "live_flv",
+        "mpeg",
+        "mpegts",
+        "mpegtsraw",
+        "ogg",
+        "rcwt",
+        "ty",
+    ];
+    format_name.is_some_and(|name| !name.split(',').any(|n| TS_DISCONT.contains(&n)))
 }
 
 #[cfg(test)]
@@ -2417,7 +2458,26 @@ mod tests {
         runtime_api: (u16, u16),
         overlay_qsv: bool,
     ) -> ArgVec {
+        loudnorm_args_in(
+            Some("matroska,webm"),
+            seek,
+            canvas,
+            loudness,
+            runtime_api,
+            overlay_qsv,
+        )
+    }
+
+    fn loudnorm_args_in(
+        format_name: Option<&str>,
+        seek: Duration,
+        canvas: bool,
+        loudness: bool,
+        runtime_api: (u16, u16),
+        overlay_qsv: bool,
+    ) -> ArgVec {
         let mut input = multichannel_ac3_input("main.mkv");
+        input.audio_input.probe_result.format_name = format_name.map(str::to_owned);
         input.video_input.in_point = seek;
         input.audio_input.in_point = seek;
         if canvas {
@@ -2444,6 +2504,15 @@ mod tests {
         let mut pipeline = Pipeline::full(&ffmpeg_info, input, output).unwrap();
         pipeline.optimize();
         pipeline.args()
+    }
+
+    #[test]
+    fn own_input_keeps_sync_for_containers_without_timestamp_discontinuities() {
+        assert!(super::own_input_keeps_sync(Some("matroska,webm")));
+        assert!(super::own_input_keeps_sync(Some("avi")));
+        assert!(!super::own_input_keeps_sync(Some("mpegts")));
+        assert!(!super::own_input_keeps_sync(Some("hls,applehttp")));
+        assert!(!super::own_input_keeps_sync(None));
     }
 
     #[test]
@@ -2504,7 +2573,7 @@ mod tests {
 
     #[test]
     fn audio_shares_the_video_input_with_a_software_canvas_overlay() {
-        let args = loudnorm_args_with(Duration::ZERO, true, true, (1, 35), false);
+        let args = loudnorm_args_in(Some("mpegts"), Duration::ZERO, true, true, (1, 35), false);
         assert_eq!(
             args.iter().filter(|a| *a == "main.mkv").count(),
             1,
@@ -2521,7 +2590,14 @@ mod tests {
             (true, false, None),
             (false, false, None),
         ] {
-            let args = loudnorm_args(Duration::ZERO, canvas, loudness);
+            let args = loudnorm_args_in(
+                Some("mpegts"),
+                Duration::ZERO,
+                canvas,
+                loudness,
+                (1, 35),
+                true,
+            );
             assert_eq!(
                 args.iter().filter(|a| *a == "main.mkv").count(),
                 1,
@@ -2529,6 +2605,29 @@ mod tests {
             );
             assert_eq!(shortest_buf_duration(&args), buffer, "{args:?}");
         }
+    }
+
+    #[test]
+    fn fixed_qsv_pool_reads_audio_through_its_own_input_when_sync_allows() {
+        for (format_name, own) in [
+            (Some("matroska,webm"), true),
+            (Some("asf"), true),
+            (Some("mov,mp4,m4a,3gp,3g2,mj2"), true),
+            (Some("mpegts"), false),
+            (Some("mpeg"), false),
+            (None, false),
+        ] {
+            let args = loudnorm_args_in(format_name, Duration::ZERO, false, false, (1, 35), true);
+            let inputs = args.iter().filter(|a| *a == "main.mkv").count();
+            assert_eq!(inputs, if own { 2 } else { 1 }, "{format_name:?}: {args:?}");
+        }
+
+        let args = loudnorm_args_in(Some("asf"), Duration::ZERO, false, false, (2, 9), true);
+        assert_eq!(
+            args.iter().filter(|a| *a == "main.mkv").count(),
+            1,
+            "{args:?}"
+        );
     }
 
     #[test]
