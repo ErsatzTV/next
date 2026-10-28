@@ -22,6 +22,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check ffmpeg pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/ffmpeg-pin.sh check
+
       - name: Install Rust
         run: rustup toolchain install
       - name: Show Toolchain

@@ -21,10 +21,10 @@ compatibility() {
     version="${BASH_REMATCH[1]}"
     echo "- ${name%%:*}: reads versions \`${BASH_REMATCH[2]}.0\` to \`$version\`"
   done
-  ffmpeg="$(grep -o 'ersatztv-ffmpeg:[^@[:space:]]*' "$root/docker/Dockerfile" | sort -u)"
-  [[ "$(wc -l <<< "$ffmpeg")" == 1 && -n "$ffmpeg" ]] || { echo "expected one ersatztv-ffmpeg tag in docker/Dockerfile, found: $ffmpeg" >&2; exit 1; }
-  ffmpeg="${ffmpeg#ersatztv-ffmpeg:}"
-  echo "- ErsatzTV-ffmpeg: [\`$ffmpeg\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/releases/tag/$ffmpeg), bundled in the docker images and recommended for the native binaries"
+  local pin ffmpeg ffmpeg_repo
+  pin="$("$root/.github/scripts/ffmpeg-pin.sh")" || exit 1
+  read -r ffmpeg ffmpeg_repo _ <<< "$pin"
+  echo "- ErsatzTV-ffmpeg: [\`$ffmpeg\`](https://github.com/$ffmpeg_repo/releases/tag/$ffmpeg), bundled in the docker images and recommended for the native binaries"
 }
 
 if [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then

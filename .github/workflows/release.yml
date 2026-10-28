@@ -49,6 +49,10 @@ jobs:
           # on a tag push HEAD carries $TAG itself
           last_release="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-develop' --exclude "$TAG" HEAD)"
           .github/scripts/check-bump.sh "$last_release" "$TAG" HEAD || fail "$TAG is not a valid bump from $last_release"
+          ffmpeg_pin="$(.github/scripts/ffmpeg-pin.sh check)" || fail "ffmpeg pin check failed"
+          read -r ffmpeg_tag _ <<< "$ffmpeg_pin"
+          # a release must bundle an immutable ErsatzTV-ffmpeg release, never a pruneable develop build
+          [[ "$ffmpeg_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]] || fail "ffmpeg pin $ffmpeg_tag is not an ErsatzTV-ffmpeg release; pin X.Y.Z-N in .github/ffmpeg.json first"
           if is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null) && [[ "$is_draft" != "true" ]]; then
             fail "$TAG is already published"
           fi
