@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# keep equal to .github/ffmpeg.json (.github/scripts/ffmpeg-pin.sh check)
+ARG FFMPEG_IMAGE=ghcr.io/ersatztv/ersatztv-ffmpeg-develop:8.1.2-1dee3b3b-develop@sha256:2b7370357183aa2c7b3668c444432129fa7894f667bbacaf43a5629b36162afb
+
 # Build on BUILDPLATFORM so the compiler does not run under QEMU.
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS chef
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -69,7 +72,7 @@ RUN . /target-env && \
         done && \
     test -x /out/tests/software
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-6@sha256:a306d00dbcd84938ef48baa22f87e21c2b0e19bdd2859f60495c55e44cb24355 AS test-runtime
+FROM ${FFMPEG_IMAGE} AS test-runtime
 
 COPY --from=testbuild /out/tests /app/tests
 # The test binaries contain the compile-time CARGO_MANIFEST_DIR under /build.
@@ -112,7 +115,7 @@ RUN chmod +x /app/run-tests
 
 ENTRYPOINT ["/app/run-tests"]
 
-FROM ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-6@sha256:a306d00dbcd84938ef48baa22f87e21c2b0e19bdd2859f60495c55e44cb24355 AS runtime
+FROM ${FFMPEG_IMAGE} AS runtime
 
 RUN groupadd --gid 1000 ersatztv && \
     useradd --uid 1000 --gid 1000 --no-create-home --shell /sbin/nologin ersatztv && \
