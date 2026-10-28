@@ -335,6 +335,20 @@ macro_rules! shared_tests {
                 .await;
         }
 
+        /// Long enough for several HLS segments, which must all be cut on forced keyframes.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn segment_keyframes(
+            #[values(("mpeg2video", 8), ("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::segment_keyframes(vf),
+            )
+            .await;
+        }
+
         #[::tokio::test]
         #[ignore]
         async fn loudness_normalization() {
@@ -769,6 +783,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         burned_point: None,
         text_color: None,
         check_av_alignment: false,
+        check_segments: false,
         channel_tones: None,
     }
 }
@@ -787,6 +802,7 @@ fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
         burned_point: None,
         text_color: None,
         check_av_alignment: false,
+        check_segments: false,
         channel_tones: None,
     }
 }
@@ -1010,6 +1026,16 @@ pub fn seek_mid_gop(src: &'static str) -> TestCase {
     test_case.params.video_size = Some(SIZE_480P);
     test_case.params.in_point = Duration::from_millis(1400);
     test_case.check_av_alignment = true;
+    test_case
+}
+
+/// At 29.97 fps the 2 s forced keyframes drift against the encoder's own GOP; at integer
+/// rates they coincide with it. h264_amf without `-forced_idr` emits no keyframes in
+/// either case until the drift reaches a frame, ~35 s in at 29.97 and never at 30.
+pub fn segment_keyframes(vf: (&str, u8)) -> TestCase {
+    let mut test_case = transcode("long_gop_h264.ts", SIZE_720P, vf, AudioFormat::Aac);
+    test_case.params.duration = Duration::from_secs(10);
+    test_case.check_segments = true;
     test_case
 }
 

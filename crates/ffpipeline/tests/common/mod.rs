@@ -18,7 +18,7 @@ use ffpipeline::output_settings::{
 };
 use ffpipeline::overlay_filter::FramePoint;
 use ffpipeline::pipeline::{
-    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, VideoFormat, generate_pipeline,
+    AudioFormat, EncodeFormat, Hz, Kbps, Pipeline, SEGMENT_SECONDS, VideoFormat, generate_pipeline,
 };
 use ffpipeline::probe::{
     ProbeDeps, ProbeResult, ProbeResultAudioStream, ProbeResultStream, ProbeResultVideoStream,
@@ -60,6 +60,8 @@ pub struct TestCase {
     /// Color that burned-in text must show in the bottom quarter of the frame
     pub text_color: Option<[u8; 3]>,
     pub check_av_alignment: bool,
+    /// Checks every HLS segment, not just the first, for keyframe-aligned cuts
+    pub check_segments: bool,
     /// Tones (Hz) each output channel must carry, in channel order. The other listed
     /// tones must be absent.
     pub channel_tones: Option<&'static [&'static [u32]]>,
@@ -282,6 +284,10 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             video_size,
             &args,
         );
+    }
+
+    if test_case.check_segments {
+        assert_segments_cut_on_keyframes(&test_env.ffprobe, dir.path()).await;
     }
 
     let segment = find_first_segment(dir.path());
@@ -1511,6 +1517,44 @@ pub fn find_segments(dir: &Path) -> Vec<PathBuf> {
         dir.display()
     );
     entries.into_iter().map(|e| e.path()).collect()
+}
+
+/// The muxer can only cut on a keyframe, so an encoder that ignores forced keyframes
+/// (e.g. h264_amf without `-forced_idr`) leaves segments far longer than `SEGMENT_SECONDS`.
+pub async fn assert_segments_cut_on_keyframes(ffprobe: &Path, dir: &Path) {
+    let durations: Vec<f64> = std::fs::read_to_string(dir.join("live.m3u8"))
+        .expect("failed to read live.m3u8")
+        .lines()
+        .filter_map(|l| l.strip_prefix("#EXTINF:"))
+        .map(|l| l.trim_end_matches(',').parse::<f64>().unwrap())
+        .collect();
+    assert!(
+        durations.len() > 1,
+        "expected more than one segment: {durations:?}"
+    );
+    // forced keyframes land on the segment boundary, give or take a frame
+    let max = f64::from(SEGMENT_SECONDS) + 0.1;
+    assert!(
+        durations.iter().all(|d| *d <= max),
+        "segment longer than {max}s: {durations:?}"
+    );
+
+    for segment in find_segments(dir) {
+        let output = ersatztv_core::process::command(ffprobe)
+            .args(["-v", "error", "-select_streams", "v:0"])
+            .args(["-read_intervals", "%+#1", "-show_entries", "packet=flags"])
+            .args(["-of", "csv=p=0"])
+            .arg(&segment)
+            .output()
+            .await
+            .expect("failed to run ffprobe");
+        let flags = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            flags.trim().starts_with('K'),
+            "{} does not start on a keyframe: {flags:?}",
+            segment.display()
+        );
+    }
 }
 
 pub fn assert_video(
