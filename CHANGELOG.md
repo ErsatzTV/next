@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Set `normalization.video.vaapi_low_power` to `never` to keep the previous behavior
 
 ### Fixed
+- Retain DXGI/D3D11 module ownership until all owned COM devices are released on Windows.
 - Fix burning the wrong embedded text subtitle when a file has more than one subtitle stream
   - The first subtitle stream in the file was burned regardless of the selected stream index
 - Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed
