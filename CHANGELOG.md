@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 - VAAPI: encode HEVC with the low-power entrypoint when the GPU also has the default entrypoint and low-power supports bitrate rate control
   - Set `normalization.video.vaapi_low_power` to `never` to keep the previous behavior
+- AMF: decode MPEG-2 in software
+  - Software decode is as fast or faster than AMF's MPEG-2 decoder, and avoids a hang on older (Polaris) GPUs
 
 ### Fixed
 - Fix burning the wrong embedded text subtitle when a file has more than one subtitle stream
