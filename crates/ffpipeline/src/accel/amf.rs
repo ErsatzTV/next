@@ -209,12 +209,16 @@ impl HwAccel for Amf {
             (FrameSurface::Amf, Vec::new())
         };
 
+        // Without copies, frames held downstream (e.g. by -shortest while loudnorm delays
+        // audio ~3 s) keep the decoder's fixed surface pool (36, at most 100) and it stalls.
         Some(HwDecoder {
             args: args![
                 "-hwaccel",
                 KnownHardwareAccel::Amf,
                 "-hwaccel_output_format",
-                KnownHardwareAccel::Amf
+                KnownHardwareAccel::Amf,
+                "-copy_output",
+                "1"
             ],
             surface,
             filters,
@@ -528,6 +532,15 @@ mod tests {
         assert!(
             amf.make_decoder(&with_patch, &video_stream("mpeg2video", "yuv420p"))
                 .is_some()
+        );
+        let decoder = amf
+            .make_decoder(&with_patch, &video_stream("h264", "yuv420p"))
+            .unwrap();
+        assert!(
+            decoder
+                .args
+                .windows(2)
+                .any(|a| a[0] == "-copy_output" && a[1] == "1")
         );
 
         // stock ffmpeg, without the etv patch
