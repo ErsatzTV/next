@@ -1370,7 +1370,11 @@ impl Pipeline {
                 } => {
                     input_paths.push(path.as_str());
 
-                    result.extend(decoder.as_arg());
+                    result.extend(decoder_args_for_resolved_filters(
+                        decoder.as_arg(), self.initial_state.surface, &self.filter_chain.filters,
+                        self.global_options.iter().any(|option| matches!(option,
+                            GlobalOption::InitHwDevice(args) if args.iter().any(|arg|arg=="amf=hw@dx"))),
+                    ));
 
                     if let Some((audio_path, audio_args)) = &audio_decoder_args
                         && *audio_path == path.as_str()
@@ -1638,6 +1642,46 @@ pub fn predict_copy_decisions(
     ))
 }
 
+// Select decoder arguments only after surface resolution; preserve the resolved graph.
+fn decoder_args_for_resolved_filters(
+    decoder_args: ArgVec,
+    initial_surface: FrameSurface,
+    filters: &[PipelineFilter],
+    has_d3d11_device: bool,
+) -> ArgVec {
+    let first_video_filter = filters
+        .iter()
+        .find(|filter| !matches!(filter, PipelineFilter::Audio(_)));
+    let downloads_p010_first = matches!(
+        first_video_filter,
+        Some(PipelineFilter::Video(VideoFilter::HwDownload(
+            crate::video_filter::HwDownloadFilter {
+                target_pixel_format: PixelFormat::P010le,
+            }
+        )))
+    );
+
+    if cfg!(target_os = "windows")
+        && has_d3d11_device
+        && initial_surface == FrameSurface::Amf
+        && downloads_p010_first
+        && decoder_args == args!["-hwaccel", "amf", "-hwaccel_output_format", "amf"]
+    {
+        // Reuse the named DX11 device, preserving the configured adapter rather
+        // than letting FFmpeg select a different default GPU for decoding.
+        args![
+            "-hwaccel",
+            "d3d11va",
+            "-hwaccel_device",
+            "dx",
+            "-hwaccel_output_format",
+            "d3d11"
+        ]
+    } else {
+        decoder_args
+    }
+}
+
 pub fn generate_pipeline(
     ffmpeg_info: &FfmpegInfo,
     input_settings: InputSettings,
@@ -1668,6 +1712,59 @@ fn own_input_keeps_sync(format_name: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn initial_amf_p010_download_uses_the_same_named_d3d11_device() {
+        let original = args!["-hwaccel", "amf", "-hwaccel_output_format", "amf"];
+        let download = |format| {
+            PipelineFilter::Video(VideoFilter::HwDownload(
+                crate::video_filter::HwDownloadFilter {
+                    target_pixel_format: format,
+                },
+            ))
+        };
+        assert_eq!(
+            decoder_args_for_resolved_filters(
+                original.clone(),
+                FrameSurface::Amf,
+                &[download(PixelFormat::P010le)],
+                true
+            ),
+            args![
+                "-hwaccel",
+                "d3d11va",
+                "-hwaccel_device",
+                "dx",
+                "-hwaccel_output_format",
+                "d3d11"
+            ]
+        );
+        for (surface, filters, device) in [
+            (
+                FrameSurface::Amf,
+                vec![download(PixelFormat::P010le)],
+                false,
+            ),
+            (
+                FrameSurface::System,
+                vec![download(PixelFormat::P010le)],
+                true,
+            ),
+            (FrameSurface::Amf, vec![download(PixelFormat::Nv12)], true),
+            (
+                FrameSurface::Amf,
+                vec![download(PixelFormat::Nv12), download(PixelFormat::P010le)],
+                true,
+            ),
+            (FrameSurface::Amf, vec![], true),
+        ] {
+            assert_eq!(
+                decoder_args_for_resolved_filters(original.clone(), surface, &filters, device),
+                original
+            );
+        }
+    }
 
     #[test]
     fn video_format_parses_ffmpeg_codec_names() {
@@ -2151,6 +2248,89 @@ mod tests {
                 adapter: None,
             },
         })
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn generated_amf_canvas_pipeline_uses_native_decode_only_for_p010_download() {
+        use crate::capabilities::amf::{AmfAdapter, AmfDevice, AmfSurfaceFormat};
+        use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12, AMF_SURFACE_P010};
+
+        for (ten_bit, canvas) in [(true, true), (false, true), (true, false)] {
+            let mut input = multichannel_ac3_input("main.mkv");
+            for probe in [
+                &mut input.video_input.probe_result,
+                &mut input.audio_input.probe_result,
+            ] {
+                if let crate::probe::ProbeResultStream::Video(video) = &mut probe.streams[0] {
+                    video.codec = "hevc".to_owned();
+                    video.profile = if ten_bit { "main 10" } else { "main" }.to_owned();
+                    video.pix_fmt = if ten_bit { "yuv420p10le" } else { "yuv420p" }.to_owned();
+                }
+            }
+            if canvas {
+                input.graphics_inputs.push(canvas_input(InputSource::Local(
+                    crate::input::LocalInputSource {
+                        path: "canvas.nut".to_owned(),
+                    },
+                )));
+            }
+            let mut accel = amf_encoder_only();
+            if let HardwareAccel::Amf(amf) = &mut accel {
+                let caps = &mut amf.capabilities;
+                caps.supported_decoders
+                    .insert(VideoFormat::Hevc, vec![8, 10]);
+                caps.vpp_input_formats = [AMF_SURFACE_NV12, AMF_SURFACE_P010, AMF_SURFACE_BGRA]
+                    .into_iter()
+                    .map(AmfSurfaceFormat)
+                    .collect();
+                caps.vpp_output_formats = caps.vpp_input_formats.clone();
+                caps.device = Some(AmfDevice::Dx11);
+                caps.adapter = Some(AmfAdapter {
+                    index: 3,
+                    description: "Test adapter".to_owned(),
+                    vendor_id: 0x1002,
+                    device_id: 0,
+                });
+            }
+            let mut output = stereo_output();
+            output.accel = Some(accel);
+            output.video.transcode.size = Some(FrameSize {
+                width: 720,
+                height: 480,
+            });
+            let info = FfmpegInfo {
+                hwaccels: ["amf".to_owned()].into(),
+                decoders: ["hevc_amf".to_owned()].into(),
+                video_filters: ["vpp_amf".to_owned()].into(),
+                ..FfmpegInfo::default()
+            };
+            let mut pipeline = Pipeline::full(&info, input, output).unwrap();
+            pipeline.optimize();
+            let args = pipeline.args();
+            let option = |name: &str| {
+                args.windows(2)
+                    .find(|pair| pair[0] == name)
+                    .map(|pair| pair[1].as_ref())
+            };
+            assert!(args.iter().any(|a| a == "amf=hw@dx"), "{args:?}");
+            assert!(args.iter().any(|a| a == "h264_amf"), "{args:?}");
+            if ten_bit && canvas {
+                assert_eq!(option("-hwaccel"), Some("d3d11va"), "{args:?}");
+                assert_eq!(option("-hwaccel_device"), Some("dx"), "{args:?}");
+                let graph = args
+                    .windows(2)
+                    .filter(|pair| pair[0] == "-filter_complex")
+                    .map(|pair| pair[1].as_ref())
+                    .find(|graph: &&str| graph.contains("hwdownload"))
+                    .expect("video filter graph");
+                assert!(graph.contains("hwdownload,format=p010le"), "{graph}");
+                assert!(graph.contains("overlay="), "{graph}");
+                assert!(graph.contains("hwupload"), "{graph}");
+            } else {
+                assert_eq!(option("-hwaccel"), Some("amf"), "{args:?}");
+            }
+        }
     }
 
     fn amf_args(hdr: bool, format: EncodeFormat) -> ArgVec {
