@@ -1370,7 +1370,11 @@ impl Pipeline {
                 } => {
                     input_paths.push(path.as_str());
 
-                    result.extend(decoder.as_arg());
+                    result.extend(decoder_args_for_resolved_filters(
+                        decoder.as_arg(), self.initial_state.surface, &self.filter_chain.filters,
+                        self.global_options.iter().any(|option| matches!(option,
+                            GlobalOption::InitHwDevice(args) if args.iter().any(|arg|arg=="amf=hw@dx"))),
+                    ));
 
                     if let Some((audio_path, audio_args)) = &audio_decoder_args
                         && *audio_path == path.as_str()
@@ -1638,6 +1642,46 @@ pub fn predict_copy_decisions(
     ))
 }
 
+// Select decoder arguments only after surface resolution; preserve the resolved graph.
+fn decoder_args_for_resolved_filters(
+    decoder_args: ArgVec,
+    initial_surface: FrameSurface,
+    filters: &[PipelineFilter],
+    has_d3d11_device: bool,
+) -> ArgVec {
+    let first_video_filter = filters
+        .iter()
+        .find(|filter| !matches!(filter, PipelineFilter::Audio(_)));
+    let downloads_p010_first = matches!(
+        first_video_filter,
+        Some(PipelineFilter::Video(VideoFilter::HwDownload(
+            crate::video_filter::HwDownloadFilter {
+                target_pixel_format: PixelFormat::P010le,
+            }
+        )))
+    );
+
+    if cfg!(target_os = "windows")
+        && has_d3d11_device
+        && initial_surface == FrameSurface::Amf
+        && downloads_p010_first
+        && decoder_args == args!["-hwaccel", "amf", "-hwaccel_output_format", "amf"]
+    {
+        // Reuse the named DX11 device, preserving the configured adapter rather
+        // than letting FFmpeg select a different default GPU for decoding.
+        args![
+            "-hwaccel",
+            "d3d11va",
+            "-hwaccel_device",
+            "dx",
+            "-hwaccel_output_format",
+            "d3d11"
+        ]
+    } else {
+        decoder_args
+    }
+}
+
 pub fn generate_pipeline(
     ffmpeg_info: &FfmpegInfo,
     input_settings: InputSettings,
@@ -1668,6 +1712,59 @@ fn own_input_keeps_sync(format_name: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn initial_amf_p010_download_uses_the_same_named_d3d11_device() {
+        let original = args!["-hwaccel", "amf", "-hwaccel_output_format", "amf"];
+        let download = |format| {
+            PipelineFilter::Video(VideoFilter::HwDownload(
+                crate::video_filter::HwDownloadFilter {
+                    target_pixel_format: format,
+                },
+            ))
+        };
+        assert_eq!(
+            decoder_args_for_resolved_filters(
+                original.clone(),
+                FrameSurface::Amf,
+                &[download(PixelFormat::P010le)],
+                true
+            ),
+            args![
+                "-hwaccel",
+                "d3d11va",
+                "-hwaccel_device",
+                "dx",
+                "-hwaccel_output_format",
+                "d3d11"
+            ]
+        );
+        for (surface, filters, device) in [
+            (
+                FrameSurface::Amf,
+                vec![download(PixelFormat::P010le)],
+                false,
+            ),
+            (
+                FrameSurface::System,
+                vec![download(PixelFormat::P010le)],
+                true,
+            ),
+            (FrameSurface::Amf, vec![download(PixelFormat::Nv12)], true),
+            (
+                FrameSurface::Amf,
+                vec![download(PixelFormat::Nv12), download(PixelFormat::P010le)],
+                true,
+            ),
+            (FrameSurface::Amf, vec![], true),
+        ] {
+            assert_eq!(
+                decoder_args_for_resolved_filters(original.clone(), surface, &filters, device),
+                original
+            );
+        }
+    }
 
     #[test]
     fn video_format_parses_ffmpeg_codec_names() {
