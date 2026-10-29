@@ -22,19 +22,21 @@ pub struct Amf {
     pub capabilities: AmfCapabilities,
 }
 
-/// `-hwaccel amf` makes ffmpeg use this decoder, so the build must include it. Stock
-/// ffmpeg ships av1, h264, hevc and vp9; mpeg2_amf comes from the etv patch.
+/// `-hwaccel amf` makes ffmpeg use this decoder, so the build must include it.
 /// If the decoder is missing, ffmpeg falls back to software decoding with no warning.
 ///
 /// There is no vc1 decoder on purpose. The AMF runtime gives each output picture the
 /// pts of its own packet, and VC-1 in MKV has decode-order timestamps, so output pts
 /// swap in pairs and a cfr encode duplicates and drops frames.
+///
+/// MPEG-2 decodes in software on purpose. Polaris runtimes fail every `-copy_output`
+/// surface for MPEG-2 (CreateTexture2D E_INVALIDARG) and then hang, and software decode
+/// is at least as fast as the AMF MPEG-2 decoder.
 fn amf_decoder(codec: &str) -> Option<&'static str> {
     match codec {
         "av1" => Some(KnownDecoders::Av1Amf.into()),
         "h264" => Some(KnownDecoders::H264Amf.into()),
         "hevc" => Some(KnownDecoders::HevcAmf.into()),
-        "mpeg2video" => Some(KnownDecoders::Mpeg2Amf.into()),
         "vp9" => Some(KnownDecoders::Vp9Amf.into()),
         _ => None,
     }
@@ -209,12 +211,16 @@ impl HwAccel for Amf {
             (FrameSurface::Amf, Vec::new())
         };
 
+        // Without copies, frames held downstream (e.g. by -shortest while loudnorm delays
+        // audio ~3 s) keep the decoder's fixed surface pool (36, at most 100) and it stalls.
         Some(HwDecoder {
             args: args![
                 "-hwaccel",
                 KnownHardwareAccel::Amf,
                 "-hwaccel_output_format",
-                KnownHardwareAccel::Amf
+                KnownHardwareAccel::Amf,
+                "-copy_output",
+                "1"
             ],
             surface,
             filters,
@@ -358,10 +364,9 @@ mod tests {
     use crate::frame_rate::FrameRate;
     use crate::probe::{CodecType, ProbeResultColorParams, ProbeResultVideoStream};
 
-    /// Models a build with the etv patch, so mpeg2_amf exists.
     fn make_ffmpeg_info() -> FfmpegInfo {
         FfmpegInfo {
-            decoders: ["h264_amf", "hevc_amf", "vp9_amf", "av1_amf", "mpeg2_amf"]
+            decoders: ["h264_amf", "hevc_amf", "vp9_amf", "av1_amf"]
                 .map(String::from)
                 .into(),
             video_filters: HashSet::from([KnownVideoFilter::VppAmf.to_string()]),
@@ -411,7 +416,6 @@ mod tests {
         let mut supported_decoders = HashMap::new();
         supported_decoders.insert(VideoFormat::H264, vec![8]);
         supported_decoders.insert(VideoFormat::Hevc, vec![8, 10]);
-        supported_decoders.insert(VideoFormat::Mpeg2Video, vec![8]);
 
         let mut supported_encoders = HashMap::new();
         supported_encoders.insert(
@@ -517,32 +521,25 @@ mod tests {
         assert!(!amf.can_decode("h264", "high 10", &PixelFormat::Yuv420p10le));
         assert!(amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
         assert!(!amf.can_decode("vp9", "profile 0", &PixelFormat::Yuv420p));
-        assert!(amf.can_decode("mpeg2video", "main", &PixelFormat::Yuv420p));
+        assert!(!amf.can_decode("mpeg2video", "main", &PixelFormat::Yuv420p));
         assert!(!amf.can_decode("mpeg4", "simple", &PixelFormat::Yuv420p));
     }
 
     #[test]
     fn decoder_requires_the_amf_decoder_in_ffmpeg() {
         let amf = make_amf_with_vpp(&[AMF_SURFACE_NV12, AMF_SURFACE_P010, AMF_SURFACE_BGRA]);
-        let with_patch = make_ffmpeg_info();
+        let decoder = amf
+            .make_decoder(&make_ffmpeg_info(), &video_stream("h264", "yuv420p"))
+            .unwrap();
         assert!(
-            amf.make_decoder(&with_patch, &video_stream("mpeg2video", "yuv420p"))
-                .is_some()
+            decoder
+                .args
+                .windows(2)
+                .any(|a| a[0] == "-copy_output" && a[1] == "1")
         );
 
-        // stock ffmpeg, without the etv patch
-        let stock = FfmpegInfo {
-            decoders: ["h264_amf", "hevc_amf", "vp9_amf", "av1_amf"]
-                .map(String::from)
-                .into(),
-            ..make_ffmpeg_info()
-        };
         assert!(
-            amf.make_decoder(&stock, &video_stream("h264", "yuv420p"))
-                .is_some()
-        );
-        assert!(
-            amf.make_decoder(&stock, &video_stream("mpeg2video", "yuv420p"))
+            amf.make_decoder(&make_ffmpeg_info(), &video_stream("mpeg2video", "yuv420p"))
                 .is_none()
         );
 
