@@ -118,7 +118,7 @@ impl HwAccel for Amf {
         match format {
             EncodeFormat::H264 => Some(VideoCodec {
                 codec_name: "h264_amf",
-                options: Vec::new(),
+                options: args!["-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: Some(PixelFormat::P010le),
                 preferred_surface: FrameSurface::Amf,
