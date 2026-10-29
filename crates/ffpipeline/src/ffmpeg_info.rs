@@ -119,8 +119,6 @@ pub enum KnownDecoders {
     HevcAmf,
     #[strum(serialize = "mpeg2_amf")]
     Mpeg2Amf,
-    #[strum(serialize = "vc1_amf")]
-    Vc1Amf,
     #[strum(serialize = "vp9_amf")]
     Vp9Amf,
 }

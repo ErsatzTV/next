@@ -26,10 +26,9 @@ pub struct Amf {
 /// ffmpeg ships av1, h264, hevc and vp9; mpeg2_amf comes from the etv patch.
 /// If the decoder is missing, ffmpeg falls back to software decoding with no warning.
 ///
-/// vc1_amf is in the same patch but is left out on purpose. The AMF runtime gives each
-/// output picture the pts of its own packet. VC-1 in MKV has decode-order timestamps,
-/// so output pts swap in pairs, and a cfr encode then duplicates and drops about
-/// a third of the frames. The native decoder avoids this with a one-frame reorder.
+/// There is no vc1 decoder on purpose. The AMF runtime gives each output picture the
+/// pts of its own packet, and VC-1 in MKV has decode-order timestamps, so output pts
+/// swap in pairs and a cfr encode duplicates and drops frames.
 fn amf_decoder(codec: &str) -> Option<&'static str> {
     match codec {
         "av1" => Some(KnownDecoders::Av1Amf.into()),
@@ -359,19 +358,12 @@ mod tests {
     use crate::frame_rate::FrameRate;
     use crate::probe::{CodecType, ProbeResultColorParams, ProbeResultVideoStream};
 
-    /// Models a build with the etv patch, so mpeg2_amf and vc1_amf exist.
+    /// Models a build with the etv patch, so mpeg2_amf exists.
     fn make_ffmpeg_info() -> FfmpegInfo {
         FfmpegInfo {
-            decoders: [
-                "h264_amf",
-                "hevc_amf",
-                "vp9_amf",
-                "av1_amf",
-                "mpeg2_amf",
-                "vc1_amf",
-            ]
-            .map(String::from)
-            .into(),
+            decoders: ["h264_amf", "hevc_amf", "vp9_amf", "av1_amf", "mpeg2_amf"]
+                .map(String::from)
+                .into(),
             video_filters: HashSet::from([KnownVideoFilter::VppAmf.to_string()]),
             ..Default::default()
         }
@@ -420,7 +412,6 @@ mod tests {
         supported_decoders.insert(VideoFormat::H264, vec![8]);
         supported_decoders.insert(VideoFormat::Hevc, vec![8, 10]);
         supported_decoders.insert(VideoFormat::Mpeg2Video, vec![8]);
-        supported_decoders.insert(VideoFormat::Vc1, vec![8]);
 
         let mut supported_encoders = HashMap::new();
         supported_encoders.insert(
@@ -527,7 +518,6 @@ mod tests {
         assert!(amf.can_decode("hevc", "main 10", &PixelFormat::Yuv420p10le));
         assert!(!amf.can_decode("vp9", "profile 0", &PixelFormat::Yuv420p));
         assert!(amf.can_decode("mpeg2video", "main", &PixelFormat::Yuv420p));
-        assert!(amf.can_decode("vc1", "advanced", &PixelFormat::Yuv420p));
         assert!(!amf.can_decode("mpeg4", "simple", &PixelFormat::Yuv420p));
     }
 
@@ -538,11 +528,6 @@ mod tests {
         assert!(
             amf.make_decoder(&with_patch, &video_stream("mpeg2video", "yuv420p"))
                 .is_some()
-        );
-        // hardware and build both support vc1, but vc1_amf breaks timestamps
-        assert!(
-            amf.make_decoder(&with_patch, &video_stream("vc1", "yuv420p"))
-                .is_none()
         );
 
         // stock ffmpeg, without the etv patch
@@ -558,10 +543,6 @@ mod tests {
         );
         assert!(
             amf.make_decoder(&stock, &video_stream("mpeg2video", "yuv420p"))
-                .is_none()
-        );
-        assert!(
-            amf.make_decoder(&stock, &video_stream("vc1", "yuv420p"))
                 .is_none()
         );
 
