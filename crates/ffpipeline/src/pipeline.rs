@@ -2250,6 +2250,89 @@ mod tests {
         })
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn generated_amf_canvas_pipeline_uses_native_decode_only_for_p010_download() {
+        use crate::capabilities::amf::{AmfAdapter, AmfDevice, AmfSurfaceFormat};
+        use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12, AMF_SURFACE_P010};
+
+        for (ten_bit, canvas) in [(true, true), (false, true), (true, false)] {
+            let mut input = multichannel_ac3_input("main.mkv");
+            for probe in [
+                &mut input.video_input.probe_result,
+                &mut input.audio_input.probe_result,
+            ] {
+                if let crate::probe::ProbeResultStream::Video(video) = &mut probe.streams[0] {
+                    video.codec = "hevc".to_owned();
+                    video.profile = if ten_bit { "main 10" } else { "main" }.to_owned();
+                    video.pix_fmt = if ten_bit { "yuv420p10le" } else { "yuv420p" }.to_owned();
+                }
+            }
+            if canvas {
+                input.graphics_inputs.push(canvas_input(InputSource::Local(
+                    crate::input::LocalInputSource {
+                        path: "canvas.nut".to_owned(),
+                    },
+                )));
+            }
+            let mut accel = amf_encoder_only();
+            if let HardwareAccel::Amf(amf) = &mut accel {
+                let caps = &mut amf.capabilities;
+                caps.supported_decoders
+                    .insert(VideoFormat::Hevc, vec![8, 10]);
+                caps.vpp_input_formats = [AMF_SURFACE_NV12, AMF_SURFACE_P010, AMF_SURFACE_BGRA]
+                    .into_iter()
+                    .map(AmfSurfaceFormat)
+                    .collect();
+                caps.vpp_output_formats = caps.vpp_input_formats.clone();
+                caps.device = Some(AmfDevice::Dx11);
+                caps.adapter = Some(AmfAdapter {
+                    index: 3,
+                    description: "Test adapter".to_owned(),
+                    vendor_id: 0x1002,
+                    device_id: 0,
+                });
+            }
+            let mut output = stereo_output();
+            output.accel = Some(accel);
+            output.video.transcode.size = Some(FrameSize {
+                width: 720,
+                height: 480,
+            });
+            let info = FfmpegInfo {
+                hwaccels: ["amf".to_owned()].into(),
+                decoders: ["hevc_amf".to_owned()].into(),
+                video_filters: ["vpp_amf".to_owned()].into(),
+                ..FfmpegInfo::default()
+            };
+            let mut pipeline = Pipeline::full(&info, input, output).unwrap();
+            pipeline.optimize();
+            let args = pipeline.args();
+            let option = |name: &str| {
+                args.windows(2)
+                    .find(|pair| pair[0] == name)
+                    .map(|pair| pair[1].as_ref())
+            };
+            assert!(args.iter().any(|a| a == "amf=hw@dx"), "{args:?}");
+            assert!(args.iter().any(|a| a == "h264_amf"), "{args:?}");
+            if ten_bit && canvas {
+                assert_eq!(option("-hwaccel"), Some("d3d11va"), "{args:?}");
+                assert_eq!(option("-hwaccel_device"), Some("dx"), "{args:?}");
+                let graph = args
+                    .windows(2)
+                    .filter(|pair| pair[0] == "-filter_complex")
+                    .map(|pair| pair[1].as_ref())
+                    .find(|graph: &&str| graph.contains("hwdownload"))
+                    .expect("video filter graph");
+                assert!(graph.contains("hwdownload,format=p010le"), "{graph}");
+                assert!(graph.contains("overlay="), "{graph}");
+                assert!(graph.contains("hwupload"), "{graph}");
+            } else {
+                assert_eq!(option("-hwaccel"), Some("amf"), "{args:?}");
+            }
+        }
+    }
+
     fn amf_args(hdr: bool, format: EncodeFormat) -> ArgVec {
         let mut input = multichannel_ac3_input("main.mkv");
         if hdr {
