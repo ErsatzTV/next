@@ -281,9 +281,7 @@ impl VideoFilterOp for ScaleCuda {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Cuda;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
 
         if let Some(format) = &self.format {
@@ -413,9 +411,7 @@ impl VideoFilterOp for LibplaceboCuda {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Cuda;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
     }
 

@@ -441,9 +441,7 @@ impl VideoFilterOp for ScaleVaapi {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Vaapi;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
     }
 
@@ -765,6 +763,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 

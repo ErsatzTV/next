@@ -160,6 +160,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: Some(rotation),
             decoder_frames: false,
+            sar_written: false,
         };
         state.apply_rotation();
         assert_eq!(
@@ -210,6 +211,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let target = FrameSize {
@@ -237,6 +239,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let target = FrameSize {
@@ -274,6 +277,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let target = FrameSize {
@@ -309,6 +313,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let target = FrameSize {
@@ -360,6 +365,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let target = FrameSize {
@@ -393,6 +399,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let target = FrameSize {
