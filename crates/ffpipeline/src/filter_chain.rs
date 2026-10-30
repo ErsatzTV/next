@@ -186,7 +186,7 @@ impl FilterChain {
 
                     // reverse hwmap only works on frames the OpenCL filter got from it, so
                     // nothing can go between them
-                    if matches!(best, VideoFilter::Fps(_))
+                    if matches!(best, VideoFilter::Fps(_) | VideoFilter::SetSar(_))
                         && current_state.surface == FrameSurface::OpenCL
                         && let Some(mapped_from) = resolved.iter().rev().find_map(|f| match f {
                             PipelineFilter::Video(VideoFilter::HwMap(m))
@@ -1380,20 +1380,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn resolve_maps_back_from_opencl_before_fps() {
+    #[rstest::rstest]
+    #[case::fps("fps=30")]
+    #[case::setsar("setsar=1")]
+    fn resolve_maps_back_from_opencl_before(#[case] after_arg: &str) {
         let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
             output_format: HwPixelFormat::Nv12,
         }
         .into();
-        let fps: VideoFilter = crate::video_filter::FpsFilter {
-            frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
-        }
-        .into();
+        let after: VideoFilter = match after_arg {
+            "fps=30" => crate::video_filter::FpsFilter {
+                frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
+            }
+            .into(),
+            _ => crate::video_filter::SetSarFilter.into(),
+        };
         let mut chain = FilterChain::new(vec![
             PipelineFilter::Video(tonemap),
-            PipelineFilter::Video(fps),
+            PipelineFilter::Video(after),
         ]);
 
         chain.resolve(
@@ -1420,7 +1425,7 @@ mod tests {
         assert_eq!(args[0], "hwmap=derive_device=opencl");
         assert!(args[1].starts_with("tonemap_opencl="), "{args:?}");
         assert_eq!(args[2], "hwmap=derive_device=vaapi:reverse=1");
-        assert_eq!(args[3], "fps=30");
+        assert_eq!(args[3], after_arg);
     }
 
     #[test]
