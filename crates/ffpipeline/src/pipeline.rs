@@ -37,7 +37,7 @@ use crate::video_decoder::VideoDecoder;
 use crate::video_filter::{
     ClipFilter, ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter,
     EnsureAlphaFilter, FadeFilter, FormatFilter, FpsFilter, LoopFilter, PadFilter, ScaleFilter,
-    SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions, SubtitleImageScaleFilter,
+    SetSarFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions, SubtitleImageScaleFilter,
     SubtitlesFilter, ToneMapFilter, TransposeDir, TransposeFilter, VideoFilter,
 };
 
@@ -274,9 +274,19 @@ pub struct FrameState {
     pub(crate) hdr_format: HdrFormat,
     pub(crate) rotation: Option<i32>,
     pub(crate) decoder_frames: bool,
+    /// a filter has tagged frames 1:1; until then they carry the container's SAR, which can
+    /// disagree with `sample_aspect_ratio` when that came from a hint
+    pub(crate) sar_written: bool,
 }
 
 impl FrameState {
+    pub(crate) fn set_square_pixels(&mut self) {
+        self.is_anamorphic = false;
+        self.sample_aspect_ratio = Some(String::from("1:1"));
+        self.display_aspect_ratio = None;
+        self.sar_written = true;
+    }
+
     pub(crate) fn apply_rotation(&mut self) {
         if let Some(dir) = self.rotation.and_then(TransposeDir::from_rotation)
             && dir.is_quarter_turn()
@@ -532,6 +542,7 @@ impl Pipeline {
             hdr_format: hdr,
             rotation: video_stream.rotation,
             decoder_frames: video_decoder.output_surface() != FrameSurface::System,
+            sar_written: false,
         };
 
         // copy can't change the rate; only items already at the target are copied
@@ -650,6 +661,7 @@ impl Pipeline {
             filters.push(tonemap);
         }
         filters.push(pad);
+        filters.push(PipelineFilter::Video(SetSarFilter.into()));
 
         let mut inputs = vec![
             PipelineInput::Audio {
@@ -713,6 +725,7 @@ impl Pipeline {
                     hdr_format: HdrFormat::None,
                     rotation: None,
                     decoder_frames: false,
+                    sar_written: false,
                 };
 
                 filters.push(PipelineFilter::Overlay(OverlayFilter {
@@ -878,6 +891,7 @@ impl Pipeline {
                 hdr_format: HdrFormat::None,
                 rotation: None,
                 decoder_frames: false,
+                sar_written: false,
             };
 
             // a full-frame canvas size mismatch means stale playout metadata, so scale instead of

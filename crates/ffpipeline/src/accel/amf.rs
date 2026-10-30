@@ -308,9 +308,7 @@ impl VideoFilterOp for VppAmf {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Amf;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
 
         if let Some(format) = &self.format {
@@ -390,6 +388,7 @@ mod tests {
             hdr_format: HdrFormat::Hdr10,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 

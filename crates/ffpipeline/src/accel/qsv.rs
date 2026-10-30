@@ -376,9 +376,7 @@ impl VideoFilterOp for VppQsv {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::Qsv;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
 
         if let Some(pad) = &self.pad {
@@ -543,6 +541,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 

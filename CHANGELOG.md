@@ -25,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Software decode is as fast or faster than AMF's MPEG-2 decoder, and avoids a hang on older (Polaris) GPUs
 
 ### Fixed
+- Fix output being tagged with the source's non-square sample aspect ratio when the probe hint reports square pixels at the output size
+  - Players showed the whole stream, watermark included, at the wrong aspect ratio (e.g. 16:9 squished to 4:3)
 - Fix burning the wrong embedded text subtitle when a file has more than one subtitle stream
   - The first subtitle stream in the file was burned regardless of the selected stream index
 - Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed
