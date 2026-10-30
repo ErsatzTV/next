@@ -149,7 +149,7 @@ impl HwAccel for Qsv {
             }),
             EncodeFormat::Mpeg2Video => Some(VideoCodec {
                 codec_name: "mpeg2_qsv",
-                options: args!["-low_power", "0"],
+                options: args!["-low_power", "0", "-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
                 preferred_pixel_format_10bit: None,
                 preferred_surface: FrameSurface::Qsv,
