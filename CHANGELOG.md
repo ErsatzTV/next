@@ -36,6 +36,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix brief heavy blocking in VAAPI H.264 output with the `i965` driver after static scenes
   - H.264 encodes on `i965` now use a minimum QP of 24
 - Fix QSV stream failing with `Can't allocate a surface` on pre-Tiger Lake Intel GPUs for files that store audio far behind video (e.g. some WMV)
+- Fix QSV VC-1 streams failing or hanging on Windows with pre-Tiger Lake Intel GPUs (e.g. Haswell, Kaby Lake)
+  - VC-1 is now decoded in software on those GPUs
 - Fix QSV MPEG-2 streams starting very slowly or failing to start in time due to improper segmentation
 - Fix AMF streams starting very slowly or failing to start in time due to improper segmentation
 - Fix AMF streams hanging with loudness normalization when video is not scaled or converted on the GPU
