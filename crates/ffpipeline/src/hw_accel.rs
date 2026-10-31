@@ -72,7 +72,11 @@ pub trait HwAccel {
     fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
-    fn format_filter(&self, _pixel_format: &PixelFormat) -> Option<VideoFilter> {
+    fn format_filter(
+        &self,
+        _pixel_format: &PixelFormat,
+        _state: &FrameState,
+    ) -> Option<VideoFilter> {
         None
     }
     fn hw_map_filter(&self, _from: &FrameSurface, _to: &FrameSurface) -> Option<VideoFilter> {

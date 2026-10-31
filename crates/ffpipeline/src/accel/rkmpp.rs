@@ -75,7 +75,11 @@ impl HwAccel for Rkmpp {
         }
     }
 
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+    fn format_filter(
+        &self,
+        pixel_format: &PixelFormat,
+        _state: &FrameState,
+    ) -> Option<VideoFilter> {
         Some(
             FormatRkrga {
                 format: *pixel_format,

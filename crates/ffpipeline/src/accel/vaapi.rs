@@ -312,7 +312,11 @@ impl HwAccel for Vaapi {
             .collect()
     }
 
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+    fn format_filter(
+        &self,
+        pixel_format: &PixelFormat,
+        _state: &FrameState,
+    ) -> Option<VideoFilter> {
         Some(
             FormatVaapi {
                 format: to_canonical(*pixel_format),
