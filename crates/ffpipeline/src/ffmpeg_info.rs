@@ -117,8 +117,6 @@ pub enum KnownDecoders {
     H264Amf,
     #[strum(serialize = "hevc_amf")]
     HevcAmf,
-    #[strum(serialize = "mpeg2_amf")]
-    Mpeg2Amf,
     #[strum(serialize = "vp9_amf")]
     Vp9Amf,
 }
@@ -486,7 +484,7 @@ vpp_qsv AVOptions:
                        S..... dvdsub               DVD subtitles\n";
         let decoders = FfmpegInfo::parse_decoders(listing);
         assert!(decoders.contains("h264_amf"));
-        assert!(decoders.contains("mpeg2_amf"));
+        assert!(!decoders.contains("mpeg2_amf"));
         assert!(!decoders.contains("aac"));
         assert!(!decoders.contains("dvdsub"));
         assert!(!decoders.contains("Video"));
@@ -495,8 +493,8 @@ vpp_qsv AVOptions:
             decoders,
             ..Default::default()
         };
-        assert!(info.has_decoder("mpeg2_amf"));
-        assert!(!info.has_decoder("vc1_amf"));
+        assert!(info.has_decoder("h264_amf"));
+        assert!(!info.has_decoder("mpeg2_amf"));
     }
 
     #[test]

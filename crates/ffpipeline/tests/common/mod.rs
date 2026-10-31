@@ -177,7 +177,15 @@ pub async fn hardware_accel(
 pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<String> {
     let dir = tempfile::tempdir().unwrap();
     let source = fixture_path(test_case.fixture_name);
-    let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+    let mut probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+    if let Some(sar) = test_case.params.probe_sar {
+        for stream in &mut probe.streams {
+            if let ProbeResultStream::Video(v) = stream {
+                v.sample_aspect_ratio = Some(sar.to_owned());
+                v.display_aspect_ratio = None;
+            }
+        }
+    }
     let source_frame_rate = probe_avg_frame_rate(&test_env.ffprobe, &source).await;
 
     let accel = test_case.params.accel.clone();
@@ -309,7 +317,6 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         &expected_frame_rate,
         (!video_copied).then_some(bit_depth),
         accel,
-        source_video.sample_aspect_ratio.as_deref(),
     );
     assert_audio(&output_probe, &test_case.expected_audio_codec);
     if let Some(channel_tones) = test_case.channel_tones {
@@ -1367,6 +1374,8 @@ pub struct TestOutputParams {
     pub duration: Duration,
     pub subtitle_force_style: Option<String>,
     pub fonts_folder: Option<String>,
+    /// Replaces the probed video SAR, like a probe hint that disagrees with the container
+    pub probe_sar: Option<&'static str>,
 }
 
 impl Default for TestOutputParams {
@@ -1394,6 +1403,7 @@ impl Default for TestOutputParams {
             duration: Duration::from_secs(1),
             subtitle_force_style: None,
             fonts_folder: None,
+            probe_sar: None,
         }
     }
 }
@@ -1564,7 +1574,6 @@ pub fn assert_video(
     frame_rate: &FrameRate,
     bit_depth: Option<u8>,
     accel: Option<HardwareAccel>,
-    source_sar: Option<&str>,
 ) {
     let video = probe
         .streams
@@ -1598,11 +1607,8 @@ pub fn assert_video(
         video.frame_rate.r_frame_rate
     );
 
-    // RKMPP encoders don't seem to set SAR. Without scaling, nothing adds one to a source
-    // that has none, and players read a missing SAR as square.
-    let source_has_no_sar = source_sar.is_none_or(|sar| ["N/A", "0:1"].contains(&sar));
-    let untagged_passthrough = source_has_no_sar && video.sample_aspect_ratio.is_none();
-    if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) && !untagged_passthrough {
+    // RKMPP encoders don't seem to set SAR
+    if accel.is_none_or(|a| !matches!(a, HardwareAccel::Rkmpp(_))) {
         assert_eq!(
             video.sample_aspect_ratio,
             Some(String::from("1:1")),

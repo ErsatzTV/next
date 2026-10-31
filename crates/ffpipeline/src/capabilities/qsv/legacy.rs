@@ -147,6 +147,7 @@ impl<'a> Session<'a> {
         for (format, codec_id) in CODECS {
             let decode: Vec<u8> = [8u8, 10]
                 .into_iter()
+                .filter(|_| !decoder_is_broken(*format))
                 .filter(|bit_depth| self.can_decode(*codec_id, *bit_depth))
                 .collect();
             if !decode.is_empty() {
@@ -440,6 +441,16 @@ enum Query {
 /// every other session on the device. Kaby Lake (API 1.35) encodes the same streams.
 fn encoder_is_broken(format: VideoFormat, code_name: u16) -> bool {
     format == VideoFormat::Mpeg2Video && code_name == MFX_PLATFORM_HASWELL
+}
+
+/// Decoders that pass `MFXVideoDECODE_Query` but fail on real streams.
+///
+/// VC-1 on Windows legacy runtimes: Haswell (API 1.20) and Kaby Lake (API 1.35) fail
+/// from the first skipped picture on, and Kaby Lake also hangs on the first frame when
+/// VC-1 Advanced output goes through a VPP resize. Kaby Lake on Linux (API 1.35) and
+/// API 2.x runtimes on Windows decode the same streams.
+fn decoder_is_broken(format: VideoFormat) -> bool {
+    cfg!(target_os = "windows") && format == VideoFormat::Vc1
 }
 
 /// `mfxInfoMFX` is smaller than `mfxInfoVPP`, the other arm of the union. write the

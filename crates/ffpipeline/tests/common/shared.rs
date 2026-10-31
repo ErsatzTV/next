@@ -600,6 +600,18 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// A hint can report square pixels for frames the container tags anamorphic, e.g.
+        /// when a cover image's SAR was read. Without a scale, nothing else retags them.
+        #[::tokio::test]
+        #[ignore]
+        async fn hinted_square_pixels_same_size() {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::hinted_square_pixels_same_size(),
+            )
+            .await;
+        }
+
         /// A 1080p source has a coded height of 1088, so 1920x1080 output catches overlays
         /// that blend into the padded surface and leak it to the encoder, e.g. overlay_cuda
         /// (trac #11674), via the height assertion in `assert_video`.
@@ -1120,6 +1132,12 @@ pub fn stretch_anamorphic_same_size() -> TestCase {
         AudioFormat::Aac,
     );
     test_case.params.scaling_mode = ScalingMode::Stretch;
+    test_case
+}
+
+pub fn hinted_square_pixels_same_size() -> TestCase {
+    let mut test_case = stretch_anamorphic_same_size();
+    test_case.params.probe_sar = Some("1:1");
     test_case
 }
 

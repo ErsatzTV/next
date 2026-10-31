@@ -64,6 +64,7 @@ pub enum VideoFilter {
     Clip(ClipFilter),
     Dv5Workaround(Dv5WorkaroundFilter),
     EnsureAlpha(EnsureAlphaFilter),
+    SetSar(SetSarFilter),
     // AMF hardware filters
     VppAmf(accel::amf::VppAmf),
     // CUDA hardware filters
@@ -243,9 +244,7 @@ impl VideoFilterOp for ScaleFilter {
     fn apply_to(&self, state: &mut FrameState) {
         if let Some(size) = &self.size {
             state.size = *size;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
     }
 
@@ -656,9 +655,7 @@ impl VideoFilterOp for SubtitleImageScaleFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.size = self.size;
-        state.is_anamorphic = false;
-        state.sample_aspect_ratio = Some(String::from("1:1"));
-        state.display_aspect_ratio = None;
+        state.set_square_pixels();
         state.surface = FrameSurface::System;
     }
 
@@ -993,6 +990,32 @@ impl VideoFilterOp for Dv5WorkaroundFilter {
     }
 }
 
+/// Frames keep the container's SAR, which a probe hint can misreport as square
+#[derive(Debug, Clone)]
+pub struct SetSarFilter;
+
+impl VideoFilterOp for SetSarFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        (!state.sar_written && !state.is_anamorphic).then(|| self.clone().into())
+    }
+
+    fn apply_to(&self, state: &mut FrameState) {
+        state.set_square_pixels();
+    }
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        None
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("setsar=1"))
+    }
+
+    fn passes_frames_through(&self, _state: &FrameState) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EnsureAlphaFilter {
     pub format: PixelFormat,
@@ -1100,6 +1123,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
         let evaluated = scale_filter(Some("spline"))
             .evaluate(&state, &FfmpegInfo::default())
@@ -1123,6 +1147,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 
@@ -1309,6 +1334,7 @@ mod tests {
             hdr_format: HdrFormat::Pq,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let filter: VideoFilter = HwMapFilter {

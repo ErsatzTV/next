@@ -186,7 +186,7 @@ impl FilterChain {
 
                     // reverse hwmap only works on frames the OpenCL filter got from it, so
                     // nothing can go between them
-                    if matches!(best, VideoFilter::Fps(_))
+                    if matches!(best, VideoFilter::Fps(_) | VideoFilter::SetSar(_))
                         && current_state.surface == FrameSurface::OpenCL
                         && let Some(mapped_from) = resolved.iter().rev().find_map(|f| match f {
                             PipelineFilter::Video(VideoFilter::HwMap(m))
@@ -646,12 +646,14 @@ impl FilterChain {
                 }
 
                 // find the next video filter (before overlay). skipping fps is safe: only
-                // per-frame filters come after it
+                // per-frame filters come after it. setsar only tags frames.
                 let mut j = i + 1;
                 while j < self.filters.len()
                     && matches!(
                         self.filters[j],
-                        PipelineFilter::Audio(_) | PipelineFilter::Video(VideoFilter::Fps(_))
+                        PipelineFilter::Audio(_)
+                            | PipelineFilter::Video(VideoFilter::Fps(_))
+                            | PipelineFilter::Video(VideoFilter::SetSar(_))
                     )
                 {
                     j += 1;
@@ -935,23 +937,28 @@ mod tests {
         ToneMapFilter,
     };
 
-    #[test]
-    fn optimize_fuses_qsv_vpp_across_fps() {
+    #[rstest::rstest]
+    #[case::fps("fps=25")]
+    #[case::setsar("setsar=1")]
+    fn optimize_fuses_qsv_vpp_across(#[case] between_arg: &str) {
         use crate::accel::qsv::VppQsv;
         use crate::frame_rate::FrameRate;
-        use crate::video_filter::FpsFilter;
+        use crate::video_filter::{FpsFilter, SetSarFilter};
 
         let size = FrameSize {
             width: 1280,
             height: 720,
         };
-        let fps: VideoFilter = FpsFilter {
-            frame_rate: FrameRate::parse_target("25"),
-        }
-        .into();
+        let between: VideoFilter = match between_arg {
+            "fps=25" => FpsFilter {
+                frame_rate: FrameRate::parse_target("25"),
+            }
+            .into(),
+            _ => SetSarFilter.into(),
+        };
         let mut chain = FilterChain::new(vec![
             PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::deinterlace(None))),
-            PipelineFilter::Video(fps),
+            PipelineFilter::Video(between),
             PipelineFilter::Video(VideoFilter::VppQsv(VppQsv::scale(size))),
         ]);
 
@@ -970,7 +977,7 @@ mod tests {
             args[0].starts_with("vpp_qsv=deinterlace") && args[0].contains("w=1280"),
             "{args:?}"
         );
-        assert_eq!(args[1], "fps=25");
+        assert_eq!(args[1], between_arg);
     }
 
     fn video_args(chain: &FilterChain) -> Vec<String> {
@@ -1147,6 +1154,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 
@@ -1368,23 +1376,29 @@ mod tests {
             hdr_format: HdrFormat::Pq,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 
-    #[test]
-    fn resolve_maps_back_from_opencl_before_fps() {
+    #[rstest::rstest]
+    #[case::fps("fps=30")]
+    #[case::setsar("setsar=1")]
+    fn resolve_maps_back_from_opencl_before(#[case] after_arg: &str) {
         let tonemap: VideoFilter = TonemapOpencl {
             algorithm: Some(String::from("hable")),
             output_format: HwPixelFormat::Nv12,
         }
         .into();
-        let fps: VideoFilter = crate::video_filter::FpsFilter {
-            frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
-        }
-        .into();
+        let after: VideoFilter = match after_arg {
+            "fps=30" => crate::video_filter::FpsFilter {
+                frame_rate: crate::frame_rate::FrameRate::parse_target("30"),
+            }
+            .into(),
+            _ => crate::video_filter::SetSarFilter.into(),
+        };
         let mut chain = FilterChain::new(vec![
             PipelineFilter::Video(tonemap),
-            PipelineFilter::Video(fps),
+            PipelineFilter::Video(after),
         ]);
 
         chain.resolve(
@@ -1411,7 +1425,7 @@ mod tests {
         assert_eq!(args[0], "hwmap=derive_device=opencl");
         assert!(args[1].starts_with("tonemap_opencl="), "{args:?}");
         assert_eq!(args[2], "hwmap=derive_device=vaapi:reverse=1");
-        assert_eq!(args[3], "fps=30");
+        assert_eq!(args[3], after_arg);
     }
 
     #[test]
@@ -1623,6 +1637,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 
@@ -2311,6 +2326,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         }
     }
 
@@ -2674,6 +2690,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2757,6 +2774,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2816,6 +2834,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2889,6 +2908,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());
@@ -2961,6 +2981,7 @@ mod tests {
             hdr_format: HdrFormat::None,
             rotation: None,
             decoder_frames: false,
+            sar_written: false,
         };
 
         let mut chain = FilterChain::new(Vec::new());

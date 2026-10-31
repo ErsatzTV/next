@@ -160,9 +160,7 @@ impl VideoFilterOp for ScaleVt {
         if let Some(size) = &self.size {
             state.size = *size;
             state.surface = FrameSurface::VideoToolbox;
-            state.is_anamorphic = false;
-            state.sample_aspect_ratio = Some(String::from("1:1"));
-            state.display_aspect_ratio = None;
+            state.set_square_pixels();
         }
     }
 
