@@ -180,7 +180,11 @@ impl HwAccel for Cuda {
         }
     }
 
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+    fn format_filter(
+        &self,
+        pixel_format: &PixelFormat,
+        _state: &FrameState,
+    ) -> Option<VideoFilter> {
         Some(
             FormatCuda {
                 format: *pixel_format,

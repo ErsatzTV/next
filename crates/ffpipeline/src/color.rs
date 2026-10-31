@@ -109,6 +109,31 @@ impl FrameColor {
         }
     }
 
+    pub(crate) const fn hlg() -> Self {
+        Self {
+            primaries: ColorTag::Named("bt2020"),
+            transfer: ColorTag::Named("arib-std-b67"),
+            matrix: ColorTag::Named("bt2020nc"),
+        }
+    }
+
+    /// Never leaves a value unset: some runtimes then default to PQ for 10-bit.
+    pub(crate) fn to_vpp_amf(self, fallback: Self) -> String {
+        let pick = |tag: ColorTag, fallback: ColorTag, map: fn(&str) -> Option<&'static str>| {
+            let name = |tag: ColorTag| match tag {
+                ColorTag::Named(name) => map(name),
+                _ => None,
+            };
+            name(tag).or_else(|| name(fallback)).unwrap_or("bt709")
+        };
+        format!(
+            "color_profile={}:primaries={}:trc={}",
+            pick(self.matrix, fallback.matrix, vpp_amf_profile),
+            pick(self.primaries, fallback.primaries, vpp_amf_primaries),
+            pick(self.transfer, fallback.transfer, vpp_amf_trc)
+        )
+    }
+
     pub(crate) fn is_bt2020(&self) -> bool {
         matches!(self.matrix, ColorTag::Named("bt2020nc" | "bt2020c"))
     }
@@ -127,6 +152,35 @@ impl FrameColor {
         let restore = self.to_setparams()?;
         let bt709 = Self::bt709().to_setparams()?;
         Some(format!("{bt709},{filter},{restore}"))
+    }
+}
+
+fn vpp_amf_profile(matrix: &str) -> Option<&'static str> {
+    match matrix {
+        "bt709" => Some("bt709"),
+        "bt470bg" | "smpte170m" => Some("bt601"),
+        "bt2020nc" | "bt2020c" => Some("bt2020"),
+        _ => None,
+    }
+}
+
+fn vpp_amf_primaries(primaries: &str) -> Option<&'static str> {
+    PRIMARIES
+        .iter()
+        .copied()
+        .find(|name| *name == primaries && !matches!(primaries, "ebu3213" | "vgamut"))
+}
+
+// vpp_amf names some transfers differently than setparams
+fn vpp_amf_trc(transfer: &str) -> Option<&'static str> {
+    match transfer {
+        "bt470m" => Some("gamma22"),
+        "bt470bg" => Some("gamma28"),
+        "log100" => Some("log"),
+        "log316" => Some("log-sqrt"),
+        "bt1361e" => Some("bt1361-ecg"),
+        "vlog" => None,
+        _ => TRANSFERS.iter().copied().find(|name| *name == transfer),
     }
 }
 
@@ -200,6 +254,36 @@ mod tests {
     #[case::unspecified(None, false)]
     fn is_bt2020(#[case] space: Option<&str>, #[case] expected: bool) {
         assert_eq!(frame_color(None, None, space).is_bt2020(), expected);
+    }
+
+    #[rstest]
+    #[case::hdr10(
+        frame_color(Some("bt2020"), Some("smpte2084"), Some("bt2020nc")),
+        FrameColor::bt709(),
+        "color_profile=bt2020:primaries=bt2020:trc=smpte2084"
+    )]
+    #[case::bt601(
+        frame_color(Some("smpte170m"), Some("bt470bg"), Some("smpte170m")),
+        FrameColor::bt709(),
+        "color_profile=bt601:primaries=smpte170m:trc=gamma28"
+    )]
+    #[case::untagged_sdr(
+        frame_color(None, None, None),
+        FrameColor::bt709(),
+        "color_profile=bt709:primaries=bt709:trc=bt709"
+    )]
+    #[case::untagged_hdr(
+        frame_color(None, Some("pq"), None),
+        FrameColor::hdr10(),
+        "color_profile=bt2020:primaries=bt2020:trc=smpte2084"
+    )]
+    #[case::not_in_vpp_amf(
+        frame_color(Some("ebu3213"), Some("vlog"), Some("ycgco")),
+        FrameColor::bt709(),
+        "color_profile=bt709:primaries=bt709:trc=bt709"
+    )]
+    fn to_vpp_amf(#[case] color: FrameColor, #[case] fallback: FrameColor, #[case] expected: &str) {
+        assert_eq!(color.to_vpp_amf(fallback), expected);
     }
 
     #[test]

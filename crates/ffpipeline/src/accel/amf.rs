@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::ArgVec;
 use crate::capabilities::amf::AmfCapabilities;
+use crate::color::FrameColor;
 use crate::ffmpeg_info::{FfmpegInfo, KnownDecoders, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
@@ -151,11 +152,11 @@ impl HwAccel for Amf {
         })
     }
 
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+    fn format_filter(&self, pixel_format: &PixelFormat, state: &FrameState) -> Option<VideoFilter> {
         if pixel_format.has_alpha() {
             None
         } else {
-            Some(VppAmf::format(*pixel_format).into())
+            Some(VppAmf::format(*pixel_format, state).into())
         }
     }
 
@@ -246,6 +247,7 @@ pub struct VppAmf {
     pub(crate) tonemap: bool,
     pub(crate) size: Option<FrameSize>,
     pub(crate) format: Option<PixelFormat>,
+    pub(crate) color: Option<String>,
 }
 
 impl VppAmf {
@@ -256,9 +258,20 @@ impl VppAmf {
         }
     }
 
-    pub(crate) fn format(format: PixelFormat) -> VppAmf {
+    /// With no output color, some runtimes output PQ for 10-bit, also from SDR. 8-bit is not
+    /// affected, and old runtimes (Polaris) can't encode 10-bit, so set it only for 10-bit.
+    pub(crate) fn format(format: PixelFormat, state: &FrameState) -> VppAmf {
+        let color = (format.bit_depth() > 8).then(|| {
+            let fallback = match state.hdr_format {
+                HdrFormat::None => FrameColor::bt709(),
+                HdrFormat::Hlg => FrameColor::hlg(),
+                HdrFormat::Pq | HdrFormat::Hdr10 | HdrFormat::Dv5 => FrameColor::hdr10(),
+            };
+            state.color.to_vpp_amf(fallback)
+        });
         VppAmf {
             format: Some(format),
+            color,
             ..VppAmf::default()
         }
     }
@@ -268,6 +281,7 @@ impl VppAmf {
         VppAmf {
             tonemap: true,
             format: Some(PixelFormat::Nv12),
+            color: Some(FrameColor::bt709().to_vpp_amf(FrameColor::bt709())),
             ..VppAmf::default()
         }
     }
@@ -282,6 +296,11 @@ impl VppAmf {
             size: self.size.or(next.size),
             // later format conversion wins
             format: next.format.or(self.format),
+            color: if self.tonemap || next.tonemap {
+                Self::tonemap().color
+            } else {
+                next.color.clone().or(self.color.clone())
+            },
         };
 
         // the converter only tone maps correctly to nv12
@@ -331,10 +350,8 @@ impl VideoFilterOp for VppAmf {
             options.push(format!("format={}", format.as_arg()));
         }
 
-        if self.tonemap {
-            options.push(String::from(
-                "color_profile=bt709:primaries=bt709:trc=bt709",
-            ));
+        if let Some(color) = &self.color {
+            options.push(color.clone());
         }
 
         if options.is_empty() {
@@ -786,11 +803,55 @@ mod tests {
     #[test]
     fn tonemap_does_not_fuse_with_non_nv12_format() {
         let tonemap = VppAmf::tonemap();
-        assert!(tonemap.fuse(&VppAmf::format(PixelFormat::P010le)).is_none());
+        let p010 = VppAmf::format(PixelFormat::P010le, &hdr_amf_state());
+        assert!(tonemap.fuse(&p010).is_none());
         assert!(
-            VppAmf::format(PixelFormat::P010le)
-                .fuse(&tonemap)
-                .is_some_and(|f| f.format == Some(PixelFormat::Nv12))
+            p010.fuse(&tonemap)
+                .is_some_and(|f| f.format == Some(PixelFormat::Nv12) && f.color == tonemap.color)
         );
+    }
+
+    fn sdr_amf_state() -> FrameState {
+        FrameState {
+            pixel_format: PixelFormat::Nv12,
+            hdr_format: HdrFormat::None,
+            ..hdr_amf_state()
+        }
+    }
+
+    #[test]
+    fn ten_bit_format_sets_output_color() {
+        assert_eq!(
+            VppAmf::format(PixelFormat::P010le, &sdr_amf_state())
+                .as_arg()
+                .as_deref(),
+            Some("vpp_amf=format=p010le:color_profile=bt709:primaries=bt709:trc=bt709")
+        );
+        assert_eq!(
+            VppAmf::format(PixelFormat::P010le, &hdr_amf_state())
+                .as_arg()
+                .as_deref(),
+            Some("vpp_amf=format=p010le:color_profile=bt2020:primaries=bt2020:trc=smpte2084")
+        );
+        assert_eq!(
+            VppAmf::format(PixelFormat::Nv12, &sdr_amf_state())
+                .as_arg()
+                .as_deref(),
+            Some("vpp_amf=format=nv12")
+        );
+    }
+
+    #[test]
+    fn scale_keeps_output_color_of_fused_format() {
+        let scale = VppAmf::scale(FrameSize {
+            width: 1920,
+            height: 1080,
+        });
+        let p010 = VppAmf::format(PixelFormat::P010le, &sdr_amf_state());
+        let expected = Some(
+            "vpp_amf=w=1920:h=1080:format=p010le:color_profile=bt709:primaries=bt709:trc=bt709,setsar=1",
+        );
+        assert_eq!(scale.fuse(&p010).unwrap().as_arg().as_deref(), expected);
+        assert_eq!(p010.fuse(&scale).unwrap().as_arg().as_deref(), expected);
     }
 }

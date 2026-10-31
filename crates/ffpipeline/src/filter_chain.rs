@@ -156,7 +156,7 @@ impl FilterChain {
                 let fmt: Option<VideoFilter> = if initial_state.surface == FrameSurface::System {
                     Some(FormatFilter { format: *pf }.into())
                 } else if a.can_convert_pixel_format(ffmpeg_info, &initial_state.pixel_format, pf) {
-                    a.format_filter(pf)
+                    a.format_filter(pf, initial_state)
                 } else {
                     None
                 };
@@ -481,7 +481,7 @@ impl FilterChain {
             let hw_can_convert = |pf: &PixelFormat| {
                 accel.as_ref().is_none_or(|a| {
                     a.can_convert_pixel_format(ffmpeg_info, &current_state.pixel_format, pf)
-                        && a.format_filter(pf).is_some()
+                        && a.format_filter(pf, current_state).is_some()
                 })
             };
 
@@ -581,7 +581,7 @@ impl FilterChain {
                     pixel_format,
                 ) =>
             {
-                if let Some(f) = a.format_filter(pixel_format) {
+                if let Some(f) = a.format_filter(pixel_format, current_state) {
                     f.apply_to(current_state);
                     resolved.push(PipelineFilter::Video(f));
                 }

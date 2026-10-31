@@ -168,7 +168,11 @@ impl HwAccel for Qsv {
         }
     }
 
-    fn format_filter(&self, pixel_format: &PixelFormat) -> Option<VideoFilter> {
+    fn format_filter(
+        &self,
+        pixel_format: &PixelFormat,
+        _state: &FrameState,
+    ) -> Option<VideoFilter> {
         if pixel_format.has_alpha() {
             None
         } else {
@@ -815,7 +819,10 @@ mod tests {
         let ffmpeg_info = FfmpegInfo::default();
 
         assert!(qsv.accepts_upload_format(&PixelFormat::Bgra));
-        assert!(qsv.format_filter(&PixelFormat::Bgra).is_none());
+        assert!(
+            qsv.format_filter(&PixelFormat::Bgra, &make_frame_state())
+                .is_none()
+        );
         assert!(!qsv.can_convert_pixel_format(
             &ffmpeg_info,
             &PixelFormat::Nv12,
