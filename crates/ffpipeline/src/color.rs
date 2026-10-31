@@ -117,7 +117,7 @@ impl FrameColor {
         }
     }
 
-    /// Never leaves a value unset: some runtimes then default to PQ for 10-bit.
+    /// Sets all three values: the converter's defaults wash out 10-bit output.
     pub(crate) fn to_vpp_amf(self, fallback: Self) -> String {
         let pick = |tag: ColorTag, fallback: ColorTag, map: fn(&str) -> Option<&'static str>| {
             let name = |tag: ColorTag| match tag {
