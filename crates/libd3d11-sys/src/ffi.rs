@@ -32,9 +32,10 @@ pub struct Dx11Lib {
     ) -> HRESULT,
 }
 
+/// The device can outlive its `Dx11Lib`. Fields drop after `drop()`, so the DLLs stay
+/// loaded until `Release` returns.
 pub struct D3d11Device {
     pointer: *mut c_void,
-    // Drop releases COM before fields (and the final module owner) are dropped.
     _modules: Arc<Dx11Modules>,
 }
 
@@ -50,14 +51,11 @@ impl Drop for D3d11Device {
     }
 }
 
-struct Com {
-    pointer: *mut c_void,
-    modules: Arc<Dx11Modules>,
-}
+struct Com(*mut c_void);
 
 impl Drop for Com {
     fn drop(&mut self) {
-        unsafe { release(self.pointer) };
+        unsafe { release(self.0) };
     }
 }
 
@@ -85,15 +83,11 @@ impl Dx11Lib {
         if !succeeded(hr) || factory.is_null() {
             return Err(format!("CreateDXGIFactory1 failed: 0x{hr:08x}"));
         }
-        Ok(Com {
-            pointer: factory,
-            modules: Arc::clone(&self.modules),
-        })
+        Ok(Com(factory))
     }
 
     unsafe fn enum_adapter(factory: &Com, index: u32) -> Result<Option<Com>, String> {
-        let modules = Arc::clone(&factory.modules);
-        let factory = factory.pointer.cast::<IDXGIFactory1>();
+        let factory = factory.0.cast::<IDXGIFactory1>();
         let mut adapter: *mut IDXGIAdapter1 = ptr::null_mut();
         let hr = unsafe { ((*(*factory).lpVtbl).EnumAdapters1)(factory, index, &mut adapter) };
         if hr == DXGI_ERROR_NOT_FOUND {
@@ -102,10 +96,7 @@ impl Dx11Lib {
         if !succeeded(hr) || adapter.is_null() {
             return Err(format!("EnumAdapters1({index}) failed: 0x{hr:08x}"));
         }
-        Ok(Some(Com {
-            pointer: adapter.cast(),
-            modules,
-        }))
+        Ok(Some(Com(adapter.cast())))
     }
 
     pub fn enumerate_adapters(&self) -> Result<Vec<AdapterInfo>, String> {
@@ -114,7 +105,7 @@ impl Dx11Lib {
         let mut index = 0;
         unsafe {
             while let Some(adapter) = Self::enum_adapter(&factory, index)? {
-                let adapter_ptr = adapter.pointer.cast::<IDXGIAdapter1>();
+                let adapter_ptr = adapter.0.cast::<IDXGIAdapter1>();
                 let mut desc: DXGI_ADAPTER_DESC1 = std::mem::zeroed();
                 let hr = ((*(*adapter_ptr).lpVtbl).GetDesc1)(adapter_ptr, &mut desc);
                 if !succeeded(hr) {
@@ -137,7 +128,7 @@ impl Dx11Lib {
         let mut device: *mut c_void = ptr::null_mut();
         let hr = unsafe {
             (self.D3D11CreateDevice)(
-                adapter.pointer.cast(),
+                adapter.0.cast(),
                 D3D_DRIVER_TYPE_UNKNOWN,
                 ptr::null_mut(),
                 D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
@@ -165,8 +156,6 @@ impl Dx11Lib {
 mod tests {
     use super::*;
 
-    // Use only kernel32 module references and a fake IUnknown. These regression
-    // tests must not enumerate adapters, create a GPU device, or invoke AMF.
     #[repr(C)]
     struct FakeUnknown {
         unknown: crate::IUnknown,
@@ -184,56 +173,50 @@ mod tests {
         0
     }
 
-    fn assert_release_before_modules<T>(make: impl FnOnce(*mut c_void, Arc<Dx11Modules>) -> T) {
+    #[test]
+    fn device_releases_before_unloading_modules() {
         static VTABLE: crate::IUnknownVtbl = crate::IUnknownVtbl {
             QueryInterface: unused_com_slot,
             AddRef: unused_com_slot,
             Release: fake_release,
         };
+        // kernel32 replaces dxgi and d3d11, so the test needs no GPU
         let modules = Arc::new(Dx11Modules {
             _dxgi: unsafe { Library::new("kernel32.dll") }.unwrap(),
             _d3d11: unsafe { Library::new("kernel32.dll") }.unwrap(),
         });
-        let weak = Arc::downgrade(&modules);
         let mut fake = Box::new(FakeUnknown {
             unknown: crate::IUnknown { lpVtbl: &VTABLE },
-            modules: weak.clone(),
+            modules: Arc::downgrade(&modules),
             released_with_modules: false,
             releases: 0,
         });
-        let owner = make((&mut fake.unknown as *mut crate::IUnknown).cast(), modules);
-        assert_eq!(weak.strong_count(), 1);
-        drop(owner);
+        let device = D3d11Device {
+            pointer: (&raw mut fake.unknown).cast(),
+            _modules: modules,
+        };
+        drop(device);
         assert_eq!(fake.releases, 1);
         assert!(fake.released_with_modules);
-        assert!(weak.upgrade().is_none());
+        assert!(fake.modules.upgrade().is_none());
     }
 
-    #[test]
-    fn device_releases_com_before_unloading_modules() {
-        assert_release_before_modules(|pointer, modules| D3d11Device {
-            pointer,
-            _modules: modules,
-        });
-    }
-
-    #[test]
-    fn factory_or_adapter_releases_com_before_unloading_modules() {
-        assert_release_before_modules(|pointer, modules| Com { pointer, modules });
-    }
-
-    /// Needs a real display adapter, so it only runs with --ignored
+    /// Needs a real display adapter, so it only runs with --ignored. Drops the devices
+    /// after the `Dx11Lib`, like the AMF probe does.
     #[test]
     #[ignore]
     fn enumerate_and_create() {
         let dx = Dx11Lib::load().expect("load dxgi/d3d11");
         let adapters = dx.enumerate_adapters().expect("enumerate");
         assert!(!adapters.is_empty());
+        let mut devices = Vec::new();
         for adapter in &adapters {
             println!("{adapter:?}");
             if !adapter.is_software() {
-                let _device = dx.create_device(adapter.index).expect("create device");
+                devices.push(dx.create_device(adapter.index).expect("create device"));
             }
         }
+        drop(dx);
+        drop(devices);
     }
 }
