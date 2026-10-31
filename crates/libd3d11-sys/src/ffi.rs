@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::Arc;
 
 use libloading::Library;
 
@@ -9,9 +10,13 @@ use crate::{
     IID_IDXGIFactory1, release, succeeded,
 };
 
-pub struct Dx11Lib {
+struct Dx11Modules {
     _dxgi: Library,
     _d3d11: Library,
+}
+
+pub struct Dx11Lib {
+    modules: Arc<Dx11Modules>,
     pub CreateDXGIFactory1: unsafe extern "system" fn(*const GUID, *mut *mut c_void) -> HRESULT,
     pub D3D11CreateDevice: unsafe extern "system" fn(
         *mut IDXGIAdapter1,
@@ -27,17 +32,22 @@ pub struct Dx11Lib {
     ) -> HRESULT,
 }
 
-pub struct D3d11Device(*mut c_void);
+/// The device can outlive its `Dx11Lib`. Fields drop after `drop()`, so the DLLs stay
+/// loaded until `Release` returns.
+pub struct D3d11Device {
+    pointer: *mut c_void,
+    _modules: Arc<Dx11Modules>,
+}
 
 impl D3d11Device {
     pub fn as_ptr(&self) -> *mut c_void {
-        self.0
+        self.pointer
     }
 }
 
 impl Drop for D3d11Device {
     fn drop(&mut self) {
-        unsafe { release(self.0) };
+        unsafe { release(self.pointer) };
     }
 }
 
@@ -57,8 +67,10 @@ impl Dx11Lib {
             let CreateDXGIFactory1 = *dxgi.get(b"CreateDXGIFactory1\0")?;
             let D3D11CreateDevice = *d3d11.get(b"D3D11CreateDevice\0")?;
             Ok(Self {
-                _dxgi: dxgi,
-                _d3d11: d3d11,
+                modules: Arc::new(Dx11Modules {
+                    _dxgi: dxgi,
+                    _d3d11: d3d11,
+                }),
                 CreateDXGIFactory1,
                 D3D11CreateDevice,
             })
@@ -133,7 +145,10 @@ impl Dx11Lib {
                 "D3D11CreateDevice on adapter {index} failed: 0x{hr:08x}"
             ));
         }
-        Ok(D3d11Device(device))
+        Ok(D3d11Device {
+            pointer: device,
+            _modules: Arc::clone(&self.modules),
+        })
     }
 }
 
@@ -141,18 +156,67 @@ impl Dx11Lib {
 mod tests {
     use super::*;
 
-    /// Needs a real display adapter, so it only runs with --ignored
+    #[repr(C)]
+    struct FakeUnknown {
+        unknown: crate::IUnknown,
+        modules: std::sync::Weak<Dx11Modules>,
+        released_with_modules: bool,
+        releases: usize,
+    }
+
+    unsafe extern "system" fn unused_com_slot() {}
+
+    unsafe extern "system" fn fake_release(pointer: *mut crate::IUnknown) -> u32 {
+        let fake = unsafe { &mut *pointer.cast::<FakeUnknown>() };
+        fake.released_with_modules = fake.modules.upgrade().is_some();
+        fake.releases += 1;
+        0
+    }
+
+    #[test]
+    fn device_releases_before_unloading_modules() {
+        static VTABLE: crate::IUnknownVtbl = crate::IUnknownVtbl {
+            QueryInterface: unused_com_slot,
+            AddRef: unused_com_slot,
+            Release: fake_release,
+        };
+        // kernel32 replaces dxgi and d3d11, so the test needs no GPU
+        let modules = Arc::new(Dx11Modules {
+            _dxgi: unsafe { Library::new("kernel32.dll") }.unwrap(),
+            _d3d11: unsafe { Library::new("kernel32.dll") }.unwrap(),
+        });
+        let mut fake = Box::new(FakeUnknown {
+            unknown: crate::IUnknown { lpVtbl: &VTABLE },
+            modules: Arc::downgrade(&modules),
+            released_with_modules: false,
+            releases: 0,
+        });
+        let device = D3d11Device {
+            pointer: (&raw mut fake.unknown).cast(),
+            _modules: modules,
+        };
+        drop(device);
+        assert_eq!(fake.releases, 1);
+        assert!(fake.released_with_modules);
+        assert!(fake.modules.upgrade().is_none());
+    }
+
+    /// Needs a real display adapter, so it only runs with --ignored. Drops the devices
+    /// after the `Dx11Lib`, like the AMF probe does.
     #[test]
     #[ignore]
     fn enumerate_and_create() {
         let dx = Dx11Lib::load().expect("load dxgi/d3d11");
         let adapters = dx.enumerate_adapters().expect("enumerate");
         assert!(!adapters.is_empty());
+        let mut devices = Vec::new();
         for adapter in &adapters {
             println!("{adapter:?}");
             if !adapter.is_software() {
-                let _device = dx.create_device(adapter.index).expect("create device");
+                devices.push(dx.create_device(adapter.index).expect("create device"));
             }
         }
+        drop(dx);
+        drop(devices);
     }
 }
