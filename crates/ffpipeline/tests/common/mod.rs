@@ -310,6 +310,11 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         assert_av_aligned(&test_env.ffprobe, &segment).await;
     }
     let output_probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &segment).await;
+    // scale_rkrga upscales on the default RGA3 cores shift the picture right and down by about 2 px
+    let pixel_shift = match accel {
+        Some(HardwareAccel::Rkmpp(_)) => 2,
+        _ => 0,
+    };
     assert_video(
         &output_probe,
         &test_case.expected_video_codec,
@@ -343,6 +348,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
             test_case.audio_source.is_none(),
             size,
             scaling_mode,
+            pixel_shift,
         )
         .await;
     }
@@ -876,7 +882,8 @@ pub async fn assert_pillarboxed(ffmpeg: &Path, path: &Path, size: FrameSize) {
 /// Wrong scale or non-square pixels score about 0.7. Green output scores 0.
 ///
 /// Frames are paired by time from a shared origin, so a picture that is late against
-/// audio fails too; one frame either way is tolerated.
+/// audio fails too; one frame either way is tolerated. With a `pixel_shift`, a picture
+/// moved right and down by that many pixels also matches.
 #[allow(clippy::too_many_arguments)]
 pub async fn assert_matches_source(
     test_env: &TestEnv,
@@ -887,6 +894,7 @@ pub async fn assert_matches_source(
     audio_from_source: bool,
     size: FrameSize,
     scaling_mode: ScalingMode,
+    pixel_shift: u32,
 ) {
     const MIN_SSIM: f64 = 0.9;
     // the largest offset reported by name; beyond it the picture just fails to match
@@ -951,8 +959,15 @@ pub async fn assert_matches_source(
     let ref_seek_arg = format!("{ref_seek:.3}");
 
     // a positive offset pairs each output frame with an earlier source frame
-    let ssim_at = async |offset: i32| {
+    let ssim_shifted = async |offset: i32, shift: u32| {
         let ref_shift = ref_origin - f64::from(offset) / rate.parsed_frame_rate;
+        let (out_crop, ref_crop) = match shift {
+            0 => (String::new(), String::new()),
+            s => (
+                format!(",crop=iw-{}:ih-{}:{s}:{s}", 2 * s, 2 * s),
+                format!(",crop=iw-{}:ih-{}:0:0", 2 * s, 2 * s),
+            ),
+        };
         let fps = &rate.r_frame_rate;
         let result = tokio::time::timeout(
             Duration::from_secs(30),
@@ -976,9 +991,9 @@ pub async fn assert_matches_source(
                 // and repeats soft-telecine frames like the output's cfr does
                 .arg(format!(
                     "[0:v]setpts=PTS-{out_origin}/TB,fps={fps},trim=start={start}:end={end},\
-                     setsar=1,format=yuv420p[out];\
+                     setsar=1,format=yuv420p{out_crop}[out];\
                      [1:v]setpts=PTS-{ref_shift}/TB,fps={fps},trim=start={start}:end={end},\
-                     scale=iw*sar:ih,setsar=1,{fit},format=yuv420p[ref];\
+                     scale=iw*sar:ih,setsar=1,{fit},format=yuv420p{ref_crop}[ref];\
                      [out][ref]ssim=shortest=1"
                 ))
                 .args(["-an", "-f", "null", "-"])
@@ -994,6 +1009,13 @@ pub async fn assert_matches_source(
             .and_then(|(_, rest)| rest.split_whitespace().next())
             .and_then(|value| value.parse::<f64>().ok())
             .unwrap_or_else(|| panic!("no ssim in output:\n{stderr}"))
+    };
+    let ssim_at = async |offset: i32| {
+        let plain = ssim_shifted(offset, 0).await;
+        match pixel_shift {
+            0 => plain,
+            shift => plain.max(ssim_shifted(offset, shift).await),
+        }
     };
 
     let ssim = ssim_at(0).await;
