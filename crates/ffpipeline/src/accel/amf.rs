@@ -258,8 +258,8 @@ impl VppAmf {
         }
     }
 
-    /// With no output color, some runtimes output PQ for 10-bit, also from SDR. 8-bit is not
-    /// affected, and old runtimes (Polaris) can't encode 10-bit, so set it only for 10-bit.
+    /// With no output color, the converter washes out 10-bit output (runtime 1.5.3). 8-bit is
+    /// not affected, so set it only for 10-bit.
     pub(crate) fn format(format: PixelFormat, state: &FrameState) -> VppAmf {
         let color = (format.bit_depth() > 8).then(|| {
             let fallback = match state.hdr_format {
