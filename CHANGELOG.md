@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+
+## [0.2.4] - 2026-10-31
 ### Added
 - VAAPI: tonemap with `libplacebo` when a Vulkan device on the same GPU is available
   - `libplacebo` is preferred over `tonemap_opencl` and `tonemap_vaapi`, and shows Dolby Vision profile 5 with correct colors
@@ -122,7 +124,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - First versioned release; earlier builds report `0.1.0-<commit>`
 - Release notes list the config versions each build reads and the [ErsatzTV-ffmpeg](https://github.com/ErsatzTV/ErsatzTV-ffmpeg) build it ships with
 
-[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/ErsatzTV/next/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ErsatzTV/next/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ErsatzTV/next/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ErsatzTV/next/compare/v0.2.0...v0.2.1
