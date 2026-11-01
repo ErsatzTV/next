@@ -40,6 +40,8 @@ pub enum Fact {
     Levels,
     /// whether the audio stream ends after the video stream
     AudioOutlastsVideo,
+    /// whole seconds of video stored ahead of the first audio packet
+    AudioStoredLate,
 }
 
 use Fact::*;
@@ -342,6 +344,10 @@ const FIXTURES: &[Expectation] = &[
     ("long_gop_h264.mp4", &[LONG_GOP, (RandomAccess, "IDR 5")]),
     ("long_gop_h264.mkv", &[LONG_GOP, (RandomAccess, "IDR 5")]),
     ("long_gop_h264.ts", &[LONG_GOP, (RandomAccess, "IDR 5")]),
+    (
+        "long_gop_h264_late_audio.mkv",
+        &[LONG_GOP, (RandomAccess, "IDR 5"), (AudioStoredLate, "6")],
+    ),
     (
         "long_gop_h264_open.ts",
         &[LONG_GOP, (RandomAccess, "IDR 1")],
@@ -679,6 +685,30 @@ impl Probe<'_> {
                     "no".into()
                 }
             }
+            AudioStoredLate => {
+                let csv = run(
+                    self.ffprobe,
+                    &[
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "packet=codec_type,pts_time",
+                        "-of",
+                        "csv=p=0",
+                    ],
+                    self.path,
+                );
+                let mut video_pts = 0.0_f64;
+                for line in csv.lines() {
+                    let mut parts = line.split(',');
+                    match (parts.next(), parts.next().and_then(|p| p.parse().ok())) {
+                        (Some("audio"), _) => break,
+                        (Some("video"), Some(pts)) => video_pts = video_pts.max(pts),
+                        _ => {}
+                    }
+                }
+                video_pts.floor().to_string()
+            }
         }
     }
 }
@@ -778,6 +808,7 @@ pub fn parse_fact(name: &str) -> Option<Fact> {
         RandomAccess,
         Levels,
         AudioOutlastsVideo,
+        AudioStoredLate,
     ]
     .into_iter()
     .find(|fact| format!("{fact:?}") == name)

@@ -377,6 +377,12 @@ gen_long_gop_h264.ts() {
     [ -f "$out/long_gop_h264.mp4" ] || gen_long_gop_h264.mp4
     ff -i "$out/long_gop_h264.mp4" -c copy "$out/long_gop_h264.ts"
 }
+gen_long_gop_h264_late_audio.mkv() {
+    [ -f "$out/long_gop_h264.mp4" ] || gen_long_gop_h264.mp4
+    # audio reaches the muxer 6 s late and is written as it arrives, with its own timestamps
+    ff -i "$out/long_gop_h264.mp4" -itsoffset 6 -i "$out/long_gop_h264.mp4" -map 0:v -map 1:a -c copy \
+        -bsf:a "setts=ts=TS-6/TB" -max_interleave_delta 1 -fflags +bitexact "$out/long_gop_h264_late_audio.mkv"
+}
 gen_long_gop_h264_open.ts() {
     ff $(long_gop_src) -c:v libx264 -preset veryfast -crf 42 -g 150 -bf 3 \
         -x264-params open-gop=1 -c:a aac -b:a 16k -ac 1 -shortest "$work/open.mp4"

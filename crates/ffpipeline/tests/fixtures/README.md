@@ -51,6 +51,8 @@ and GPAC 26.07, the script gives:
   `1080p_h264_cropped_pgs.mkv`, `480i_h264_motion.ts`, `480i_mpeg2.ts`,
   `480p_h264_anamorphic.ts`, `480p_h264_video_only.mkv`, `480p_h264_10.ts`,
   `720p_h264_10.ts`, `720p_h264_audio_longer.mkv` and `long_gop_h264.mkv`;
+- **same packets, interleave varies:** `long_gop_h264_late_audio.mkv`. Where the audio lands
+  depends on thread timing, by a packet or two between runs;
 - **same properties, different encode:** everything else. Those files came from other
   x264/x265 builds (the encoder settings are in their SEI), so the bytes differ but the
   source, settings and probed properties match.
@@ -108,7 +110,8 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `1080p_hevc_10_dv5.mp4` | Dolby Vision profile 5 (IPT-C2, full range, no HDR10 fallback) | `tonemap_dv`, `copy_dv5` |
 | `1080p_hevc_10_dv7.mp4` | Dolby Vision profile 7: HDR10 base layer plus a 960x540 enhancement layer carrying the RPU. dovi_tool reports the RPU itself as profile 8 | `tonemap_dv` |
 | `1080p_hevc_10_dv81.mp4`, `_dv82.mp4`, `_dv84.mp4` | Dolby Vision 8.1 (HDR10), 8.2 (BT.709 SDR) and 8.4 (HLG) base layers | `tonemap_dv` |
-| `long_gop_h264.mp4`, `.mkv`, `.ts` | 24 s, 256x144, one IDR every 150 frames (5 s), longer than an HLS segment. Same stream in three containers | `copy_seek`, `copy_input_start` |
+| `long_gop_h264.mp4`, `.mkv`, `.ts` | 24 s, 256x144, one IDR every 150 frames (5 s), longer than an HLS segment. Same stream in three containers | `copy_seek`, `copy_input_start`, `past_shortest_buffer` |
+| `long_gop_h264_late_audio.mkv` | The `.mkv` above with each audio packet stored ~6 s after the video of the same time, like some ASF (WMV). On QSV runtimes before 2.9, `-shortest` holds video surfaces waiting for audio that a shared demuxer hasn't read yet, so one input fails within frames; a second input for audio needs ffmpeg to schedule the sync queue by the stream it waits on (ETV-ffmpeg 0031) | `past_shortest_buffer` |
 | `long_gop_h264_open.ts`, `long_gop_hevc_open.ts` | As above with open GOPs: only the first keyframe is an IDR; later ones are recovery-point I frames (H.264) or CRAs (HEVC) | `copy_seek`, `copy_input_start` |
 | `1080p_h264_cropped_pgs.mkv` | 8 s, 1920x1040 video with a 1920x1080 PGS track that starts at 6 s, past ffprobe's 5 s window, so probing can't find the subtitle size (#335). x264 veryslow, ref 16, level 5.1 | `image_subtitle_unknown_size` |
 | `subtitle_pgs.sup` | PGS: one opaque white box from 0 to 10 s, written by `generate/make_pgs.py` | `copy_image_subtitle`, source for the cropped PGS fixture |
