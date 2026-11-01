@@ -349,6 +349,27 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// Longer than -shortest's default 10 s buffer, which can hold every surface of a
+        /// fixed hardware pool while it waits for audio from a separate input.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn past_shortest_buffer(
+            #[values(
+                "long_gop_h264.mkv",
+                "long_gop_h264.mp4",
+                "long_gop_h264.ts",
+                "long_gop_h264_late_audio.mkv"
+            )]
+            src: &'static str,
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::past_shortest_buffer(src),
+            )
+            .await;
+        }
+
         #[::tokio::test]
         #[ignore]
         async fn loudness_normalization() {
@@ -1048,6 +1069,12 @@ pub fn segment_keyframes(vf: (&str, u8)) -> TestCase {
     let mut test_case = transcode("long_gop_h264.ts", SIZE_720P, vf, AudioFormat::Aac);
     test_case.params.duration = Duration::from_secs(10);
     test_case.check_segments = true;
+    test_case
+}
+
+pub fn past_shortest_buffer(src: &'static str) -> TestCase {
+    let mut test_case = transcode(src, SIZE_720P, ("h264", 8), AudioFormat::Aac);
+    test_case.params.duration = Duration::from_secs(12);
     test_case
 }
 
