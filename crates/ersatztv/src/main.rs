@@ -15,7 +15,10 @@ use axum::{Router, routing::get};
 use clap::{Parser, Subcommand};
 use ersatztv::error::LineupError;
 use ersatztv_core::process::{kill_descendants_on_exit, shutdown_signal};
-use ersatztv_core::{HEARTBEAT_FILE_NAME, READY_FILE_TIMEOUT, SHUTDOWN_DEADLINE, empty_folder};
+use ersatztv_core::{
+    HEARTBEAT_FILE_NAME, PLAYLIST_FILE_NAME, READY_FILE_TIMEOUT, SHUTDOWN_DEADLINE,
+    SUBTITLE_PLAYLIST_FILE_NAME, empty_folder,
+};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -285,7 +288,7 @@ fn get_multi_variant(
     if hints.converts_subtitles {
         // don't claim a language
         result.push_str(&format!(
-            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI=\"{}/session/{}/live_sub.m3u8\"\n",
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Subtitles\",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI=\"{}/session/{}/{SUBTITLE_PLAYLIST_FILE_NAME}\"\n",
             get_scheme_host(headers),
             channel.number()
         ));
@@ -300,7 +303,7 @@ fn get_multi_variant(
         ));
     }
     result.push_str(&format!(
-        "{}/session/{}/live.m3u8",
+        "{}/session/{}/{PLAYLIST_FILE_NAME}",
         get_scheme_host(headers),
         channel.number()
     ));

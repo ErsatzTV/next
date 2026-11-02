@@ -5,7 +5,12 @@ use std::path::Path;
 
 use serde_json::Value;
 
-const SCHEMAS: &[&str] = &["channel_config.json", "lineup_config.json", "playout.json"];
+const SCHEMAS: &[&str] = &[
+    "channel_config.json",
+    "describe.json",
+    "lineup_config.json",
+    "playout.json",
+];
 
 fn collect_missing(node: &Value, path: &str, missing: &mut Vec<String>) {
     match node {

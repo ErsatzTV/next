@@ -31,3 +31,7 @@ uuid = { workspace = true }
 [[bin]]
 name = "gen-channel-config-schema"
 path = "src/bin/gen_channel_config_schema.rs"
+
+[[bin]]
+name = "gen-describe-schema"
+path = "src/bin/gen_describe_schema.rs"

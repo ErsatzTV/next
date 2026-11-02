@@ -13,6 +13,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ersatztv_channel::config::ChannelConfig;
+use ersatztv_channel::describe::Describe;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::SHUTDOWN_DEADLINE;
 use ersatztv_core::process::{kill_descendants_on_exit, parent_exit, shutdown_signal};
@@ -48,6 +49,8 @@ enum Commands {
         #[arg(long)]
         detached: bool,
     },
+    /// Print what this binary supports as JSON
+    Describe,
 }
 
 pub fn main() -> ExitCode {
@@ -57,10 +60,14 @@ pub fn main() -> ExitCode {
     // clap may exit here; nothing is spawned yet
     let args = Args::parse();
 
+    if let Commands::Describe = args.command {
+        return describe();
+    }
+
     logging::init();
     let span = match &args.command {
         Commands::Run { number, .. } => tracing::info_span!("channel", number = %number),
-        Commands::Debug { .. } => tracing::Span::none(),
+        Commands::Debug { .. } | Commands::Describe => tracing::Span::none(),
     };
     // tasks spawned from here need .in_current_span() to keep the channel number
     let _span = span.enter();
@@ -100,6 +107,19 @@ pub fn main() -> ExitCode {
         }
         Err(err) => {
             log::error!("{err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn describe() -> ExitCode {
+    match serde_json::to_string_pretty(&Describe::new()) {
+        Ok(json) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("failed to describe: {err}");
             ExitCode::FAILURE
         }
     }
@@ -169,5 +189,6 @@ async fn run(args: Args) -> Result<(), ChannelError> {
 
             Ok(())
         }
+        Commands::Describe => unreachable!("handled before the runtime starts"),
     }
 }

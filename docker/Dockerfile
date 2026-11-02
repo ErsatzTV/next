@@ -49,6 +49,8 @@ RUN . /target-env && cargo chef cook --locked --release --recipe-path recipe.jso
 FROM dependencies AS build
 ARG INFO_VERSION
 ENV ETV_VERSION=${INFO_VERSION}
+# no .git in the context, so build.rs can't read the commit
+ARG ETV_COMMIT
 COPY . .
 RUN . /target-env && cargo build --locked --release && \
     mkdir -p /out && \

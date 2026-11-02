@@ -34,6 +34,9 @@ cargo run --bin ersatztv-channel -- run <path/to/channel.json> --output-folder <
 # Debug channel config and FFmpeg capabilities
 cargo run --bin ersatztv-channel -- debug <path/to/channel.json>
 
+# Print the channel binary's contract and supported config values as JSON (schema/describe.json)
+cargo run --bin ersatztv-channel -- describe
+
 # Probe hardware acceleration capabilities directly (one subcommand per accel)
 cargo run --bin probe_capabilities -- <amf|cuda|qsv|rkmpp|vaapi|video-toolbox|vulkan|opencl>
 
@@ -46,6 +49,7 @@ cargo run --bin ersatztv-playout-generator -- --content-folder <dir> --lineup <p
 # Regenerate JSON schemas from Rust types (see "Generated vs hand-maintained files")
 cargo run --bin gen-channel-config-schema > schema/channel_config.json
 cargo run --bin gen-lineup-config-schema > schema/lineup_config.json
+cargo run --bin gen-describe-schema > schema/describe.json
 
 # Lint (CI also sets RUSTFLAGS=-Dwarnings, so warnings fail the build)
 RUSTFLAGS=-Dwarnings cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
@@ -167,6 +171,7 @@ channels.
 |---|---|---|
 | `schema/channel_config.json` | `crates/ersatztv-channel/src/config.rs` (schemars) | `cargo run --bin gen-channel-config-schema > schema/channel_config.json` |
 | `schema/lineup_config.json` | `crates/ersatztv/src/config.rs` (schemars) | `cargo run --bin gen-lineup-config-schema > schema/lineup_config.json` |
+| `schema/describe.json` | `crates/ersatztv-channel/src/describe.rs` (schemars) | `cargo run --bin gen-describe-schema > schema/describe.json`; `tests/describe.rs` fails when it is stale |
 | `schema/playout.json` | hand-maintained | edit by hand alongside `crates/ersatztv-playout/src/playout.rs` |
 | `crates/ersatztv/src/templates/channel.json` | symlink to `examples/channel.json` | edit the example; `sed -i` on the link replaces it with a copy |
 | `examples/channel.json`, `examples/lineup.json`, `examples/playout/playout.json` | hand-maintained | update when the corresponding model changes; each must carry the current schema version and validate against its schema. `example_loads_at_current_version` tests load each one and check the version |
@@ -314,6 +319,7 @@ maintainer handles the legacy side. Your job is to call it out explicitly in the
 | Lineup config `SUPPORTED_SCHEMA` bump | none in legacy (it never writes `lineup.json`); `ErsatzTV.org/docs-next/` for standalone users |
 | `channel.json` field | `ErsatzTV.Core/Next/Config/ChannelConfig.cs` (regenerated from `schema/channel_config.json`; see below) |
 | User-visible config or behavior | `ErsatzTV.org/docs-next/` |
+| `describe` output (`describe.rs`) | none in legacy yet; `ErsatzTV.org/docs-next/`. Adding a field is compatible; removing, renaming or changing one bumps `DESCRIBE_VERSION` and is `### Breaking` |
 
 ### Regenerating legacy's C# models
 
