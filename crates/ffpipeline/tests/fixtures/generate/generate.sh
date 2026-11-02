@@ -72,6 +72,21 @@ gen_480p_h264_sps_change.ts() {
     ff -f concat -safe 0 -i "$list" -c copy "$out/480p_h264_sps_change.ts"
 }
 
+gen_480p_h264_reinit.ts() {
+    # profile and level reinit the qsv decoder; colour tags re-tag frames from every other decoder
+    local list=$work/reinit.txt
+    ff -f lavfi -i "testsrc2=s=640x480:r=30:d=0.5" $(tone 0.5) \
+        -c:v libx264 -profile:v high -level 3.0 -g 15 \
+        -colorspace bt709 -color_primaries bt709 -color_trc bt709 \
+        -c:a aac -ac 1 -shortest "$work/reinit_0.ts"
+    ff -f lavfi -i "testsrc2=s=640x480:r=30:d=1.5" $(tone 1.5) \
+        -c:v libx264 -profile:v main -level 4.0 -g 15 \
+        -colorspace smpte170m -color_primaries smpte170m -color_trc smpte170m \
+        -c:a aac -ac 1 -shortest "$work/reinit_1.ts"
+    printf "file '%s'\n" "$work/reinit_0.ts" "$work/reinit_1.ts" > "$list"
+    ff -f concat -safe 0 -i "$list" -c copy "$out/480p_h264_reinit.ts"
+}
+
 gen_480p_h264_a53cc.ts() {
     ff -f lavfi -i "testsrc2=s=640x480:r=30:d=2" \
         -c:v libx264 -preset veryfast -b:v 800k -g 30 -bf 0 -f h264 "$work/a53.h264"

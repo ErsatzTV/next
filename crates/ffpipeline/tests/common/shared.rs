@@ -698,6 +698,21 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// A rebuild used to end the output on qsv (overlay_qsv stops when its overlay input
+        /// ends without a frame) and drop the watermark everywhere else.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn watermark_graph_rebuild(
+            #[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8),
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::watermark_graph_rebuild(vf),
+            )
+            .await;
+        }
+
         /// Exercises the `-ignore_loop 0` input branch instead of the single-frame still-image branch.
         #[::rstest::rstest]
         #[::tokio::test]
@@ -850,6 +865,7 @@ pub fn transcode(src: &'static str, res: FrameSize, vf: (&str, u8), af: AudioFor
         text_color: None,
         check_av_alignment: false,
         check_segments: false,
+        check_watermark_persists: false,
         channel_tones: None,
     }
 }
@@ -869,6 +885,7 @@ fn source_sized(src: &'static str, size: FrameSize) -> TestCase {
         text_color: None,
         check_av_alignment: false,
         check_segments: false,
+        check_watermark_persists: false,
         channel_tones: None,
     }
 }
@@ -1222,6 +1239,20 @@ pub fn watermark(
 ) -> TestCase {
     let mut test_case = transcode(src, res, vf, AudioFormat::Aac);
     test_case.params.watermark = Some(watermark);
+    test_case
+}
+
+/// The fixture's mid-stream SPS change makes ffmpeg rebuild the filtergraph, and the
+/// rebuilt graph only gets a watermark frame if the image input is still producing them.
+pub fn watermark_graph_rebuild(vf: (&str, u8)) -> TestCase {
+    let mut test_case = watermark(
+        "480p_h264_reinit.ts",
+        SIZE_1080P,
+        vf,
+        TestWatermark::default(),
+    );
+    test_case.params.duration = Duration::from_secs(2);
+    test_case.check_watermark_persists = true;
     test_case
 }
 

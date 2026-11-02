@@ -857,9 +857,16 @@ impl Pipeline {
                     args!["-t", format!("{}ms", duration.as_millis())]
                 }
             } else if graphics_stream.is_still_image() {
-                // decode a single frame; the loop filter below repeats it *after* scaling, so
-                // decode and scale happen once instead of once per output frame
-                args!["-framerate", output_context.frame_rate.r_frame_rate.clone()]
+                // loop the input, not in the graph: ffmpeg rebuilds the filtergraph when the main
+                // input's frames change mid-stream, and a rebuilt graph only gets new frames
+                args![
+                    "-loop",
+                    "1",
+                    "-framerate",
+                    output_context.frame_rate.r_frame_rate.clone(),
+                    "-t",
+                    format!("{}ms", duration.as_millis())
+                ]
             } else if graphics_stream.codec == "gif" || graphics_stream.codec == "apng" {
                 args![
                     "-ignore_loop",
@@ -1002,20 +1009,6 @@ impl Pipeline {
                     .into(),
                 ]
             };
-
-            // a still image is decoded as a single frame; only fades need it repeated (they act on
-            // frame timestamps). otherwise the overlay's repeatlast holds it, which keeps the
-            // per-frame format conversion and hwupload out of the chain entirely
-            if !fade_filters.is_empty() {
-                secondary_filters.push(
-                    LoopFilter::bounded(
-                        graphics_stream.is_still_image(),
-                        duration,
-                        &output_context.frame_rate,
-                    )
-                    .into(),
-                );
-            }
 
             secondary_filters.extend(fade_filters.iter().map(|f| f.clone().into()));
 
@@ -2957,12 +2950,23 @@ mod tests {
         pipeline.optimize();
         let args = pipeline.args();
 
-        // 30 s at 30000/1001
-        assert_eq!(arg_value(&args, "-t"), Some("30000ms"), "{args:?}");
-        assert!(
-            filter_complex(&args).contains("loop=900:1,fade="),
-            "{args:?}"
+        let image = args.iter().position(|a| a == "watermark.png").unwrap();
+        assert_eq!(
+            args[image - 7..image]
+                .iter()
+                .map(|a| a.as_ref())
+                .collect::<Vec<_>>(),
+            [
+                "-loop",
+                "1",
+                "-framerate",
+                "30000/1001",
+                "-t",
+                "30000ms",
+                "-i"
+            ]
         );
+        assert!(!filter_complex(&args).contains("loop="), "{args:?}");
     }
 
     fn qsv_h264_args(runtime_api: (u16, u16), size: FrameSize) -> ArgVec {

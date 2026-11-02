@@ -62,6 +62,8 @@ pub struct TestCase {
     pub check_av_alignment: bool,
     /// Checks every HLS segment, not just the first, for keyframe-aligned cuts
     pub check_segments: bool,
+    /// The output must cover the whole duration with the default watermark on every frame
+    pub check_watermark_persists: bool,
     /// Tones (Hz) each output channel must carry, in channel order. The other listed
     /// tones must be absent.
     pub channel_tones: Option<&'static [&'static [u32]]>,
@@ -296,6 +298,12 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
 
     if test_case.check_segments {
         assert_segments_cut_on_keyframes(&test_env.ffprobe, dir.path()).await;
+    }
+    if test_case.check_watermark_persists
+        && let Some(size) = video_size
+    {
+        assert_covers_duration(&test_env.ffprobe, dir.path(), duration).await;
+        assert_watermark_on_every_frame(&test_env.ffmpeg, dir.path(), size).await;
     }
 
     let segment = find_first_segment(dir.path());
@@ -1586,6 +1594,94 @@ pub async fn assert_segments_cut_on_keyframes(ffprobe: &Path, dir: &Path) {
             "{} does not start on a keyframe: {flags:?}",
             segment.display()
         );
+    }
+}
+
+/// Catches an output that ends early with ffmpeg still exiting 0.
+pub async fn assert_covers_duration(ffprobe: &Path, dir: &Path, duration: Duration) {
+    let mut pts: Vec<f64> = Vec::new();
+    for segment in find_segments(dir) {
+        let output = ersatztv_core::process::command(ffprobe)
+            .args(["-v", "error", "-select_streams", "v:0"])
+            .args(["-show_entries", "packet=pts_time", "-of", "csv=p=0"])
+            .arg(&segment)
+            .output()
+            .await
+            .expect("failed to run ffprobe");
+        pts.extend(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|l| l.trim().trim_end_matches(',').parse::<f64>().ok()),
+        );
+    }
+    let first = pts.iter().copied().fold(f64::INFINITY, f64::min);
+    let last = pts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    // allow for a dropped frame or two at either end
+    let covered = last - first;
+    let wanted = duration.as_secs_f64() - 0.2;
+    assert!(
+        covered >= wanted,
+        "output video covers {covered:.3}s of {:.3}s ({} packets)",
+        duration.as_secs_f64(),
+        pts.len()
+    );
+}
+
+/// Mean luma of a box in each output frame, in frame order.
+async fn box_luma(ffmpeg: &Path, segment: &Path, side: u32, x: u32, y: u32) -> Vec<f64> {
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        ersatztv_core::process::command(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(segment)
+            .args(["-map", "0:v:0", "-an", "-vf"])
+            .arg(format!(
+                "crop={side}:{side}:{x}:{y},signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+            ))
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("luma check timed out")
+    .expect("failed to decode output");
+    assert!(
+        output.status.success(),
+        "luma check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|l| l.strip_prefix("lavfi.signalstats.YAVG="))
+        .filter_map(|v| v.trim().parse().ok())
+        .collect()
+}
+
+/// For `TestWatermark::default()` (top left, 10% wide, 5% margins, frame-relative) over a
+/// 4:3 source in 16:9 output, so the watermark sits in the left pillar and the mirrored box
+/// in the right pillar is black. A watermark lost partway through fails on that frame.
+pub async fn assert_watermark_on_every_frame(ffmpeg: &Path, dir: &Path, size: FrameSize) {
+    let width = size.width;
+    let mark = width / 10;
+    let side = (mark / 3) & !1;
+    let x = (width / 20 + (mark - side) / 2) & !1;
+    let y = (size.height / 20 + (mark - side) / 2) & !1;
+    let mirror_x = (width - x - side) & !1;
+    for segment in find_segments(dir) {
+        let marked = box_luma(ffmpeg, &segment, side, x, y).await;
+        let bare = box_luma(ffmpeg, &segment, side, mirror_x, y).await;
+        assert!(!marked.is_empty(), "no frames in {}", segment.display());
+        assert_eq!(
+            marked.len(),
+            bare.len(),
+            "frame count differs between boxes"
+        );
+        for (frame, (m, b)) in marked.iter().zip(&bare).enumerate() {
+            assert!(
+                m - b > 20.0,
+                "no watermark in frame {frame} of {}: luma {m:.1} vs {b:.1} in the bare pillar",
+                segment.display()
+            );
+        }
     }
 }
 

@@ -38,6 +38,10 @@ pub enum Fact {
     RandomAccess,
     /// distinct H.264 SPS levels in stream order
     Levels,
+    /// distinct H.264 SPS profile_idc values in stream order
+    Profiles,
+    /// distinct H.264 SPS matrix_coefficients in stream order
+    Matrices,
     /// whether the audio stream ends after the video stream
     AudioOutlastsVideo,
     /// whole seconds of video stored ahead of the first audio packet
@@ -107,6 +111,15 @@ const FIXTURES: &[Expectation] = &[
             (Video, "h264 High 640x480 1:1 yuv420p 30/1"),
             (Levels, "30 51"),
             (Keyframes, "0 0.521 1.021"),
+        ],
+    ),
+    (
+        "480p_h264_reinit.ts",
+        &[
+            (Video, "h264 Main 640x480 1:1 yuv420p 30/1"),
+            (Profiles, "100 77"),
+            (Levels, "30 40"),
+            (Matrices, "1 6"),
         ],
     ),
     (
@@ -461,6 +474,20 @@ impl Probe<'_> {
         String::from_utf8_lossy(&output.stderr).into_owned()
     }
 
+    fn sps_values(&self, field: &str) -> String {
+        let needle = format!(" {field} ");
+        let mut values: Vec<String> = Vec::new();
+        for line in self.trace_headers("debug").lines() {
+            if line.contains(&needle) {
+                let value = line.rsplit(' ').next().unwrap_or_default().to_string();
+                if values.last() != Some(&value) {
+                    values.push(value);
+                }
+            }
+        }
+        values.join(" ")
+    }
+
     fn stream_end(&self, kind: &str) -> f64 {
         let selector = if kind == "video" { "v:0" } else { "a:0" };
         let csv = run(
@@ -670,18 +697,9 @@ impl Probe<'_> {
                     .collect::<Vec<_>>()
                     .join(", ")
             }
-            Levels => {
-                let mut levels: Vec<String> = Vec::new();
-                for line in self.trace_headers("debug").lines() {
-                    if line.contains(" level_idc ") {
-                        let level = line.rsplit(' ').next().unwrap_or_default().to_string();
-                        if levels.last() != Some(&level) {
-                            levels.push(level);
-                        }
-                    }
-                }
-                levels.join(" ")
-            }
+            Levels => self.sps_values("level_idc"),
+            Profiles => self.sps_values("profile_idc"),
+            Matrices => self.sps_values("matrix_coefficients"),
             AudioOutlastsVideo => {
                 if self.stream_end("audio") > self.stream_end("video") {
                     "yes".into()
@@ -811,6 +829,8 @@ pub fn parse_fact(name: &str) -> Option<Fact> {
         Keyframes,
         RandomAccess,
         Levels,
+        Profiles,
+        Matrices,
         AudioOutlastsVideo,
         AudioStoredLate,
     ]

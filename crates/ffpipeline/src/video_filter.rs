@@ -308,17 +308,6 @@ pub struct LoopFilter {
     pub loops: Option<u32>,
 }
 
-impl LoopFilter {
-    /// Enough frames to cover `duration` at `frame_rate`.
-    pub fn bounded(is_still_image: bool, duration: Duration, frame_rate: &FrameRate) -> Self {
-        let frames = (duration.as_secs_f64() * frame_rate.parsed_frame_rate).ceil();
-        LoopFilter {
-            is_still_image,
-            loops: Some(frames.min(i32::MAX as f64) as u32),
-        }
-    }
-}
-
 impl VideoFilterOp for LoopFilter {
     fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         if self.is_still_image {
