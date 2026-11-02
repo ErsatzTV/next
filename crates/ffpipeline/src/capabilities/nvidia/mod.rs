@@ -20,6 +20,7 @@ pub(crate) mod stub;
 pub struct EncoderCapability {
     pub bit_depths: Vec<u8>,
     pub b_frame_ref_mode: bool,
+    pub max_b_frames: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +51,12 @@ impl NvidiaCapabilities {
         self.supported_encoders
             .get(format)
             .is_some_and(|cap| cap.b_frame_ref_mode)
+    }
+
+    pub fn max_b_frames(&self, format: &VideoFormat) -> u32 {
+        self.supported_encoders
+            .get(format)
+            .map_or(0, |cap| cap.max_b_frames)
     }
 
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {

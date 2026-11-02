@@ -219,6 +219,11 @@ gen_720p_h264_50.ts() {
     ff -f lavfi -i "testsrc2=s=1280x720:r=50:d=2" $(tone 2) \
         -c:v libx264 -crf 35 -c:a aac -ac 1 "$out/720p_h264_50.ts"
 }
+# 1 fps: 2-frame GOP
+gen_1080p_h264_1fps.mp4() {
+    ff -f lavfi -i "testsrc2=s=1920x1080:r=1:d=4" $(tone 4) \
+        -c:v libx264 -crf 35 -c:a aac -ac 1 -fflags +bitexact "$out/1080p_h264_1fps.mp4"
+}
 # testsrc: MPEG-2 can't make testsrc2 small
 gen_576i_mpeg2.ts() {
     ff -f lavfi -i "testsrc=s=720x576:r=25:d=2" $(tone 2) -vf setsar=64/45 \

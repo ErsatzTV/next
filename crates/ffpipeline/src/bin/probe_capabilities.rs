@@ -197,23 +197,24 @@ fn print_cuda() -> Result<(), String> {
     println!();
     println!("Encoders:");
     println!(
-        "  {:<12} {:<8} {:<8} {:<8}",
-        "Codec", "8-bit", "10-bit", "B-Ref"
+        "  {:<12} {:<8} {:<8} {:<8} {:<8}",
+        "Codec", "8-bit", "10-bit", "B-Ref", "Max-B"
     );
     println!(
-        "  {:<12} {:<8} {:<8} {:<8}",
-        "-----", "-----", "------", "-----"
+        "  {:<12} {:<8} {:<8} {:<8} {:<8}",
+        "-----", "-----", "------", "-----", "-----"
     );
     for f in ALL_FORMATS {
         let enc8 = caps.can_encode(f, 8);
         let enc10 = caps.can_encode(f, 10);
         if enc8 || enc10 {
             println!(
-                "  {:<12} {:<8} {:<8} {:<8}",
+                "  {:<12} {:<8} {:<8} {:<8} {:<8}",
                 format_name(f),
                 yn(enc8),
                 yn(enc10),
                 yn(caps.b_frame_ref_mode(f)),
+                caps.max_b_frames(f),
             );
         }
     }

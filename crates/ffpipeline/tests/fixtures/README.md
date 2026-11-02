@@ -96,6 +96,7 @@ a mono 440 Hz tone. 10-bit sources are `testsrc` at 24 fps with silent stereo.
 | `1080p_vp9.webm`, `1080p_vp9_10.webm` | VP9 profile 0 (`testsrc2`, 30 fps) and profile 2 (10-bit `testsrc`, 24 fps, no colour tags), Opus mono | `source_video_codec` |
 | `1080p_av1.mkv` | 8-bit AV1 SDR (SVT-AV1) | `source_video_codec` |
 | `1080p_h264_23976.mkv`, `720p_h264_50.ts` | Film (23.976) and 50p broadcast rates | `source_format`, `custom_frame_rate` |
+| `1080p_h264_1fps.mp4` | 1 fps slideshow-style source, 4 s. The 2 s keyframe interval becomes a 2-frame GOP, which encoders whose presets default to B-frames (nvenc) reject | `source_format_1fps` |
 | `576i_mpeg2.ts` | PAL DVD: 720x576 SAR 64:45 (16:9), interlaced (TFF) 25 fps MPEG-2 with B-frames, MP2 stereo. `testsrc` | `source_format`, `custom_frame_rate` |
 | `1080p_h264_1916x796.mkv` | A cropped scope encode: neither dimension is a multiple of 8 | `source_format` |
 | `480p_h264_sar_10x11.ts` | 4:3 NTSC with the ITU SAR 10:11, so the display width (654.5) isn't a whole number | `source_format` |

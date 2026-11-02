@@ -8,11 +8,11 @@ use libnvidia_sys::cuvid::{
     CUDA_VIDEO_CODEC_VP9, CuvidDecodeCaps, CuvidLib,
 };
 use libnvidia_sys::nvenc::{
-    NV_ENC_CAPS_PARAM_VER, NV_ENC_CAPS_SUPPORT_10_BIT_ENCODE, NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE,
-    NV_ENC_CODEC_AV1_GUID, NV_ENC_CODEC_H264_GUID, NV_ENC_CODEC_HEVC_GUID, NV_ENC_DEVICE_TYPE_CUDA,
-    NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER, NV_ENC_SUCCESS, NV_ENCODE_API_FUNCTION_LIST_VER,
-    NVENCAPI_VERSION, NvEncApiFunctionList, NvEncCapsParam, NvEncGuid,
-    NvEncOpenEncodeSessionExParams, NvencLib,
+    NV_ENC_CAPS_NUM_MAX_BFRAMES, NV_ENC_CAPS_PARAM_VER, NV_ENC_CAPS_SUPPORT_10_BIT_ENCODE,
+    NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE, NV_ENC_CODEC_AV1_GUID, NV_ENC_CODEC_H264_GUID,
+    NV_ENC_CODEC_HEVC_GUID, NV_ENC_DEVICE_TYPE_CUDA, NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER,
+    NV_ENC_SUCCESS, NV_ENCODE_API_FUNCTION_LIST_VER, NVENCAPI_VERSION, NvEncApiFunctionList,
+    NvEncCapsParam, NvEncGuid, NvEncOpenEncodeSessionExParams, NvencLib,
 };
 
 use crate::capabilities::nvidia::{EncoderCapability, NvidiaCapabilities};
@@ -207,11 +207,20 @@ unsafe fn probe_encode(
                             get_encode_caps,
                         );
 
+                        let max_b_frames = query_cap_value(
+                            encoder,
+                            guid,
+                            NV_ENC_CAPS_NUM_MAX_BFRAMES,
+                            get_encode_caps,
+                        )
+                        .max(0) as u32;
+
                         supported.insert(
                             format,
                             EncoderCapability {
                                 bit_depths,
                                 b_frame_ref_mode,
+                                max_b_frames,
                             },
                         );
                     };
@@ -234,6 +243,20 @@ unsafe fn query_cap(
         *mut i32,
     ) -> i32,
 ) -> bool {
+    unsafe { query_cap_value(encoder, guid, caps_to_query, get_encode_caps) > 0 }
+}
+
+unsafe fn query_cap_value(
+    encoder: *mut c_void,
+    guid: NvEncGuid,
+    caps_to_query: u32,
+    get_encode_caps: unsafe extern "C" fn(
+        *mut c_void,
+        NvEncGuid,
+        *mut NvEncCapsParam,
+        *mut i32,
+    ) -> i32,
+) -> i32 {
     unsafe {
         let mut param = NvEncCapsParam {
             version: NV_ENC_CAPS_PARAM_VER,
@@ -242,6 +265,10 @@ unsafe fn query_cap(
         };
 
         let mut caps_val: i32 = 0;
-        get_encode_caps(encoder, guid, &mut param, &mut caps_val) == NV_ENC_SUCCESS && caps_val > 0
+        if get_encode_caps(encoder, guid, &mut param, &mut caps_val) == NV_ENC_SUCCESS {
+            caps_val
+        } else {
+            0
+        }
     }
 }

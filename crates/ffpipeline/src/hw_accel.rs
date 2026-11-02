@@ -69,6 +69,9 @@ pub trait HwAccel {
     fn encoder_filters(&self, _codec: &VideoCodec) -> Vec<VideoFilter> {
         Vec::new()
     }
+    fn encoder_gop_options(&self, _codec: &VideoCodec, _gop_frames: u32) -> ArgVec {
+        Vec::new()
+    }
     fn envs(&self) -> Vec<EnvironmentVariable> {
         Vec::new()
     }
