@@ -46,7 +46,7 @@ pub struct ClLib {
 impl ClLib {
     pub fn load() -> Result<Self, libloading::Error> {
         #[cfg(target_os = "linux")]
-        let name = "libOpenCL.so";
+        let name = "libOpenCL.so.1";
         #[cfg(target_os = "windows")]
         let name = "OpenCL.dll";
         unsafe {
