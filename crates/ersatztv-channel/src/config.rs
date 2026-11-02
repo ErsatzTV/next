@@ -689,6 +689,9 @@ impl HardwareAccel {
 
                             let opencl_capabilities =
                                 ffpipeline::capabilities::opencl::OpenCLCapabilities::probe()
+                                    .inspect_err(|e| {
+                                        log::debug!("OpenCL unavailable for VAAPI: {e}")
+                                    })
                                     .unwrap_or_default();
 
                             let vulkan_capabilities =

@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix QSV streams failing about 10 s in with `Can't allocate a surface` or `Failed to query an output frame` on pre-Tiger Lake Intel GPUs (regression in 0.2.4)
   - Requires ErsatzTV-ffmpeg `8.1.2-8115e89c-develop` or later
 - Fix NVENC failing to start (`Gop Length should be greater than number of B frames + 1`) on very low frame rate sources, such as 1 fps slideshows
+- VAAPI: fix `tonemap_opencl` and `pad_opencl` never being used on Intel GPUs when only the OpenCL runtime (`libOpenCL.so.1`) is installed, such as in the ErsatzTV-ffmpeg base docker image
 
 ## [0.2.4] - 2026-10-31
 ### Added
