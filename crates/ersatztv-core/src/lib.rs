@@ -17,9 +17,15 @@ pub const READY_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HEARTBEAT_FILE_NAME: &str = ".heartbeat";
 pub const HEARTBEAT_FILE_TIMEOUT: Duration = Duration::from_secs(90);
 
+pub const PLAYLIST_FILE_NAME: &str = "live.m3u8";
+pub const SUBTITLE_PLAYLIST_FILE_NAME: &str = "live_sub.m3u8";
+pub const FFMPEG_PLAYLIST_FILE_NAME: &str = "ffmpeg.m3u8";
+pub const SEGMENT_FILE_TEMPLATE: &str = "live%06d.ts";
+
 pub const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
 
 pub const VERSION: &str = env!("ETV_VERSION_STRING");
+pub const COMMIT: Option<&str> = option_env!("ETV_COMMIT_STRING");
 
 pub async fn empty_folder(output_folder: &std::path::Path) -> Result<(), std::io::Error> {
     if !output_folder.exists() {

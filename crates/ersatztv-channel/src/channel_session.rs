@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use ersatztv_channel::config::{ChannelConfig, NormalizationConfig, StreamMode};
 use ersatztv_channel::error::{ChannelError, IoContext};
-use ersatztv_core::{READY_FILE_NAME, empty_folder};
+use ersatztv_core::{
+    FFMPEG_PLAYLIST_FILE_NAME, PLAYLIST_FILE_NAME, READY_FILE_NAME, SEGMENT_FILE_TEMPLATE,
+    SUBTITLE_PLAYLIST_FILE_NAME, empty_folder,
+};
 use ersatztv_playout::playout::{
     AudioHint, GraphicsLayer, GraphicsLayerKind, PeriodicClock, PlayoutItem, PlayoutItemSource,
     PlayoutItemTracks, ProbeHint, SubtitleHint, TrackSelection, VideoHint, WatermarkLocation,
@@ -147,38 +150,38 @@ impl ChannelSession {
 
         let output_folder = channel_config.expanded_output_folder().to_owned();
         let generated_output_file = output_folder
-            .join("live.m3u8")
+            .join(PLAYLIST_FILE_NAME)
             .into_os_string()
             .into_string()
             .map_err(|p| ChannelError::OutputPathNotUtf8 {
-                file: "live.m3u8",
+                file: PLAYLIST_FILE_NAME,
                 path: p.to_string_lossy().into_owned(),
             })?;
 
         let generated_subtitle_output_file = output_folder
-            .join("live_sub.m3u8")
+            .join(SUBTITLE_PLAYLIST_FILE_NAME)
             .into_os_string()
             .into_string()
             .map_err(|p| ChannelError::OutputPathNotUtf8 {
-                file: "live_sub.m3u8",
+                file: SUBTITLE_PLAYLIST_FILE_NAME,
                 path: p.to_string_lossy().into_owned(),
             })?;
 
         let ffmpeg_output_file = output_folder
-            .join("ffmpeg.m3u8")
+            .join(FFMPEG_PLAYLIST_FILE_NAME)
             .into_os_string()
             .into_string()
             .map_err(|p| ChannelError::OutputPathNotUtf8 {
-                file: "ffmpeg.m3u8",
+                file: FFMPEG_PLAYLIST_FILE_NAME,
                 path: p.to_string_lossy().into_owned(),
             })?;
 
         let output_segment_template = output_folder
-            .join("live%06d.ts")
+            .join(SEGMENT_FILE_TEMPLATE)
             .into_os_string()
             .into_string()
             .map_err(|p| ChannelError::OutputPathNotUtf8 {
-                file: "live%06d.ts",
+                file: SEGMENT_FILE_TEMPLATE,
                 path: p.to_string_lossy().into_owned(),
             })?;
 

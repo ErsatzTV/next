@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Describe",
+  "description": "What this `ersatztv-channel` binary supports, printed by `ersatztv-channel describe`.",
+  "type": "object",
+  "properties": {
+    "binary": {
+      "description": "The binary that produced this document.",
+      "$ref": "#/$defs/BinaryInfo"
+    },
+    "contract": {
+      "description": "Schema versions, output files and timing that integrators depend on.",
+      "$ref": "#/$defs/Contract"
+    },
+    "describe_version": {
+      "description": "Version of this document. Fields may be added without a bump; removing, renaming or\nchanging the meaning of a field bumps it.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "runtime_capability": {
+      "description": "Probed capabilities of this machine and ffmpeg build. Always `null` for now."
+    },
+    "schema_capability": {
+      "description": "Values the channel config accepts. A value listed here may still be unavailable on this\nmachine or ffmpeg build.",
+      "$ref": "#/$defs/SchemaCapability"
+    }
+  },
+  "required": [
+    "describe_version",
+    "binary",
+    "contract",
+    "schema_capability"
+  ],
+  "$defs": {
+    "BinaryInfo": {
+      "title": "BinaryInfo",
+      "type": "object",
+      "properties": {
+        "commit": {
+          "description": "Full git commit hash, or `null` when the build didn't record one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Release version, e.g. `0.2.4+x86_64-unknown-linux-gnu`, or `<version>+local` for local builds.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ]
+    },
+    "Contract": {
+      "title": "Contract",
+      "type": "object",
+      "properties": {
+        "channel_config_schema": {
+          "description": "Channel config schema version. Configs and overlays load when their `breaking` matches and\ntheir `compatible` is not newer.",
+          "$ref": "#/$defs/SchemaInfo"
+        },
+        "keyframe_seconds": {
+          "description": "Keyframe interval in seconds.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "output_files": {
+          "description": "Files written to the channel's output folder.",
+          "$ref": "#/$defs/OutputFiles"
+        },
+        "playout_schema": {
+          "description": "Playout schema version. Playout files load when their `breaking` matches and their\n`compatible` is not newer.",
+          "$ref": "#/$defs/SchemaInfo"
+        },
+        "segment_seconds": {
+          "description": "Target HLS segment length in seconds.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "playout_schema",
+        "channel_config_schema",
+        "output_files",
+        "segment_seconds",
+        "keyframe_seconds"
+      ]
+    },
+    "OutputFiles": {
+      "title": "OutputFiles",
+      "type": "object",
+      "properties": {
+        "heartbeat": {
+          "description": "Touched by the integrator while it still wants the channel; the channel stops when it goes\nstale.",
+          "type": "string"
+        },
+        "playlist": {
+          "description": "HLS media playlist for the channel.",
+          "type": "string"
+        },
+        "ready": {
+          "description": "Created once the playlist is ready to serve.",
+          "type": "string"
+        },
+        "segment_template": {
+          "description": "printf-style segment file name, e.g. `live%06d.ts`.",
+          "type": "string"
+        },
+        "subtitle_playlist": {
+          "description": "WebVTT subtitle playlist, written when subtitles are converted.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "playlist",
+        "subtitle_playlist",
+        "segment_template",
+        "ready",
+        "heartbeat"
+      ]
+    },
+    "SchemaCapability": {
+      "title": "SchemaCapability",
+      "type": "object",
+      "properties": {
+        "accels": {
+          "description": "Accepted `normalization.video.accel` values, on every platform.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "audio_copy_formats": {
+          "description": "Accepted `normalization.audio.copy_formats` values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "audio_formats": {
+          "description": "Accepted `normalization.audio.format` values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subtitle_modes": {
+          "description": "Accepted `normalization.subtitle.mode` values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "video_formats": {
+          "description": "Accepted `normalization.video.format` and `normalization.video.copy_formats` values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "video_formats",
+        "audio_formats",
+        "audio_copy_formats",
+        "accels",
+        "subtitle_modes"
+      ]
+    },
+    "SchemaInfo": {
+      "title": "SchemaInfo",
+      "type": "object",
+      "properties": {
+        "breaking": {
+          "description": "Breaking digit; must match exactly.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "compatible": {
+          "description": "Compatible digit; documents with this value or lower load.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "uri": {
+          "description": "Newest version URI this binary accepts, as written in a document's `version`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "breaking",
+        "compatible"
+      ]
+    }
+  }
+}

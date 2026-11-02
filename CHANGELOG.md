@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Added
+- `ersatztv-channel describe` prints a JSON document describing the binary; its schema is `schema/describe.json` and it includes:
+  - Version and commit
+  - Playout and channel config schema versions it accepts
+  - Output file names, segment and keyframe lengths
+  - Video/audio formats, accels and subtitle modes the channel config accepts
+
 ### Fixed
 - Fix QSV streams failing about 10 s in with `Can't allocate a surface` or `Failed to query an output frame` on pre-Tiger Lake Intel GPUs (regression in 0.2.4)
   - Requires ErsatzTV-ffmpeg `8.1.2-8115e89c-develop` or later
