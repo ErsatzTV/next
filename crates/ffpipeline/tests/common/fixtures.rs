@@ -233,6 +233,10 @@ const FIXTURES: &[Expectation] = &[
         &[(Video, "h264 High 1280x720 1:1 yuv420p 50/1")],
     ),
     (
+        "1080p_h264_1fps.mp4",
+        &[(Video, "h264 High 1920x1080 1:1 yuv420p 1/1")],
+    ),
+    (
         "576i_mpeg2.ts",
         &[
             (Video, "mpeg2video Main 720x576 64:45 yuv420p 25/1"),

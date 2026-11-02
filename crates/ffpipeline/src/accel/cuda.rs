@@ -180,6 +180,21 @@ impl HwAccel for Cuda {
         }
     }
 
+    fn encoder_gop_options(&self, codec: &VideoCodec, gop_frames: u32) -> ArgVec {
+        let format = match codec.codec_name {
+            "h264_nvenc" => VideoFormat::H264,
+            "hevc_nvenc" => VideoFormat::Hevc,
+            _ => return Vec::new(),
+        };
+
+        // nvenc needs gop > bf + 1; the preset's bf is unknown but <= the device max
+        if gop_frames <= self.capabilities.max_b_frames(&format) + 1 {
+            args!["-bf", format!("{}", gop_frames.saturating_sub(2))]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn format_filter(
         &self,
         pixel_format: &PixelFormat,
@@ -561,5 +576,55 @@ impl VideoFilterOp for TransposeCuda {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!("transpose_cuda={}", self.dir as u32))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::capabilities::nvidia::EncoderCapability;
+
+    fn cuda(max_b_frames: u32) -> Cuda {
+        let encoder = EncoderCapability {
+            bit_depths: vec![8],
+            b_frame_ref_mode: true,
+            max_b_frames,
+        };
+        Cuda::new(
+            NvidiaCapabilities {
+                supported_decoders: HashMap::new(),
+                supported_encoders: HashMap::from([
+                    (VideoFormat::H264, encoder.clone()),
+                    (VideoFormat::Hevc, encoder),
+                ]),
+                device_uuid: None,
+            },
+            None,
+        )
+    }
+
+    fn gop_options(cuda: &Cuda, format: EncodeFormat, gop: u32) -> Vec<String> {
+        let codec = cuda.codec_for_format(&format, 8, None).unwrap();
+        cuda.encoder_gop_options(&codec, gop)
+            .iter()
+            .map(|a| a.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn gop_too_short_for_max_b_frames_limits_b_frames() {
+        let cuda = cuda(4);
+        assert_eq!(gop_options(&cuda, EncodeFormat::H264, 2), ["-bf", "0"]);
+        assert_eq!(gop_options(&cuda, EncodeFormat::Hevc, 4), ["-bf", "2"]);
+        assert_eq!(gop_options(&cuda, EncodeFormat::H264, 5), ["-bf", "3"]);
+    }
+
+    #[test]
+    fn gop_with_room_for_max_b_frames_keeps_preset() {
+        let cuda = cuda(4);
+        assert!(gop_options(&cuda, EncodeFormat::H264, 6).is_empty());
+        assert!(gop_options(&cuda, EncodeFormat::H264, 48).is_empty());
     }
 }

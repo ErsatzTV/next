@@ -160,6 +160,18 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// 1 fps gives a 2-frame GOP, too short for preset B-frames (nvenc)
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn source_format_1fps(#[values(("h264", 8), ("hevc", 8))] vf: (&'static str, u8)) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::source_format_1fps(vf),
+            )
+            .await;
+        }
+
         /// Private media from `$ETV_TEST_MEDIA/manifest.json` (`common/media.rs`).
         #[::tokio::test]
         #[ignore]
@@ -1069,6 +1081,13 @@ pub fn segment_keyframes(vf: (&str, u8)) -> TestCase {
     let mut test_case = transcode("long_gop_h264.ts", SIZE_720P, vf, AudioFormat::Aac);
     test_case.params.duration = Duration::from_secs(10);
     test_case.check_segments = true;
+    test_case
+}
+
+/// a 1-frame segment probes as 2 fps
+pub fn source_format_1fps(vf: (&str, u8)) -> TestCase {
+    let mut test_case = transcode("1080p_h264_1fps.mp4", SIZE_1080P, vf, AudioFormat::Aac);
+    test_case.params.duration = Duration::from_secs(4);
     test_case
 }
 

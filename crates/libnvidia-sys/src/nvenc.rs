@@ -14,6 +14,7 @@ pub const NV_ENCODE_API_FUNCTION_LIST_VER: u32 = nvencapi_struct_version(2);
 pub const NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER: u32 = nvencapi_struct_version(1);
 
 pub const NV_ENC_CAPS_PARAM_VER: u32 = nvencapi_struct_version(1);
+pub const NV_ENC_CAPS_NUM_MAX_BFRAMES: u32 = 0;
 pub const NV_ENC_CAPS_SUPPORT_10_BIT_ENCODE: u32 = 39;
 pub const NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE: u32 = 43;
 

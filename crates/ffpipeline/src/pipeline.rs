@@ -24,6 +24,7 @@ use crate::input::{
     CanvasLayout, FfmpegInputArgs, FfmpegInputRequestContext, GraphicsInput, GraphicsKind,
     InputSettings, InputSource, ProbedInput,
 };
+use crate::output_format::gop_frames;
 use crate::output_option::OutputOption;
 use crate::output_settings::{
     OutputSettings, ScalingMode, SubtitleMode, VideoFilterOptions, YadifOptions,
@@ -453,7 +454,7 @@ impl Pipeline {
         };
 
         // TODO: add target profile to config
-        let video_encoder = match &copy_decisions.video {
+        let mut video_encoder = match &copy_decisions.video {
             Some(CopyDecision::Copy) => VideoEncoder::Copy,
             _ => {
                 let format = video_transcode.format;
@@ -550,15 +551,23 @@ impl Pipeline {
             .frame_rate
             .clone()
             .filter(|_| video_encoder != VideoEncoder::Copy);
+        let frame_rate = output_frame_rate
+            .clone()
+            .unwrap_or_else(|| video_stream.frame_rate.to_owned());
+
+        if let VideoEncoder::Encode(codec) = &mut video_encoder
+            && let Some(accel) = &final_output_settings.accel
+        {
+            let gop_options = accel.encoder_gop_options(codec, gop_frames(&frame_rate));
+            codec.options.extend(gop_options);
+        }
 
         let output_context = OutputContext {
             audio_codec,
             audio_channels: final_output_settings.audio.transcode.channels,
             video_encoder: video_encoder.clone(),
             pts_offset,
-            frame_rate: output_frame_rate
-                .clone()
-                .unwrap_or_else(|| video_stream.frame_rate.to_owned()),
+            frame_rate,
             encoder_target: EncoderTarget {
                 surface: video_encoder.preferred_surface(),
                 pixel_format: video_encoder.preferred_pixel_format(video_transcode.bit_depth),
