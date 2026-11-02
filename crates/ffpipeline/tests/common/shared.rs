@@ -382,6 +382,27 @@ macro_rules! shared_tests {
             .await;
         }
 
+        /// loudnorm delays audio ~3 s, and -shortest holds that much video, enough to use up a
+        /// fixed hardware pool.
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn past_shortest_buffer_loudness(
+            #[values(
+                "long_gop_h264.mkv",
+                "long_gop_h264.mp4",
+                "long_gop_h264.ts",
+                "long_gop_h264_late_audio.mkv"
+            )]
+            src: &'static str,
+        ) {
+            $crate::common::shared::run(
+                $accel().await,
+                $crate::common::shared::past_shortest_buffer_loudness(src),
+            )
+            .await;
+        }
+
         #[::tokio::test]
         #[ignore]
         async fn loudness_normalization() {
@@ -1094,6 +1115,12 @@ pub fn source_format_1fps(vf: (&str, u8)) -> TestCase {
 pub fn past_shortest_buffer(src: &'static str) -> TestCase {
     let mut test_case = transcode(src, SIZE_720P, ("h264", 8), AudioFormat::Aac);
     test_case.params.duration = Duration::from_secs(12);
+    test_case
+}
+
+pub fn past_shortest_buffer_loudness(src: &'static str) -> TestCase {
+    let mut test_case = past_shortest_buffer(src);
+    test_case.params.loudness = Some(AudioLoudnessSettings::default());
     test_case
 }
 
