@@ -1304,13 +1304,24 @@ impl Pipeline {
     }
 
     /// loudnorm delays audio by ~3 s, so -shortest queues video until audio arrives.
-    /// The default 10 s queue uses all surfaces of a fixed qsv pool (64), with or without a canvas.
+    /// With a shared demuxer, that queue uses up a fixed qsv pool (64). With audio on its own
+    /// input, ffmpeg (ETV-ffmpeg 0031) pauses video's demuxer instead.
     fn shortest_needs_small_buffer(&self) -> bool {
         let Some(HardwareAccel::Qsv(qsv)) = &self.accel else {
             return false;
         };
 
-        qsv.capabilities.requires_fixed_pool() && self.has_loudnorm()
+        let audio_own_input = self.inputs.iter().any(|i| {
+            matches!(
+                i,
+                PipelineInput::Audio {
+                    own_input: true,
+                    ..
+                }
+            )
+        });
+
+        qsv.capabilities.requires_fixed_pool() && self.has_loudnorm() && !audio_own_input
     }
 
     fn has_loudnorm(&self) -> bool {
@@ -2571,7 +2582,7 @@ mod tests {
         let downmix = args.iter().position(|a| a == "-downmix").expect("-downmix");
         assert!(inputs[0] < downmix && downmix < inputs[1], "{args:?}");
 
-        assert_eq!(shortest_buf_duration(&args), Some("0.500"), "{args:?}");
+        assert_eq!(shortest_buf_duration(&args), None, "{args:?}");
     }
 
     fn shortest_buf_duration(args: &ArgVec) -> Option<&str> {
@@ -2651,6 +2662,23 @@ mod tests {
             1,
             "{args:?}"
         );
+    }
+
+    #[test]
+    fn loudnorm_caps_shortest_buffer_only_when_audio_shares_the_demuxer() {
+        for (format_name, buffer) in [
+            (Some("matroska,webm"), None),
+            (Some("mov,mp4,m4a,3gp,3g2,mj2"), None),
+            (Some("mpegts"), Some("0.500")),
+            (None, Some("0.500")),
+        ] {
+            let args = loudnorm_args_in(format_name, Duration::ZERO, false, true, (1, 35), true);
+            assert_eq!(
+                shortest_buf_duration(&args),
+                buffer,
+                "{format_name:?}: {args:?}"
+            );
+        }
     }
 
     #[test]
