@@ -192,7 +192,6 @@ pub enum PixelFormat {
     Yuv444p16le,
     Yuva420p,
     Yuva420p10le,
-    Yuva420p12le,
     Yuva420p16le,
     Yuva422p,
     Yuva422p10le,
@@ -243,7 +242,6 @@ impl PixelFormat {
             "yuv444p16le" => PixelFormat::Yuv444p16le,
             "yuva420p" => PixelFormat::Yuva420p,
             "yuva420p10le" => PixelFormat::Yuva420p10le,
-            "yuva420p12le" => PixelFormat::Yuva420p12le,
             "yuva420p16le" => PixelFormat::Yuva420p16le,
             "yuva422p" => PixelFormat::Yuva422p,
             "yuva422p10le" => PixelFormat::Yuva422p10le,
@@ -306,7 +304,6 @@ impl PixelFormat {
             PixelFormat::Yuv420p12le
             | PixelFormat::Yuv422p12le
             | PixelFormat::Yuv444p12le
-            | PixelFormat::Yuva420p12le
             | PixelFormat::Yuva422p12le
             | PixelFormat::Yuva444p12le
             | PixelFormat::P012
@@ -333,7 +330,6 @@ impl PixelFormat {
             | PixelFormat::Yuv420p16le
             | PixelFormat::Yuva420p
             | PixelFormat::Yuva420p10le
-            | PixelFormat::Yuva420p12le
             | PixelFormat::Yuva420p16le
             | PixelFormat::Yuvj420p
             | PixelFormat::Nv12
@@ -391,7 +387,34 @@ impl PixelFormat {
 
             PixelFormat::Bgra | PixelFormat::Rgba => PixelFormat::Unknown,
 
-            _ => *self,
+            PixelFormat::Yuv420p => PixelFormat::Yuv420p,
+            PixelFormat::Yuv420p10le => PixelFormat::Yuv420p10le,
+            PixelFormat::Yuv420p12le => PixelFormat::Yuv420p12le,
+            PixelFormat::Yuv420p16le => PixelFormat::Yuv420p16le,
+            PixelFormat::Yuv422p => PixelFormat::Yuv422p,
+            PixelFormat::Yuv422p10le => PixelFormat::Yuv422p10le,
+            PixelFormat::Yuv422p12le => PixelFormat::Yuv422p12le,
+            PixelFormat::Yuv422p16le => PixelFormat::Yuv422p16le,
+            PixelFormat::Yuv444p => PixelFormat::Yuv444p,
+            PixelFormat::Yuv444p10le => PixelFormat::Yuv444p10le,
+            PixelFormat::Yuv444p12le => PixelFormat::Yuv444p12le,
+            PixelFormat::Yuv444p16le => PixelFormat::Yuv444p16le,
+            PixelFormat::Yuva420p => PixelFormat::Yuva420p,
+            PixelFormat::Yuva420p10le => PixelFormat::Yuva420p10le,
+            PixelFormat::Yuva420p16le => PixelFormat::Yuva420p16le,
+            PixelFormat::Yuva422p => PixelFormat::Yuva422p,
+            PixelFormat::Yuva422p10le => PixelFormat::Yuva422p10le,
+            PixelFormat::Yuva422p12le => PixelFormat::Yuva422p12le,
+            PixelFormat::Yuva422p16le => PixelFormat::Yuva422p16le,
+            PixelFormat::Yuva444p => PixelFormat::Yuva444p,
+            PixelFormat::Yuva444p10le => PixelFormat::Yuva444p10le,
+            PixelFormat::Yuva444p12le => PixelFormat::Yuva444p12le,
+            PixelFormat::Yuva444p16le => PixelFormat::Yuva444p16le,
+            PixelFormat::Yuvj420p => PixelFormat::Yuvj420p,
+            PixelFormat::Yuvj422p => PixelFormat::Yuvj422p,
+            PixelFormat::Yuvj444p => PixelFormat::Yuvj444p,
+
+            PixelFormat::Unknown => PixelFormat::Unknown,
         }
     }
 
@@ -402,10 +425,15 @@ impl PixelFormat {
                 | PixelFormat::Rgba
                 | PixelFormat::Yuva420p
                 | PixelFormat::Yuva420p10le
+                | PixelFormat::Yuva420p16le
                 | PixelFormat::Yuva422p
                 | PixelFormat::Yuva422p10le
+                | PixelFormat::Yuva422p12le
+                | PixelFormat::Yuva422p16le
                 | PixelFormat::Yuva444p
                 | PixelFormat::Yuva444p10le
+                | PixelFormat::Yuva444p12le
+                | PixelFormat::Yuva444p16le
         )
     }
 
@@ -427,7 +455,6 @@ impl PixelFormat {
             PixelFormat::Yuv444p16le => "yuv444p16le",
             PixelFormat::Yuva420p => "yuva420p",
             PixelFormat::Yuva420p10le => "yuva420p10le",
-            PixelFormat::Yuva420p12le => "yuva420p12le",
             PixelFormat::Yuva420p16le => "yuva420p16le",
             PixelFormat::Yuva422p => "yuva422p",
             PixelFormat::Yuva422p10le => "yuva422p10le",
@@ -1177,7 +1204,7 @@ impl Pipeline {
 
             let ensure_alpha_filter: VideoFilter = EnsureAlphaFilter {
                 format: match secondary_initial_state.pixel_format.bit_depth() {
-                    10 => PixelFormat::Yuva420p10le,
+                    10.. => PixelFormat::Yuva420p10le,
                     _ => PixelFormat::Bgra,
                 },
             }

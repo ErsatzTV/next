@@ -112,7 +112,7 @@ pub struct HwUploadFilter {
 impl HwUploadFilter {
     fn target_pixel_format(surface: &FrameSurface, pixel_format: &PixelFormat) -> PixelFormat {
         match (&surface, pixel_format.bit_depth(), pixel_format.has_alpha()) {
-            (_, 10, _) => PixelFormat::P010,
+            (_, 10.., _) => PixelFormat::P010,
             (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
             (FrameSurface::Vaapi, 8, true) => PixelFormat::Bgra,
             (FrameSurface::Qsv, 8, true) => PixelFormat::Bgra,
@@ -391,6 +391,12 @@ impl VideoFilterOp for NormalizeChromaFilter {
             state.pixel_format.sampling(),
             state.pixel_format.bit_depth(),
         ) {
+            (Sampling::Yuv420, 12 | 16) => Some(
+                FormatFilter {
+                    format: PixelFormat::Yuv420p10le,
+                }
+                .into(),
+            ),
             (Sampling::Yuv420 | Sampling::Rgb, _) => None,
             (Sampling::Yuv444 | Sampling::Yuv422, 8) => Some(
                 FormatFilter {
