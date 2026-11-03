@@ -38,9 +38,10 @@ impl Cuda {
 
     fn can_vulkan_decode(&self, video_stream: &ProbeResultVideoStream) -> bool {
         self.vulkan_capabilities.as_ref().is_some_and(|vk| {
-            video_stream.codec.parse::<VideoFormat>().is_ok_and(|f| {
-                vk.can_decode(&f, PixelFormat::parse(&video_stream.pix_fmt).bit_depth())
-            })
+            video_stream
+                .codec
+                .parse::<VideoFormat>()
+                .is_ok_and(|f| vk.can_decode(&f, &PixelFormat::parse(&video_stream.pix_fmt)))
         })
     }
 }
@@ -134,7 +135,7 @@ impl HwAccel for Cuda {
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec
             .parse::<VideoFormat>()
-            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 
     fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {

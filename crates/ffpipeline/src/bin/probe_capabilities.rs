@@ -258,8 +258,10 @@ fn print_cuda_vulkan_tonemap(caps: &NvidiaCapabilities) {
     let mut any = false;
     for f in ALL_FORMATS {
         // the pipeline only reaches the Vulkan branch for codecs NVDEC also handles
-        let hdr8 = caps.can_decode(f, 8) && vulkan.can_decode(f, 8);
-        let hdr10 = caps.can_decode(f, 10) && vulkan.can_decode(f, 10);
+        let hdr8 = caps.can_decode(f, &PixelFormat::Yuv420p)
+            && vulkan.can_decode(f, &PixelFormat::Yuv420p);
+        let hdr10 = caps.can_decode(f, &PixelFormat::Yuv420p10le)
+            && vulkan.can_decode(f, &PixelFormat::Yuv420p10le);
         if hdr8 || hdr10 {
             println!("  {:<12} {:<8} {:<8}", format_name(f), yn(hdr8), yn(hdr10));
             any = true;
@@ -373,9 +375,9 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
     }
     println!();
 
-    print_decode_table(ALL_FORMATS, |f, bd| {
-        let (codec, profile) = default_profile(f, bd);
-        caps.can_decode(codec, profile, bd)
+    print_decode_table(ALL_FORMATS, |f, pf| {
+        let (codec, profile) = default_profile(f, pf.bit_depth());
+        caps.can_decode(codec, profile, pf)
     });
 
     println!();
@@ -535,13 +537,16 @@ fn print_opencl() -> Result<(), String> {
     Ok(())
 }
 
-fn print_decode_table(formats: &[VideoFormat], can_decode: impl Fn(&VideoFormat, u8) -> bool) {
+fn print_decode_table(
+    formats: &[VideoFormat],
+    can_decode: impl Fn(&VideoFormat, &PixelFormat) -> bool,
+) {
     println!("Decoders:");
     println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
     println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
     for f in formats {
-        let dec8 = can_decode(f, 8);
-        let dec10 = can_decode(f, 10);
+        let dec8 = can_decode(f, &PixelFormat::Yuv420p);
+        let dec10 = can_decode(f, &PixelFormat::Yuv420p10le);
         if dec8 || dec10 {
             println!("  {:<12} {:<8} {:<8}", format_name(f), yn(dec8), yn(dec10),);
         }
@@ -551,19 +556,21 @@ fn print_decode_table(formats: &[VideoFormat], can_decode: impl Fn(&VideoFormat,
 /// keep unsupported rows, so missing interlaced decode shows as "-"
 fn print_interlaced_decode_table(
     formats: &[VideoFormat],
-    can_decode: impl Fn(&VideoFormat, u8) -> bool,
-    can_decode_interlaced: impl Fn(&VideoFormat, u8) -> bool,
+    can_decode: impl Fn(&VideoFormat, &PixelFormat) -> bool,
+    can_decode_interlaced: impl Fn(&VideoFormat, &PixelFormat) -> bool,
 ) {
     println!("Interlaced Decoders:");
     println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
     println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
     for f in formats {
-        if f.has_interlaced_coding() && (can_decode(f, 8) || can_decode(f, 10)) {
+        if f.has_interlaced_coding()
+            && (can_decode(f, &PixelFormat::Yuv420p) || can_decode(f, &PixelFormat::Yuv420p10le))
+        {
             println!(
                 "  {:<12} {:<8} {:<8}",
                 format_name(f),
-                yn(can_decode_interlaced(f, 8)),
-                yn(can_decode_interlaced(f, 10)),
+                yn(can_decode_interlaced(f, &PixelFormat::Yuv420p)),
+                yn(can_decode_interlaced(f, &PixelFormat::Yuv420p10le)),
             );
         }
     }

@@ -8,7 +8,7 @@ use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::OverlayFilter;
 use crate::pipeline::{
     EncodeFormat, EnvironmentVariable, FrameState, FrameSurface, HwPixelFormat, PixelFormat,
-    SurfaceSet,
+    Sampling, SurfaceSet,
 };
 use crate::probe::ProbeResultVideoStream;
 use crate::video_codec::{MetadataBsf, VideoCodec};
@@ -35,9 +35,9 @@ pub trait HwAccel {
         overlay_filter.clone()
     }
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
-        match pixel_format.bit_depth() {
-            10 => matches!(codec, "av1" | "hevc"),
-            8 => matches!(codec, "av1" | "h264" | "hevc" | "mpeg2video"),
+        match (pixel_format.bit_depth(), pixel_format.sampling()) {
+            (10, Sampling::Yuv420) => matches!(codec, "av1" | "hevc"),
+            (8, Sampling::Yuv420) => matches!(codec, "av1" | "h264" | "hevc" | "mpeg2video"),
             _ => false,
         }
     }

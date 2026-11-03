@@ -56,7 +56,7 @@ impl Amf {
             && video_stream
                 .codec
                 .parse::<VideoFormat>()
-                .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+                .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 }
 
@@ -97,7 +97,7 @@ impl HwAccel for Amf {
     /// decode on the device when the converter can consume the decoded surface format.
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec.parse::<VideoFormat>().is_ok_and(|f| {
-            self.capabilities.can_decode(&f, pixel_format.bit_depth())
+            self.capabilities.can_decode(&f, pixel_format)
                 && self.capabilities.vpp_accepts_input(pixel_format)
         })
     }

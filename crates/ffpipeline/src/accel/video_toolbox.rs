@@ -55,7 +55,7 @@ impl HwAccel for VideoToolbox {
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec
             .parse::<VideoFormat>()
-            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 
     // apple silicon has no hardware decode for interlaced h264
@@ -63,11 +63,12 @@ impl HwAccel for VideoToolbox {
         let Ok(format) = video_stream.codec.parse::<VideoFormat>() else {
             return false;
         };
-        let bit_depth = PixelFormat::parse(&video_stream.pix_fmt).bit_depth();
+        let pixel_format = PixelFormat::parse(&video_stream.pix_fmt);
         if video_stream.is_interlaced() && format.has_interlaced_coding() {
-            self.capabilities.can_decode_interlaced(&format, bit_depth)
+            self.capabilities
+                .can_decode_interlaced(&format, &pixel_format)
         } else {
-            self.capabilities.can_decode(&format, bit_depth)
+            self.capabilities.can_decode(&format, &pixel_format)
         }
     }
 

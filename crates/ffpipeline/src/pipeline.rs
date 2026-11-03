@@ -166,6 +166,14 @@ impl FrameSurface {
 pub type SurfaceSet = std::collections::HashSet<FrameSurface>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sampling {
+    Yuv420,
+    Yuv422,
+    Yuv444,
+    Rgb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
     Bgra,
     Rgba,
@@ -211,7 +219,7 @@ impl PixelFormat {
         }
     }
 
-    pub(crate) fn bit_depth(&self) -> u8 {
+    pub fn bit_depth(&self) -> u8 {
         match self {
             PixelFormat::Bgra
             | PixelFormat::Rgba
@@ -227,6 +235,24 @@ impl PixelFormat {
             | PixelFormat::Nv15
             | PixelFormat::Nv20 => 10,
             PixelFormat::P016 | PixelFormat::P216 => 16,
+        }
+    }
+
+    pub(crate) fn sampling(&self) -> Sampling {
+        match self {
+            PixelFormat::Bgra | PixelFormat::Rgba => Sampling::Rgb,
+            PixelFormat::Yuv420p
+            | PixelFormat::Yuva420p
+            | PixelFormat::Yuv420p10le
+            | PixelFormat::Yuva420p10le
+            | PixelFormat::Nv12
+            | PixelFormat::Nv15
+            | PixelFormat::P010
+            | PixelFormat::P016
+            | PixelFormat::Unknown => Sampling::Yuv420,
+            PixelFormat::Nv16 | PixelFormat::Nv20 | PixelFormat::P210 | PixelFormat::P216 => {
+                Sampling::Yuv422
+            }
         }
     }
 

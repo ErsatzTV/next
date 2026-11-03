@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use crate::pipeline::VideoFormat;
+use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
 #[cfg(target_os = "macos")]
 pub(crate) mod probe;
@@ -18,13 +18,22 @@ pub struct VideoToolboxCapabilities {
 }
 
 impl VideoToolboxCapabilities {
-    pub fn can_decode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
-        self.supported_decoders.contains(&(*format, bit_depth))
+    pub fn can_decode(&self, format: &VideoFormat, pixel_format: &PixelFormat) -> bool {
+        if pixel_format.sampling() != Sampling::Yuv420 {
+            return false;
+        }
+
+        self.supported_decoders
+            .contains(&(*format, pixel_format.bit_depth()))
     }
 
-    pub fn can_decode_interlaced(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+    pub fn can_decode_interlaced(&self, format: &VideoFormat, pixel_format: &PixelFormat) -> bool {
+        if pixel_format.sampling() != Sampling::Yuv420 {
+            return false;
+        }
+
         self.supported_interlaced_decoders
-            .contains(&(*format, bit_depth))
+            .contains(&(*format, pixel_format.bit_depth()))
     }
 
     pub fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
@@ -64,25 +73,25 @@ mod tests {
     #[test]
     fn can_decode_supported_codec() {
         let caps = sample_capabilities();
-        assert!(caps.can_decode(&VideoFormat::H264, 8));
-        assert!(caps.can_decode(&VideoFormat::Hevc, 8));
-        assert!(caps.can_decode(&VideoFormat::Hevc, 10));
+        assert!(caps.can_decode(&VideoFormat::H264, &PixelFormat::Yuv420p));
+        assert!(caps.can_decode(&VideoFormat::Hevc, &PixelFormat::Yuv420p));
+        assert!(caps.can_decode(&VideoFormat::Hevc, &PixelFormat::Yuv420p10le));
     }
 
     #[test]
     fn cannot_decode_unsupported_codec() {
         let caps = sample_capabilities();
-        assert!(!caps.can_decode(&VideoFormat::H264, 10));
-        assert!(!caps.can_decode(&VideoFormat::Av1, 8));
-        assert!(!caps.can_decode(&VideoFormat::Vp9, 8));
+        assert!(!caps.can_decode(&VideoFormat::H264, &PixelFormat::Yuv420p10le));
+        assert!(!caps.can_decode(&VideoFormat::Av1, &PixelFormat::Yuv420p));
+        assert!(!caps.can_decode(&VideoFormat::Vp9, &PixelFormat::Yuv420p));
     }
 
     #[test]
     fn interlaced_decode_tracked_separately() {
         let caps = sample_capabilities();
-        assert!(caps.can_decode(&VideoFormat::H264, 8));
-        assert!(!caps.can_decode_interlaced(&VideoFormat::H264, 8));
-        assert!(caps.can_decode_interlaced(&VideoFormat::Mpeg2Video, 8));
+        assert!(caps.can_decode(&VideoFormat::H264, &PixelFormat::Yuv420p));
+        assert!(!caps.can_decode_interlaced(&VideoFormat::H264, &PixelFormat::Yuv420p));
+        assert!(caps.can_decode_interlaced(&VideoFormat::Mpeg2Video, &PixelFormat::Yuv420p));
     }
 
     #[test]
@@ -106,7 +115,7 @@ mod tests {
             supported_interlaced_decoders: HashSet::new(),
             supported_encoders: HashSet::new(),
         };
-        assert!(!caps.can_decode(&VideoFormat::H264, 8));
+        assert!(!caps.can_decode(&VideoFormat::H264, &PixelFormat::Yuv420p));
         assert!(!caps.can_encode(&VideoFormat::Hevc, 8));
     }
 }

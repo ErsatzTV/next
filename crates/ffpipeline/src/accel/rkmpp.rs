@@ -40,7 +40,7 @@ impl HwAccel for Rkmpp {
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec
             .parse::<VideoFormat>()
-            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 
     fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {

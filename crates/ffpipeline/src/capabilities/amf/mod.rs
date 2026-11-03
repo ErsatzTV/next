@@ -5,7 +5,7 @@ use libamf_sys::{AMF_SURFACE_BGRA, AMF_SURFACE_NV12, AMF_SURFACE_P010, amf_surfa
 use serde::Serialize;
 
 use crate::error::FFPipelineError;
-use crate::pipeline::{PixelFormat, VideoFormat};
+use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
 #[cfg(all(
     any(target_os = "linux", target_os = "windows"),
@@ -99,10 +99,14 @@ impl AmfCapabilities {
         Self::probe_with(AmfDeviceTarget::Auto)
     }
 
-    pub fn can_decode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+    pub fn can_decode(&self, format: &VideoFormat, pixel_format: &PixelFormat) -> bool {
+        if pixel_format.sampling() != Sampling::Yuv420 {
+            return false;
+        }
+
         self.supported_decoders
             .get(format)
-            .is_some_and(|bit_depths| bit_depths.contains(&bit_depth))
+            .is_some_and(|bit_depths| bit_depths.contains(&pixel_format.bit_depth()))
     }
 
     /// ffmpeg's amf encoders refuse P010 on runtimes older than 1.4.32 (driver 23.30)
@@ -273,10 +277,10 @@ mod tests {
     #[test]
     fn decode_and_encode_follow_probed_bit_depths() {
         let caps = caps(&[], &[]);
-        assert!(caps.can_decode(&VideoFormat::H264, 8));
-        assert!(!caps.can_decode(&VideoFormat::H264, 10));
-        assert!(caps.can_decode(&VideoFormat::Hevc, 10));
-        assert!(!caps.can_decode(&VideoFormat::Av1, 8));
+        assert!(caps.can_decode(&VideoFormat::H264, &PixelFormat::Yuv420p));
+        assert!(!caps.can_decode(&VideoFormat::H264, &PixelFormat::Yuv420p10le));
+        assert!(caps.can_decode(&VideoFormat::Hevc, &PixelFormat::Yuv420p10le));
+        assert!(!caps.can_decode(&VideoFormat::Av1, &PixelFormat::Yuv420p));
 
         assert!(caps.can_encode(&VideoFormat::Hevc, 10));
         assert!(!caps.can_encode(&VideoFormat::H264, 10));

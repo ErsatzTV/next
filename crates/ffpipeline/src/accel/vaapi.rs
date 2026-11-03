@@ -214,9 +214,7 @@ impl HwAccel for Vaapi {
     }
 
     fn can_decode(&self, codec: &str, profile: &str, pixel_format: &PixelFormat) -> bool {
-        let result = self
-            .capabilities
-            .can_decode(codec, profile, pixel_format.bit_depth());
+        let result = self.capabilities.can_decode(codec, profile, pixel_format);
 
         if !result {
             log::debug!(
