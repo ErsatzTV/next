@@ -99,6 +99,14 @@ const FIXTURES: &[Expectation] = &[
         &[(Video, "hevc Main 10 640x480 1:1 yuv420p10le 24/1")],
     ),
     (
+        "1080p_hevc_12.ts",
+        &[(Video, "hevc Rext 1920x1080 1:1 yuv420p12le 24/1")],
+    ),
+    (
+        "1080p_hevc_10_422.ts",
+        &[(Video, "hevc Rext 1920x1080 1:1 yuv422p10le 24/1")],
+    ),
+    (
         "480p_h264_anamorphic.ts",
         &[
             (Video, "h264 High 720x480 32:27 yuv420p 30/1"),

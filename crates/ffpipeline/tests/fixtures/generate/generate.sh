@@ -31,9 +31,9 @@ progressive_h264() { # name size
         -c:v libx264 -c:a aac -ac 1 "$out/$1"
 }
 
-ten_bit() { # name size codec
+ten_bit() { # name size codec [pix_fmt]
     ff -f lavfi -i "testsrc=s=$2:r=24:d=2" $(silence 2) \
-        -c:v "$3" -pix_fmt yuv420p10le -c:a aac -shortest "$out/$1"
+        -c:v "$3" -pix_fmt "${4:-yuv420p10le}" -c:a aac -shortest "$out/$1"
 }
 
 bars_hevc() { # name size x265-params [preset [audio-bitrate [filters]]]
@@ -55,6 +55,8 @@ gen_480p_h264_10.ts() { ten_bit 480p_h264_10.ts 640x480 libx264; }
 gen_1080p_hevc_10.ts() { ten_bit 1080p_hevc_10.ts 1920x1080 libx265; }
 gen_720p_hevc_10.ts() { ten_bit 720p_hevc_10.ts 1280x720 libx265; }
 gen_480p_hevc_10.ts() { ten_bit 480p_hevc_10.ts 640x480 libx265; }
+gen_1080p_hevc_12.ts() { ten_bit 1080p_hevc_12.ts 1920x1080 libx265 yuv420p12le; }
+gen_1080p_hevc_10_422.ts() { ten_bit 1080p_hevc_10_422.ts 1920x1080 libx265 yuv422p10le; }
 
 gen_480p_h264_anamorphic.ts() {
     ff -f lavfi -i "testsrc=s=720x480:r=30:d=2" $(silence 2) -vf setsar=32/27 \
