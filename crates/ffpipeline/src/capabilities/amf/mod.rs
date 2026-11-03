@@ -187,7 +187,7 @@ impl AmfCapabilities {
 fn vpp_surface(pixel_format: &PixelFormat) -> Option<AmfSurfaceFormat> {
     let surface = match pixel_format {
         PixelFormat::Nv12 | PixelFormat::Yuv420p => AMF_SURFACE_NV12,
-        PixelFormat::P010le | PixelFormat::Yuv420p10le => AMF_SURFACE_P010,
+        PixelFormat::P010 | PixelFormat::Yuv420p10le => AMF_SURFACE_P010,
         PixelFormat::Bgra => AMF_SURFACE_BGRA,
         _ => return None,
     };
@@ -294,15 +294,15 @@ mod tests {
         );
         assert!(both.vpp_supports_format(&PixelFormat::Nv12));
         assert!(both.vpp_supports_format(&PixelFormat::Yuv420p));
-        assert!(both.vpp_supports_format(&PixelFormat::P010le));
+        assert!(both.vpp_supports_format(&PixelFormat::P010));
         assert!(both.vpp_supports_format(&PixelFormat::Yuv420p10le));
         assert!(both.vpp_supports_format(&PixelFormat::Bgra));
         assert!(!both.vpp_supports_format(&PixelFormat::Nv15));
 
         let input_only = caps(&[AMF_SURFACE_NV12, AMF_SURFACE_P010], &[AMF_SURFACE_NV12]);
         assert!(input_only.vpp_supports_format(&PixelFormat::Nv12));
-        assert!(!input_only.vpp_supports_format(&PixelFormat::P010le));
-        assert!(input_only.vpp_accepts_input(&PixelFormat::P010le));
+        assert!(!input_only.vpp_supports_format(&PixelFormat::P010));
+        assert!(input_only.vpp_accepts_input(&PixelFormat::P010));
         assert!(input_only.vpp_accepts_input(&PixelFormat::Yuv420p10le));
         assert!(!input_only.vpp_accepts_input(&PixelFormat::Bgra));
         assert!(!input_only.vpp_accepts_input(&PixelFormat::Nv15));

@@ -108,6 +108,18 @@ pub struct HwUploadFilter {
     pub source_format: PixelFormat,
 }
 
+impl HwUploadFilter {
+    fn target_pixel_format(surface: &FrameSurface, pixel_format: &PixelFormat) -> PixelFormat {
+        match (&surface, pixel_format.bit_depth(), pixel_format.has_alpha()) {
+            (_, 10, _) => PixelFormat::P010,
+            (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
+            (FrameSurface::Vaapi, 8, true) => PixelFormat::Bgra,
+            (FrameSurface::Qsv, 8, true) => PixelFormat::Bgra,
+            _ => PixelFormat::Nv12,
+        }
+    }
+}
+
 impl VideoFilterOp for HwUploadFilter {
     fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
         None
@@ -115,14 +127,7 @@ impl VideoFilterOp for HwUploadFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.surface = self.target_surface;
-        state.pixel_format = match &state.pixel_format {
-            PixelFormat::Yuv420p10le => PixelFormat::P010le,
-            PixelFormat::Yuv420p | PixelFormat::Unknown => PixelFormat::Nv12,
-            PixelFormat::Bgra | PixelFormat::Rgba if state.surface == FrameSurface::Cuda => {
-                PixelFormat::Yuva420p
-            }
-            other => *other,
-        }
+        state.pixel_format = Self::target_pixel_format(&state.surface, &state.pixel_format);
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
@@ -130,17 +135,7 @@ impl VideoFilterOp for HwUploadFilter {
     }
 
     fn as_arg(&self) -> Option<String> {
-        let target_format = match (
-            &self.target_surface,
-            self.source_format.bit_depth(),
-            self.source_format.has_alpha(),
-        ) {
-            (_, 10, _) => PixelFormat::P010le,
-            (FrameSurface::Cuda, 8, true) => PixelFormat::Yuva420p,
-            (FrameSurface::Vaapi, 8, true) => PixelFormat::Bgra,
-            (FrameSurface::Qsv, 8, true) => PixelFormat::Bgra,
-            _ => PixelFormat::Nv12,
-        };
+        let target_format = Self::target_pixel_format(&self.target_surface, &self.source_format);
 
         let format_filter = if self.source_format == target_format {
             String::new()
@@ -1318,7 +1313,7 @@ mod tests {
             sample_aspect_ratio: None,
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
-            pixel_format: PixelFormat::P010le,
+            pixel_format: PixelFormat::P010,
             color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
@@ -1335,7 +1330,7 @@ mod tests {
         filter.apply_to(&mut state);
 
         assert_eq!(state.surface, FrameSurface::OpenCL);
-        assert_eq!(state.pixel_format, PixelFormat::P010le);
+        assert_eq!(state.pixel_format, PixelFormat::P010);
         assert_eq!(state.hdr_format, HdrFormat::Pq);
     }
 

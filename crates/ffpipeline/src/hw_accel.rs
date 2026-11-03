@@ -97,7 +97,7 @@ pub trait HwAccel {
     ) -> Option<HwDecoder>;
     fn output_format(&self, source_pixel_format: &PixelFormat) -> HwPixelFormat {
         match source_pixel_format.bit_depth() {
-            10 => HwPixelFormat::P010le,
+            10 => HwPixelFormat::P010,
             _ => HwPixelFormat::Nv12,
         }
     }

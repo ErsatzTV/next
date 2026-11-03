@@ -175,13 +175,17 @@ pub enum PixelFormat {
     Yuva420p10le,
     Nv12,
     Nv15,
-    P010le,
+    Nv16,
+    Nv20,
+    P010,
     P016,
+    P210,
+    P216,
     /// never a conversion target
     Unknown,
 }
 
-gen_subset!(HwPixelFormat, PixelFormat, Nv12, Nv15, P010le);
+gen_subset!(HwPixelFormat, PixelFormat, Nv12, Nv15, P010);
 
 impl PixelFormat {
     pub fn parse(pix_fmt: &str) -> PixelFormat {
@@ -194,7 +198,12 @@ impl PixelFormat {
             "yuva420p10le" => PixelFormat::Yuva420p10le,
             "nv12" => PixelFormat::Nv12,
             "nv15" => PixelFormat::Nv15,
-            "p010le" => PixelFormat::P010le,
+            "nv16" => PixelFormat::Nv16,
+            "nv20" | "nv20le" => PixelFormat::Nv20,
+            "p010" | "p010le" => PixelFormat::P010,
+            "p016" | "p016le" => PixelFormat::P016,
+            "p210" | "p210le" => PixelFormat::P210,
+            "p216" | "p216le" => PixelFormat::P216,
             _ => {
                 log::debug!("unknown pixel format {}", pix_fmt);
                 PixelFormat::Unknown
@@ -209,12 +218,15 @@ impl PixelFormat {
             | PixelFormat::Yuv420p
             | PixelFormat::Yuva420p
             | PixelFormat::Nv12
+            | PixelFormat::Nv16
             | PixelFormat::Unknown => 8,
             PixelFormat::Yuv420p10le
             | PixelFormat::Yuva420p10le
-            | PixelFormat::P010le
-            | PixelFormat::Nv15 => 10,
-            PixelFormat::P016 => 16,
+            | PixelFormat::P010
+            | PixelFormat::P210
+            | PixelFormat::Nv15
+            | PixelFormat::Nv20 => 10,
+            PixelFormat::P016 | PixelFormat::P216 => 16,
         }
     }
 
@@ -238,8 +250,12 @@ impl PixelFormat {
             PixelFormat::Yuva420p10le => "yuva420p10le",
             PixelFormat::Nv12 => "nv12",
             PixelFormat::Nv15 => "nv15",
-            PixelFormat::P010le => "p010le",
+            PixelFormat::Nv16 => "nv16",
+            PixelFormat::Nv20 => "nv20",
+            PixelFormat::P010 => "p010",
             PixelFormat::P016 => "p016",
+            PixelFormat::P210 => "p210",
+            PixelFormat::P216 => "p216",
             PixelFormat::Unknown => "unknown",
         }
     }

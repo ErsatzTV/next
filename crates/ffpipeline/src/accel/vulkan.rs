@@ -39,7 +39,7 @@ impl HwAccel for Vulkan {
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) => LibplaceboVulkan {
                 algorithm: filter_options.libplacebo.tonemapping.clone(),
                 format: match format {
-                    PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                    PixelFormat::Yuv420p10le => PixelFormat::P010,
                     _ => PixelFormat::Nv12,
                 },
             }
@@ -70,7 +70,7 @@ impl HwAccel for Vulkan {
                 codec_name: "h264_vulkan",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Vulkan,
                 also_accepts: &[],
             }),
@@ -78,7 +78,7 @@ impl HwAccel for Vulkan {
                 codec_name: "hevc_vulkan",
                 options: args!["-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Vulkan,
                 also_accepts: &[],
             }),

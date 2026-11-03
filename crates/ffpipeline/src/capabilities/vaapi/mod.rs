@@ -156,7 +156,7 @@ impl VaapiCapabilities {
     fn as_fourcc(&self, pixel_format: &PixelFormat) -> Option<u32> {
         match pixel_format {
             PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(VA_FOURCC_NV12),
-            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
+            PixelFormat::P010 | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
             PixelFormat::Bgra => Some(VA_FOURCC_BGRA),
             _ => None,
         }

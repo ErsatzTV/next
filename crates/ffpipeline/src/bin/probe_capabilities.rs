@@ -50,7 +50,7 @@ const ALL_FORMATS: &[VideoFormat] = &[
 
 const VPP_FORMATS: &[PixelFormat] = &[
     PixelFormat::Nv12,
-    PixelFormat::P010le,
+    PixelFormat::P010,
     PixelFormat::Yuv420p,
     PixelFormat::Yuv420p10le,
     PixelFormat::Bgra,
@@ -76,14 +76,18 @@ fn pixel_format_name(f: &PixelFormat) -> &'static str {
     match f {
         PixelFormat::Nv12 => "nv12",
         PixelFormat::Nv15 => "nv15",
-        PixelFormat::P010le => "p010le",
+        PixelFormat::Nv16 => "nv16",
+        PixelFormat::Nv20 => "nv20",
+        PixelFormat::P010 => "p010",
+        PixelFormat::P016 => "p016",
+        PixelFormat::P210 => "p210",
+        PixelFormat::P216 => "p216",
         PixelFormat::Yuv420p => "yuv420p",
         PixelFormat::Yuv420p10le => "yuv420p10le",
         PixelFormat::Bgra => "bgra",
         PixelFormat::Rgba => "rgba",
         PixelFormat::Yuva420p => "yuva420p",
         PixelFormat::Yuva420p10le => "yuva420p10le",
-        PixelFormat::P016 => "p016",
         PixelFormat::Unknown => "unknown",
     }
 }
@@ -307,7 +311,7 @@ fn print_qsv() -> Result<(), String> {
         println!("VPP Filters: {}", filters.join(" "));
     }
     println!("Can Tonemap: {}", caps.can_tonemap());
-    let qsv_formats = [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra];
+    let qsv_formats = [PixelFormat::Nv12, PixelFormat::P010, PixelFormat::Bgra];
     for pf in qsv_formats {
         println!(
             "Upload {}: {}",
@@ -332,8 +336,8 @@ fn print_qsv() -> Result<(), String> {
             yn(caps.can_rotate(&pf))
         );
     }
-    for input in [PixelFormat::Nv12, PixelFormat::P010le] {
-        for output in [PixelFormat::Nv12, PixelFormat::P010le] {
+    for input in [PixelFormat::Nv12, PixelFormat::P010] {
+        for output in [PixelFormat::Nv12, PixelFormat::P010] {
             println!(
                 "Pad {} -> {}: {}",
                 pixel_format_name(&input),
@@ -411,7 +415,7 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
 
     println!();
     println!("HDR Tone Mapping:");
-    for pf in &[PixelFormat::Nv12, PixelFormat::P010le] {
+    for pf in &[PixelFormat::Nv12, PixelFormat::P010] {
         let hdr_sdr = caps.can_hdr_to_sdr_tonemap(pf);
         let hdr_hdr = caps.can_hdr_to_hdr_tonemap(pf);
         if hdr_sdr || hdr_hdr {
