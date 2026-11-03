@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix still-image watermarks disappearing partway through an item, or (QSV) the item ending early
   - This happened when the source's video parameters change mid-stream, such as spliced or smart-cut files
 - Fix QSV, VAAPI and CUDA items failing when the source's color tags change mid-stream
+- Fix 4:2:2, 4:4:4 and 12-bit sources (such as ProRes, or HEVC/H.264 from cameras)
+  - Hardware decode is no longer attempted; they are converted to 4:2:0 after deinterlacing and scaling
 
 ## [0.2.4] - 2026-10-31
 ### Added

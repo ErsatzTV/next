@@ -57,7 +57,7 @@ impl HwAccel for Qsv {
                     .capabilities
                     .can_pad(&current_state.pixel_format, &current_state.pixel_format) =>
             {
-                let outputs = [PixelFormat::Nv12, PixelFormat::P010le]
+                let outputs = [PixelFormat::Nv12, PixelFormat::P010]
                     .into_iter()
                     .filter(|output| {
                         self.capabilities
@@ -107,7 +107,7 @@ impl HwAccel for Qsv {
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec
             .parse::<VideoFormat>()
-            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 
     fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
@@ -126,7 +126,7 @@ impl HwAccel for Qsv {
                 codec_name: "h264_qsv",
                 options: args!["-low_power", "0", "-look_ahead", "0", "-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Qsv,
                 also_accepts: &[],
             }),
@@ -143,7 +143,7 @@ impl HwAccel for Qsv {
                     "hvc1",
                 ],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Qsv,
                 also_accepts: &[],
             }),
@@ -570,7 +570,7 @@ mod tests {
             Some((2, 17)),
         ] {
             for supported in [false, true] {
-                for pixel_format in [PixelFormat::Nv12, PixelFormat::P010le] {
+                for pixel_format in [PixelFormat::Nv12, PixelFormat::P010] {
                     let mut qsv = make_qsv();
                     qsv.capabilities.runtime_api = api;
                     if supported {
@@ -637,7 +637,7 @@ mod tests {
     fn best_filter_falls_back_to_software_pad_when_runtime_cannot_composite_format() {
         let qsv = make_qsv();
         let state = FrameState {
-            pixel_format: PixelFormat::P010le,
+            pixel_format: PixelFormat::P010,
             ..make_frame_state()
         };
 
@@ -662,7 +662,7 @@ mod tests {
             height: 1080,
         });
 
-        assert!(pad.fuse(&VppQsv::format(PixelFormat::P010le)).is_none());
+        assert!(pad.fuse(&VppQsv::format(PixelFormat::P010)).is_none());
         assert_eq!(
             pad.fuse(&VppQsv::format(PixelFormat::Nv12))
                 .and_then(|fused| fused.as_arg()),
@@ -676,11 +676,11 @@ mod tests {
                 width: 1920,
                 height: 1080,
             },
-            vec![PixelFormat::Nv12, PixelFormat::P010le],
+            vec![PixelFormat::Nv12, PixelFormat::P010],
         );
         assert!(
             p010_capable
-                .fuse(&VppQsv::format(PixelFormat::P010le))
+                .fuse(&VppQsv::format(PixelFormat::P010))
                 .is_some()
         );
     }
@@ -840,11 +840,7 @@ mod tests {
         qsv.capabilities.convert_pairs = HashSet::from([(nv12, nv12), (p010, nv12)]);
         let ffmpeg_info = FfmpegInfo::default();
 
-        assert!(qsv.can_convert_pixel_format(
-            &ffmpeg_info,
-            &PixelFormat::P010le,
-            &PixelFormat::Nv12
-        ));
+        assert!(qsv.can_convert_pixel_format(&ffmpeg_info, &PixelFormat::P010, &PixelFormat::Nv12));
         assert!(qsv.can_convert_pixel_format(
             &ffmpeg_info,
             &PixelFormat::Yuv420p10le,
@@ -853,12 +849,12 @@ mod tests {
         assert!(!qsv.can_convert_pixel_format(
             &ffmpeg_info,
             &PixelFormat::Nv12,
-            &PixelFormat::P010le
+            &PixelFormat::P010
         ));
         assert!(!qsv.can_convert_pixel_format(
             &ffmpeg_info,
-            &PixelFormat::P010le,
-            &PixelFormat::P010le
+            &PixelFormat::P010,
+            &PixelFormat::P010
         ));
     }
 

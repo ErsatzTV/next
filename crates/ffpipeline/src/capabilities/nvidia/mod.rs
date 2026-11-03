@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::pipeline::{PixelFormat, VideoFormat};
+use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
 #[cfg(all(
     any(target_os = "linux", target_os = "windows"),
@@ -31,10 +31,14 @@ pub struct NvidiaCapabilities {
 }
 
 impl NvidiaCapabilities {
-    pub fn can_decode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+    pub fn can_decode(&self, format: &VideoFormat, pixel_format: &PixelFormat) -> bool {
+        if pixel_format.sampling() != Sampling::Yuv420 {
+            return false;
+        }
+
         self.supported_decoders
             .get(format)
-            .is_some_and(|bit_depths| bit_depths.contains(&bit_depth))
+            .is_some_and(|bit_depths| bit_depths.contains(&pixel_format.bit_depth()))
     }
 
     pub fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
@@ -60,7 +64,7 @@ impl NvidiaCapabilities {
     }
 
     pub fn vpp_supports_format(&self, pixel_format: &PixelFormat) -> bool {
-        matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::P010le)
+        matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::P010)
     }
 
     pub fn device_uuid(&self) -> Option<[u8; 16]> {

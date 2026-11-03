@@ -59,14 +59,14 @@ impl Default for SoftwareOverlay {
 impl SoftwareOverlay {
     fn main_pixel_format(&self) -> PixelFormat {
         match self.bit_depth {
-            10 => PixelFormat::Yuv420p10le,
+            10.. => PixelFormat::Yuv420p10le,
             _ => PixelFormat::Yuv420p,
         }
     }
 
     fn secondary_pixel_format(&self) -> PixelFormat {
         match self.bit_depth {
-            10 => PixelFormat::Yuva420p10le,
+            10.. => PixelFormat::Yuva420p10le,
             _ => PixelFormat::Yuva420p,
         }
     }

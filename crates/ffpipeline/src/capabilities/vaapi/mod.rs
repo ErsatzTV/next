@@ -4,7 +4,7 @@ use libva_sys::*;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 
-use crate::pipeline::{PixelFormat, VideoFormat};
+use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -70,8 +70,12 @@ impl VaapiCapabilities {
             .is_some_and(|c| self.vpp_pixel_formats.contains(&c))
     }
 
-    pub fn can_decode(&self, codec: &str, profile: &str, bit_depth: u8) -> bool {
-        Self::decode_profile_for(codec, profile, bit_depth)
+    pub fn can_decode(&self, codec: &str, profile: &str, pixel_format: &PixelFormat) -> bool {
+        if pixel_format.sampling() != Sampling::Yuv420 {
+            return false;
+        }
+
+        Self::decode_profile_for(codec, profile, pixel_format)
             .iter()
             .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_VLD)))
     }
@@ -88,9 +92,14 @@ impl VaapiCapabilities {
             .any(|p| self.supported.contains(&(*p, VA_ENTRYPOINT_ENC_SLICE_LP)))
     }
 
-    fn decode_profile_for(codec: &str, profile: &str, bit_depth: u8) -> Option<VAProfile> {
+    fn decode_profile_for(
+        codec: &str,
+        profile: &str,
+        pixel_format: &PixelFormat,
+    ) -> Option<VAProfile> {
         let codec = codec.to_lowercase();
         let profile = profile.to_lowercase();
+        let bit_depth = pixel_format.bit_depth();
 
         // each entry pairs a VA profile with the maximum bit depth that profile
         // accepts. a bit depth above the max means the (profile, bit_depth)
@@ -156,7 +165,7 @@ impl VaapiCapabilities {
     fn as_fourcc(&self, pixel_format: &PixelFormat) -> Option<u32> {
         match pixel_format {
             PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(VA_FOURCC_NV12),
-            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
+            PixelFormat::P010 | PixelFormat::Yuv420p10le => Some(VA_FOURCC_P010),
             PixelFormat::Bgra => Some(VA_FOURCC_BGRA),
             _ => None,
         }

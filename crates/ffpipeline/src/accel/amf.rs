@@ -56,7 +56,7 @@ impl Amf {
             && video_stream
                 .codec
                 .parse::<VideoFormat>()
-                .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+                .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 }
 
@@ -97,7 +97,7 @@ impl HwAccel for Amf {
     /// decode on the device when the converter can consume the decoded surface format.
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec.parse::<VideoFormat>().is_ok_and(|f| {
-            self.capabilities.can_decode(&f, pixel_format.bit_depth())
+            self.capabilities.can_decode(&f, pixel_format)
                 && self.capabilities.vpp_accepts_input(pixel_format)
         })
     }
@@ -122,7 +122,7 @@ impl HwAccel for Amf {
                 codec_name: "h264_amf",
                 options: args!["-forced_idr", "1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Amf,
                 also_accepts: &[],
             }),
@@ -130,7 +130,7 @@ impl HwAccel for Amf {
                 codec_name: "hevc_amf",
                 options: args!["-tag:v", "hvc1"],
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Amf,
                 also_accepts: &[],
             }),
@@ -400,7 +400,7 @@ mod tests {
             sample_aspect_ratio: None,
             display_aspect_ratio: None,
             surface: FrameSurface::Amf,
-            pixel_format: PixelFormat::P010le,
+            pixel_format: PixelFormat::P010,
             color: FrameColor::default(),
             hdr_format: HdrFormat::Hdr10,
             rotation: None,
@@ -633,7 +633,7 @@ mod tests {
         assert!(amf.accepts_upload_format(&PixelFormat::Nv12));
         assert!(amf.accepts_upload_format(&PixelFormat::Yuv420p));
         assert!(amf.accepts_upload_format(&PixelFormat::Bgra));
-        assert!(!amf.accepts_upload_format(&PixelFormat::P010le));
+        assert!(!amf.accepts_upload_format(&PixelFormat::P010));
     }
 
     #[test]
@@ -655,7 +655,7 @@ mod tests {
         assert!(!amf.can_convert_pixel_format(
             &ffmpeg_info,
             &PixelFormat::Nv12,
-            &PixelFormat::P010le
+            &PixelFormat::P010
         ));
         assert!(!amf.can_convert_pixel_format(
             &ffmpeg_info,
@@ -667,7 +667,7 @@ mod tests {
         assert!(with_p010.can_convert_pixel_format(
             &ffmpeg_info,
             &PixelFormat::Nv12,
-            &PixelFormat::P010le
+            &PixelFormat::P010
         ));
         assert!(!with_p010.can_convert_pixel_format(
             &ffmpeg_info,
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn tonemap_does_not_fuse_with_non_nv12_format() {
         let tonemap = VppAmf::tonemap();
-        let p010 = VppAmf::format(PixelFormat::P010le, &hdr_amf_state());
+        let p010 = VppAmf::format(PixelFormat::P010, &hdr_amf_state());
         assert!(tonemap.fuse(&p010).is_none());
         assert!(
             p010.fuse(&tonemap)
@@ -822,16 +822,16 @@ mod tests {
     #[test]
     fn ten_bit_format_sets_output_color() {
         assert_eq!(
-            VppAmf::format(PixelFormat::P010le, &sdr_amf_state())
+            VppAmf::format(PixelFormat::P010, &sdr_amf_state())
                 .as_arg()
                 .as_deref(),
-            Some("vpp_amf=format=p010le:color_profile=bt709:primaries=bt709:trc=bt709")
+            Some("vpp_amf=format=p010:color_profile=bt709:primaries=bt709:trc=bt709")
         );
         assert_eq!(
-            VppAmf::format(PixelFormat::P010le, &hdr_amf_state())
+            VppAmf::format(PixelFormat::P010, &hdr_amf_state())
                 .as_arg()
                 .as_deref(),
-            Some("vpp_amf=format=p010le:color_profile=bt2020:primaries=bt2020:trc=smpte2084")
+            Some("vpp_amf=format=p010:color_profile=bt2020:primaries=bt2020:trc=smpte2084")
         );
         assert_eq!(
             VppAmf::format(PixelFormat::Nv12, &sdr_amf_state())
@@ -847,9 +847,9 @@ mod tests {
             width: 1920,
             height: 1080,
         });
-        let p010 = VppAmf::format(PixelFormat::P010le, &sdr_amf_state());
+        let p010 = VppAmf::format(PixelFormat::P010, &sdr_amf_state());
         let expected = Some(
-            "vpp_amf=w=1920:h=1080:format=p010le:color_profile=bt709:primaries=bt709:trc=bt709,setsar=1",
+            "vpp_amf=w=1920:h=1080:format=p010:color_profile=bt709:primaries=bt709:trc=bt709,setsar=1",
         );
         assert_eq!(scale.fuse(&p010).unwrap().as_arg().as_deref(), expected);
         assert_eq!(p010.fuse(&scale).unwrap().as_arg().as_deref(), expected);

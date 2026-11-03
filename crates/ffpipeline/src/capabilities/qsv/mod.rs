@@ -4,7 +4,7 @@ use std::fmt::{Debug, Display, Formatter};
 use libvpl_sys::{MFX_FOURCC_NV12, MFX_FOURCC_P010, MFX_FOURCC_RGB4};
 use serde::Serialize;
 
-use crate::pipeline::{PixelFormat, VideoFormat};
+use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
 #[cfg(all(
     any(target_os = "linux", target_os = "windows"),
@@ -110,10 +110,14 @@ impl Display for QsvCapabilities {
 }
 
 impl QsvCapabilities {
-    pub fn can_decode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
+    pub fn can_decode(&self, format: &VideoFormat, pixel_format: &PixelFormat) -> bool {
+        if pixel_format.sampling() != Sampling::Yuv420 {
+            return false;
+        }
+
         self.supported_decoders
             .get(format)
-            .is_some_and(|bit_depths| bit_depths.contains(&bit_depth))
+            .is_some_and(|bit_depths| bit_depths.contains(&pixel_format.bit_depth()))
     }
 
     pub fn can_encode(&self, format: &VideoFormat, bit_depth: u8) -> bool {
@@ -137,7 +141,7 @@ impl QsvCapabilities {
     fn fourcc(pixel_format: &PixelFormat) -> Option<QsvFourCC> {
         let fourcc = match pixel_format {
             PixelFormat::Nv12 | PixelFormat::Yuv420p => Some(MFX_FOURCC_NV12),
-            PixelFormat::P010le | PixelFormat::Yuv420p10le => Some(MFX_FOURCC_P010),
+            PixelFormat::P010 | PixelFormat::Yuv420p10le => Some(MFX_FOURCC_P010),
             PixelFormat::Bgra => Some(MFX_FOURCC_RGB4),
             _ => None,
         };
@@ -160,7 +164,7 @@ impl QsvCapabilities {
     // also do not show it. do not use them.
     pub fn can_tonemap(&self) -> bool {
         self.runtime_api.is_some_and(|(major, _)| major >= 2)
-            && self.can_convert(&PixelFormat::P010le, &PixelFormat::Nv12)
+            && self.can_convert(&PixelFormat::P010, &PixelFormat::Nv12)
     }
 
     pub fn runtime_api(&self) -> Option<(u16, u16)> {

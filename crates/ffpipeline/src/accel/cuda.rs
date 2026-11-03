@@ -38,9 +38,10 @@ impl Cuda {
 
     fn can_vulkan_decode(&self, video_stream: &ProbeResultVideoStream) -> bool {
         self.vulkan_capabilities.as_ref().is_some_and(|vk| {
-            video_stream.codec.parse::<VideoFormat>().is_ok_and(|f| {
-                vk.can_decode(&f, PixelFormat::parse(&video_stream.pix_fmt).bit_depth())
-            })
+            video_stream
+                .codec
+                .parse::<VideoFormat>()
+                .is_ok_and(|f| vk.can_decode(&f, &PixelFormat::parse(&video_stream.pix_fmt)))
         })
     }
 }
@@ -80,7 +81,7 @@ impl HwAccel for Cuda {
                 LibplaceboCuda {
                     algorithm: filter_options.libplacebo.tonemapping.clone(),
                     format: match format {
-                        PixelFormat::Yuv420p10le => PixelFormat::P010le,
+                        PixelFormat::Yuv420p10le => PixelFormat::P010,
                         _ => PixelFormat::Nv12,
                     },
                     input_size: current_state.size,
@@ -134,7 +135,7 @@ impl HwAccel for Cuda {
     fn can_decode(&self, codec: &str, _profile: &str, pixel_format: &PixelFormat) -> bool {
         codec
             .parse::<VideoFormat>()
-            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format.bit_depth()))
+            .is_ok_and(|f| self.capabilities.can_decode(&f, pixel_format))
     }
 
     fn can_encode(&self, format: &EncodeFormat, bit_depth: u8) -> bool {
@@ -153,7 +154,7 @@ impl HwAccel for Cuda {
                 codec_name: "h264_nvenc",
                 options: Vec::new(),
                 preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                preferred_pixel_format_10bit: Some(PixelFormat::P010),
                 preferred_surface: FrameSurface::Cuda,
                 also_accepts: &[PixelFormat::Yuv420p],
             }),
@@ -171,7 +172,7 @@ impl HwAccel for Cuda {
                     codec_name: "hevc_nvenc",
                     options,
                     preferred_pixel_format_8bit: Some(PixelFormat::Nv12),
-                    preferred_pixel_format_10bit: Some(PixelFormat::P010le),
+                    preferred_pixel_format_10bit: Some(PixelFormat::P010),
                     preferred_surface: FrameSurface::Cuda,
                     also_accepts: &[PixelFormat::Yuv420p],
                 })
@@ -440,7 +441,7 @@ impl VideoFilterOp for LibplaceboCuda {
 
     fn as_arg(&self) -> Option<String> {
         let vulkan_format = match &self.format {
-            PixelFormat::P010le => PixelFormat::P016,
+            PixelFormat::P010 => PixelFormat::P016,
             _ => PixelFormat::Nv12,
         };
 

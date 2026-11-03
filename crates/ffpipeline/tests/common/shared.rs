@@ -679,6 +679,8 @@ macro_rules! shared_tests {
             #[values(
                 "1080p_h264.ts",
                 "1080p_hevc_10.ts",
+                "1080p_hevc_10_422.ts",
+                "1080p_hevc_12.ts",
                 "720p_h264.ts",
                 "480p_h264.ts",
                 "480p_h264_anamorphic.ts",

@@ -455,7 +455,7 @@ impl FilterChain {
                 // overlay_cuda leaves yuv420p; hwdownload can't convert
                 _ if current_state.pixel_format == PixelFormat::Yuv420p => PixelFormat::Yuv420p,
                 (FrameSurface::Rkmpp, 10) => PixelFormat::Nv15,
-                (_, 10) => PixelFormat::P010le,
+                (_, 10) => PixelFormat::P010,
                 _ => PixelFormat::Nv12,
             };
 
@@ -499,7 +499,7 @@ impl FilterChain {
                     current_state.pixel_format.bit_depth(),
                 ) {
                     (FrameSurface::Rkmpp, 10) => PixelFormat::Nv15,
-                    (_, 10) => PixelFormat::P010le,
+                    (_, 10) => PixelFormat::P010,
                     _ => PixelFormat::Nv12,
                 };
 
@@ -1371,7 +1371,7 @@ mod tests {
             sample_aspect_ratio: None,
             display_aspect_ratio: None,
             surface: FrameSurface::Vaapi,
-            pixel_format: PixelFormat::P010le,
+            pixel_format: PixelFormat::P010,
             color: FrameColor::default(),
             hdr_format: HdrFormat::Pq,
             rotation: None,
@@ -1830,7 +1830,7 @@ mod tests {
 
         let input: VideoFilter = ToneMapFilter {
             algorithm: Some(String::from("hable")),
-            output_format: PixelFormat::P010le,
+            output_format: PixelFormat::P010,
         }
         .into();
 
@@ -1839,7 +1839,7 @@ mod tests {
             matches!(
                 result,
                 VideoFilter::TonemapVaapi(TonemapVaapi {
-                    output_format: HwPixelFormat::P010le
+                    output_format: HwPixelFormat::P010
                 })
             ),
             "expected TonemapVaapi with P010le output, got {:?}",
@@ -2685,7 +2685,7 @@ mod tests {
             sample_aspect_ratio: None,
             display_aspect_ratio: None,
             surface: FrameSurface::System,
-            pixel_format: PixelFormat::P010le,
+            pixel_format: PixelFormat::P010,
             color: FrameColor::default(),
             hdr_format: HdrFormat::None,
             rotation: None,
@@ -2939,7 +2939,7 @@ mod tests {
             matches!(
                 video_filters[0],
                 VideoFilter::Format(FormatFilter {
-                    format: PixelFormat::P010le
+                    format: PixelFormat::P010
                 })
             ),
             "first filter should be software format=p010le (no bit-depth loss)",
@@ -2950,7 +2950,7 @@ mod tests {
                 video_filters[1],
                 VideoFilter::HwUpload(HwUploadFilter {
                     target_surface: FrameSurface::Vaapi,
-                    source_format: PixelFormat::P010le,
+                    source_format: PixelFormat::P010,
                 })
             ),
             "second filter should be hwupload to Vaapi with P010le source",

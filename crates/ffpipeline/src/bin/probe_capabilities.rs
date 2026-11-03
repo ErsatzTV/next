@@ -50,7 +50,7 @@ const ALL_FORMATS: &[VideoFormat] = &[
 
 const VPP_FORMATS: &[PixelFormat] = &[
     PixelFormat::Nv12,
-    PixelFormat::P010le,
+    PixelFormat::P010,
     PixelFormat::Yuv420p,
     PixelFormat::Yuv420p10le,
     PixelFormat::Bgra,
@@ -76,14 +76,45 @@ fn pixel_format_name(f: &PixelFormat) -> &'static str {
     match f {
         PixelFormat::Nv12 => "nv12",
         PixelFormat::Nv15 => "nv15",
-        PixelFormat::P010le => "p010le",
+        PixelFormat::Nv16 => "nv16",
+        PixelFormat::Nv20 => "nv20",
+        PixelFormat::P010 => "p010",
+        PixelFormat::P012 => "p012",
+        PixelFormat::P016 => "p016",
+        PixelFormat::P210 => "p210",
+        PixelFormat::P212 => "p212",
+        PixelFormat::P216 => "p216",
+        PixelFormat::P410 => "p410",
+        PixelFormat::P412 => "p412",
+        PixelFormat::P416 => "p416",
         PixelFormat::Yuv420p => "yuv420p",
         PixelFormat::Yuv420p10le => "yuv420p10le",
+        PixelFormat::Yuv420p12le => "yuv420p12le",
+        PixelFormat::Yuv420p16le => "yuv420p16le",
+        PixelFormat::Yuv422p => "yuv422p",
+        PixelFormat::Yuv422p10le => "yuv422p10le",
+        PixelFormat::Yuv422p12le => "yuv422p12le",
+        PixelFormat::Yuv422p16le => "yuv422p16le",
+        PixelFormat::Yuv444p => "yuv444p",
+        PixelFormat::Yuv444p10le => "yuv444p10le",
+        PixelFormat::Yuv444p12le => "yuv444p12le",
+        PixelFormat::Yuv444p16le => "yuv444p16le",
         PixelFormat::Bgra => "bgra",
         PixelFormat::Rgba => "rgba",
         PixelFormat::Yuva420p => "yuva420p",
         PixelFormat::Yuva420p10le => "yuva420p10le",
-        PixelFormat::P016 => "p016",
+        PixelFormat::Yuva420p16le => "yuva420p16le",
+        PixelFormat::Yuva422p => "yuva422p",
+        PixelFormat::Yuva422p10le => "yuva422p10le",
+        PixelFormat::Yuva422p12le => "yuva422p12le",
+        PixelFormat::Yuva422p16le => "yuva422p16le",
+        PixelFormat::Yuva444p => "yuva444p",
+        PixelFormat::Yuva444p10le => "yuva444p10le",
+        PixelFormat::Yuva444p12le => "yuva444p12le",
+        PixelFormat::Yuva444p16le => "yuva444p16le",
+        PixelFormat::Yuvj420p => "yuvj420p",
+        PixelFormat::Yuvj422p => "yuvj422p",
+        PixelFormat::Yuvj444p => "yuvj444p",
         PixelFormat::Unknown => "unknown",
     }
 }
@@ -254,8 +285,10 @@ fn print_cuda_vulkan_tonemap(caps: &NvidiaCapabilities) {
     let mut any = false;
     for f in ALL_FORMATS {
         // the pipeline only reaches the Vulkan branch for codecs NVDEC also handles
-        let hdr8 = caps.can_decode(f, 8) && vulkan.can_decode(f, 8);
-        let hdr10 = caps.can_decode(f, 10) && vulkan.can_decode(f, 10);
+        let hdr8 = caps.can_decode(f, &PixelFormat::Yuv420p)
+            && vulkan.can_decode(f, &PixelFormat::Yuv420p);
+        let hdr10 = caps.can_decode(f, &PixelFormat::Yuv420p10le)
+            && vulkan.can_decode(f, &PixelFormat::Yuv420p10le);
         if hdr8 || hdr10 {
             println!("  {:<12} {:<8} {:<8}", format_name(f), yn(hdr8), yn(hdr10));
             any = true;
@@ -307,7 +340,7 @@ fn print_qsv() -> Result<(), String> {
         println!("VPP Filters: {}", filters.join(" "));
     }
     println!("Can Tonemap: {}", caps.can_tonemap());
-    let qsv_formats = [PixelFormat::Nv12, PixelFormat::P010le, PixelFormat::Bgra];
+    let qsv_formats = [PixelFormat::Nv12, PixelFormat::P010, PixelFormat::Bgra];
     for pf in qsv_formats {
         println!(
             "Upload {}: {}",
@@ -332,8 +365,8 @@ fn print_qsv() -> Result<(), String> {
             yn(caps.can_rotate(&pf))
         );
     }
-    for input in [PixelFormat::Nv12, PixelFormat::P010le] {
-        for output in [PixelFormat::Nv12, PixelFormat::P010le] {
+    for input in [PixelFormat::Nv12, PixelFormat::P010] {
+        for output in [PixelFormat::Nv12, PixelFormat::P010] {
             println!(
                 "Pad {} -> {}: {}",
                 pixel_format_name(&input),
@@ -369,9 +402,9 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
     }
     println!();
 
-    print_decode_table(ALL_FORMATS, |f, bd| {
-        let (codec, profile) = default_profile(f, bd);
-        caps.can_decode(codec, profile, bd)
+    print_decode_table(ALL_FORMATS, |f, pf| {
+        let (codec, profile) = default_profile(f, pf.bit_depth());
+        caps.can_decode(codec, profile, pf)
     });
 
     println!();
@@ -411,7 +444,7 @@ fn print_vaapi(device: &str, driver: Option<&str>) -> Result<(), String> {
 
     println!();
     println!("HDR Tone Mapping:");
-    for pf in &[PixelFormat::Nv12, PixelFormat::P010le] {
+    for pf in &[PixelFormat::Nv12, PixelFormat::P010] {
         let hdr_sdr = caps.can_hdr_to_sdr_tonemap(pf);
         let hdr_hdr = caps.can_hdr_to_hdr_tonemap(pf);
         if hdr_sdr || hdr_hdr {
@@ -531,13 +564,16 @@ fn print_opencl() -> Result<(), String> {
     Ok(())
 }
 
-fn print_decode_table(formats: &[VideoFormat], can_decode: impl Fn(&VideoFormat, u8) -> bool) {
+fn print_decode_table(
+    formats: &[VideoFormat],
+    can_decode: impl Fn(&VideoFormat, &PixelFormat) -> bool,
+) {
     println!("Decoders:");
     println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
     println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
     for f in formats {
-        let dec8 = can_decode(f, 8);
-        let dec10 = can_decode(f, 10);
+        let dec8 = can_decode(f, &PixelFormat::Yuv420p);
+        let dec10 = can_decode(f, &PixelFormat::Yuv420p10le);
         if dec8 || dec10 {
             println!("  {:<12} {:<8} {:<8}", format_name(f), yn(dec8), yn(dec10),);
         }
@@ -547,19 +583,21 @@ fn print_decode_table(formats: &[VideoFormat], can_decode: impl Fn(&VideoFormat,
 /// keep unsupported rows, so missing interlaced decode shows as "-"
 fn print_interlaced_decode_table(
     formats: &[VideoFormat],
-    can_decode: impl Fn(&VideoFormat, u8) -> bool,
-    can_decode_interlaced: impl Fn(&VideoFormat, u8) -> bool,
+    can_decode: impl Fn(&VideoFormat, &PixelFormat) -> bool,
+    can_decode_interlaced: impl Fn(&VideoFormat, &PixelFormat) -> bool,
 ) {
     println!("Interlaced Decoders:");
     println!("  {:<12} {:<8} {:<8}", "Codec", "8-bit", "10-bit");
     println!("  {:<12} {:<8} {:<8}", "-----", "-----", "------");
     for f in formats {
-        if f.has_interlaced_coding() && (can_decode(f, 8) || can_decode(f, 10)) {
+        if f.has_interlaced_coding()
+            && (can_decode(f, &PixelFormat::Yuv420p) || can_decode(f, &PixelFormat::Yuv420p10le))
+        {
             println!(
                 "  {:<12} {:<8} {:<8}",
                 format_name(f),
-                yn(can_decode_interlaced(f, 8)),
-                yn(can_decode_interlaced(f, 10)),
+                yn(can_decode_interlaced(f, &PixelFormat::Yuv420p)),
+                yn(can_decode_interlaced(f, &PixelFormat::Yuv420p10le)),
             );
         }
     }
