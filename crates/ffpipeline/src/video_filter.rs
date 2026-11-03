@@ -10,7 +10,7 @@ use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::input::{PeriodicClock, PeriodicTiming, WatermarkTiming};
 use crate::output_settings::{BwdifOptions, ScalingMode, W3fdifOptions, YadifOptions};
-use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat};
+use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, Sampling};
 
 #[derive(Debug, Clone, Default)]
 pub struct SoftwareDeinterlaceOptions {
@@ -52,6 +52,7 @@ pub enum VideoFilter {
     Loop(LoopFilter),
     Fps(FpsFilter),
     Format(FormatFilter),
+    NormalizeChroma(NormalizeChromaFilter),
     ToneMap(ToneMapFilter),
     Deinterlace(DeinterlaceFilter),
     Transpose(TransposeFilter),
@@ -382,6 +383,42 @@ impl VideoFilterOp for FormatFilter {
 }
 
 #[derive(Debug, Clone)]
+pub struct NormalizeChromaFilter;
+
+impl VideoFilterOp for NormalizeChromaFilter {
+    fn evaluate(&self, state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        match (
+            state.pixel_format.sampling(),
+            state.pixel_format.bit_depth(),
+        ) {
+            (Sampling::Yuv420 | Sampling::Rgb, _) => None,
+            (Sampling::Yuv444 | Sampling::Yuv422, 8) => Some(
+                FormatFilter {
+                    format: PixelFormat::Yuv420p,
+                }
+                .into(),
+            ),
+            (Sampling::Yuv444 | Sampling::Yuv422, _) => Some(
+                FormatFilter {
+                    format: PixelFormat::Yuv420p10le,
+                }
+                .into(),
+            ),
+        }
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {}
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        None
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ToneMapFilter {
     pub algorithm: Option<String>,
     pub output_format: PixelFormat,
@@ -460,10 +497,7 @@ impl VideoFilterOp for DeinterlaceFilter {
 
     fn apply_to(&self, state: &mut FrameState) {
         state.is_interlaced = false;
-        state.pixel_format = match state.pixel_format.bit_depth() {
-            10 => PixelFormat::Yuv420p10le,
-            _ => PixelFormat::Yuv420p,
-        }
+        state.pixel_format = state.pixel_format.planar();
     }
 
     fn required_surface(&self) -> Option<FrameSurface> {
