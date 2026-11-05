@@ -20,7 +20,7 @@ impl VaapiCapabilities {
             std::env::set_var("LIBVA_MESSAGING_LEVEL", "1");
         };
 
-        let result = Self::probe_inner(device);
+        let result = Self::probe_inner(device, driver);
 
         unsafe {
             match prev {
@@ -37,7 +37,10 @@ impl VaapiCapabilities {
         result
     }
 
-    fn probe_inner(device: &str) -> Result<VaapiCapabilities, FFPipelineError> {
+    fn probe_inner(
+        device: &str,
+        driver: Option<&str>,
+    ) -> Result<VaapiCapabilities, FFPipelineError> {
         log::debug!("[vaapi] probing: device={}", device);
         let va =
             VaLib::load().map_err(|e| VaapiCapabilitiesError(format!("libva not found: {e}")))?;
@@ -62,7 +65,9 @@ impl VaapiCapabilities {
         let status = unsafe { (va.vaInitialize)(display, &mut major, &mut minor) };
         if status != VA_STATUS_SUCCESS {
             return Err(VaapiCapabilitiesError(format!(
-                "vaInitialize failed: {status}"
+                "vaInitialize failed on {device} with driver {}: {} ({status})",
+                driver.unwrap_or("(auto)"),
+                Self::va_status_to_string(&va, status)
             )));
         }
 

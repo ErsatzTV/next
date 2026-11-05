@@ -37,6 +37,9 @@ cargo run --bin ersatztv-channel -- debug <path/to/channel.json>
 # Print the channel binary's contract and supported config values as JSON (schema/describe.json)
 cargo run --bin ersatztv-channel -- describe
 
+# Also probe this machine's accels (fills runtime_capability); configs are optional and may be partial
+cargo run --bin ersatztv-channel -- describe --probe [<path/to/channel.json> ...] [--ffmpeg <path/to/ffmpeg>]
+
 # Probe hardware acceleration capabilities directly (one subcommand per accel)
 cargo run --bin probe_capabilities -- <amf|cuda|qsv|rkmpp|vaapi|video-toolbox|vulkan|opencl>
 
@@ -244,6 +247,8 @@ Everything in the previous checklist, plus:
 
 1. New `crates/lib<accel>-sys` crate; add to workspace `Cargo.toml` and `ffpipeline/Cargo.toml`.
 2. `crates/ffpipeline/src/capabilities/mod.rs` and `src/accel/mod.rs` — register the module.
+   The capabilities module's `HAS_PROBE` uses the same `cfg` as its real backend; `describe --probe` lists the accel
+   only where it is `true` (`crates/ersatztv-channel/src/runtime_capability.rs`).
 3. `crates/ffpipeline/src/hw_accel.rs` — `HardwareAccel` enum variant.
 4. `crates/ffpipeline/src/ffmpeg_info.rs` — `KnownHardwareAccel` / `KnownDecoders` / `KnownVideoFilter` entries for
    the ffmpeg hwaccel, decoder and filter names to probe for.

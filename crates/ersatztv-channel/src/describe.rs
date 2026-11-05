@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::config::{AudioCopyFormat, AudioFormat, HardwareAccel, SubtitleMode, VideoFormat};
 use crate::dynamic::CALLBACK_HEADERS;
+use crate::runtime_capability::RuntimeCapability;
 
 /// Bump when removing, renaming or changing a field; not when adding one.
 pub const DESCRIBE_VERSION: u32 = 1;
@@ -27,8 +28,9 @@ pub struct Describe {
     /// Values the channel config accepts. A value listed here may still be unavailable on this
     /// machine or ffmpeg build.
     pub schema_capability: SchemaCapability,
-    /// Probed capabilities of this machine and ffmpeg build. Always `null` for now.
-    pub runtime_capability: Option<Value>,
+    /// What this machine and the config's ffmpeg build can do, from `describe --probe <config>`;
+    /// `null` without `--probe`.
+    pub runtime_capability: Option<RuntimeCapability>,
 }
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema, PartialEq)]

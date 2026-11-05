@@ -166,6 +166,12 @@ impl FfmpegInfo {
         })
     }
 
+    pub fn hw_accels(&self) -> Vec<String> {
+        let mut hwaccels: Vec<String> = self.hwaccels.iter().cloned().collect();
+        hwaccels.sort();
+        hwaccels
+    }
+
     pub fn has_hw_accel(&self, hw_accel: &KnownHardwareAccel) -> bool {
         let accel_string = hw_accel.to_string();
         self.hwaccels.iter().any(|f| f == &accel_string)

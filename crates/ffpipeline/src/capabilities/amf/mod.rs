@@ -7,6 +7,12 @@ use serde::Serialize;
 use crate::error::FFPipelineError;
 use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
+/// `false` where the backend below is a stub.
+pub const HAS_PROBE: bool = cfg!(all(
+    any(target_os = "linux", target_os = "windows"),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+));
+
 #[cfg(all(
     any(target_os = "linux", target_os = "windows"),
     any(target_arch = "x86_64", target_arch = "aarch64")

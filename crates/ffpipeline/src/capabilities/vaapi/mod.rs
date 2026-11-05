@@ -6,6 +6,9 @@ use serde::{Serialize, Serializer};
 
 use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
+/// `false` where the backend below is a stub.
+pub const HAS_PROBE: bool = cfg!(target_os = "linux");
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(not(target_os = "linux"))]

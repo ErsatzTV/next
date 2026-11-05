@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Output file names, segment and keyframe lengths
   - Video/audio formats, accels and subtitle modes the channel config accepts
   - Headers sent to dynamic source resolvers
+- `ersatztv-channel describe --probe` adds what this machine can do: the ffmpeg version and hwaccels, and for each accel on this platform whether it is available and which codecs and pixel formats it decodes and encodes in hardware
+  - VAAPI is tried on every render node with each driver, to show which combinations work
+  - Takes optional channel configs (partial is fine) to mark the configured accel, and `--ffmpeg <path>` to choose the ffmpeg build
 - Dynamic source requests send `x-etv-playout-schema`, the newest playout schema version the channel accepts (playout schema `0.0.8`)
 
 ### Changed
