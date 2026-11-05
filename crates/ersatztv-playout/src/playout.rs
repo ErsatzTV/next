@@ -390,15 +390,87 @@ pub struct SubtitleHint {
     pub stream_index: u32,
 }
 
-pub struct PlayoutLoadResult {
-    pub playout: Playout,
-    // TODO: start, finish
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvalidPlayoutItem {
+    pub id: String,
+    pub start: OffsetDateTime,
+    pub finish: OffsetDateTime,
+    pub error: String,
 }
 
+#[derive(Debug)]
+pub enum LoadedItem {
+    Valid(Box<PlayoutItem>),
+    Invalid(InvalidPlayoutItem),
+}
+
+impl LoadedItem {
+    pub fn id(&self) -> &str {
+        match self {
+            LoadedItem::Valid(item) => &item.id,
+            LoadedItem::Invalid(item) => &item.id,
+        }
+    }
+
+    pub fn start(&self) -> OffsetDateTime {
+        match self {
+            LoadedItem::Valid(item) => item.start,
+            LoadedItem::Invalid(item) => item.start,
+        }
+    }
+
+    pub fn finish(&self) -> OffsetDateTime {
+        match self {
+            LoadedItem::Valid(item) => item.finish(),
+            LoadedItem::Invalid(item) => item.finish,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemIssueKind {
+    ProbeHintDropped,
+    Invalid,
+    /// no readable id, start or finish
+    Dropped,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemIssue {
+    /// index in the file, not in `PlayoutLoadResult::items`
+    pub index: usize,
+    pub id: Option<String>,
+    pub kind: ItemIssueKind,
+    pub error: String,
+}
+
+pub struct PlayoutLoadResult {
+    pub version: String,
+    /// file order decides overlaps; dropped items are absent
+    pub items: Vec<LoadedItem>,
+    pub issues: Vec<ItemIssue>,
+}
+
+impl PlayoutLoadResult {
+    pub fn valid_items(&self) -> impl Iterator<Item = &PlayoutItem> {
+        self.items.iter().filter_map(|i| match i {
+            LoadedItem::Valid(item) => Some(item.as_ref()),
+            LoadedItem::Invalid(_) => None,
+        })
+    }
+}
+
+/// Only envelope errors (read, JSON, version, `items`) fail the whole file.
 pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
     #[derive(Deserialize)]
     struct PlayoutVersion {
         version: String,
+    }
+
+    #[derive(Deserialize)]
+    struct PlayoutEnvelope<'a> {
+        #[serde(borrow)]
+        items: Vec<&'a serde_json::value::RawValue>,
     }
 
     let contents = tokio::fs::read_to_string(path).await.map_err(|e| {
@@ -414,10 +486,166 @@ pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
 
     SCHEMA.check(&version_only.version)?;
 
-    let playout: Playout = serde_json::from_str(&contents)
+    let envelope: PlayoutEnvelope = serde_json::from_str(&contents)
         .map_err(|e| PlayoutError::PlayoutJsonLoadError(e.to_string()))?;
 
-    Ok(PlayoutLoadResult { playout })
+    let mut items = Vec::with_capacity(envelope.items.len());
+    let mut issues = Vec::new();
+    for (index, raw) in envelope.items.into_iter().enumerate() {
+        // slow path only for items that fail
+        if let Ok(item) = serde_json::from_str::<PlayoutItem>(raw.get()) {
+            items.push(LoadedItem::Valid(Box::new(item)));
+            continue;
+        }
+        if let Some(item) = load_item(index, raw.get(), &mut issues) {
+            items.push(item);
+        }
+    }
+
+    Ok(PlayoutLoadResult {
+        version: version_only.version,
+        items,
+        issues,
+    })
+}
+
+#[derive(Deserialize)]
+struct ItemSlot {
+    id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    start: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    finish: OffsetDateTime,
+}
+
+fn load_item(index: usize, raw: &str, issues: &mut Vec<ItemIssue>) -> Option<LoadedItem> {
+    // valid JSON can still fail as a Value (e.g. 1e400); skipped fields aren't range checked
+    let mut value: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(value) => value,
+        Err(e) => {
+            let error = serde_path_to_error::deserialize::<_, PlayoutItem>(
+                &mut serde_json::Deserializer::from_str(raw),
+            )
+            .err()
+            .map_or_else(|| e.to_string(), |e| e.to_string());
+            return invalid_or_dropped(index, serde_json::from_str(raw).ok(), error, issues);
+        }
+    };
+
+    let mut error = match parse_item(&value) {
+        Ok(item) => return Some(LoadedItem::Valid(Box::new(item))),
+        Err(e) => e,
+    };
+
+    // hints only skip a probe, so play the item without them
+    let hints = strip_probe_hints(&mut value);
+    if !hints.is_empty() {
+        match parse_item(&value) {
+            Ok(item) => {
+                issues.push(ItemIssue {
+                    index,
+                    id: Some(item.id.clone()),
+                    kind: ItemIssueKind::ProbeHintDropped,
+                    error: probe_hint_error(&hints).unwrap_or(error),
+                });
+                return Some(LoadedItem::Valid(Box::new(item)));
+            }
+            // report the error left without hints
+            Err(e) => error = e,
+        }
+    }
+
+    invalid_or_dropped(index, serde_json::from_value(value).ok(), error, issues)
+}
+
+fn invalid_or_dropped(
+    index: usize,
+    slot: Option<ItemSlot>,
+    error: String,
+    issues: &mut Vec<ItemIssue>,
+) -> Option<LoadedItem> {
+    match slot {
+        Some(slot) => {
+            issues.push(ItemIssue {
+                index,
+                id: Some(slot.id.clone()),
+                kind: ItemIssueKind::Invalid,
+                error: error.clone(),
+            });
+            Some(LoadedItem::Invalid(InvalidPlayoutItem {
+                id: slot.id,
+                start: slot.start,
+                finish: slot.finish,
+                error,
+            }))
+        }
+        None => {
+            issues.push(ItemIssue {
+                index,
+                id: None,
+                kind: ItemIssueKind::Dropped,
+                error,
+            });
+            None
+        }
+    }
+}
+
+fn parse_item(value: &serde_json::Value) -> Result<PlayoutItem, String> {
+    serde_path_to_error::deserialize(value).map_err(|e| e.to_string())
+}
+
+fn strip_probe_hints(value: &mut serde_json::Value) -> Vec<(String, serde_json::Value)> {
+    fn strip(
+        value: &mut serde_json::Value,
+        path: &str,
+        hints: &mut Vec<(String, serde_json::Value)>,
+    ) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(hint) = map.remove("probe_hint") {
+                    hints.push((child_path(path, "probe_hint"), hint));
+                }
+                for (key, child) in map.iter_mut() {
+                    strip(child, &child_path(path, key), hints);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for (i, child) in values.iter_mut().enumerate() {
+                    strip(child, &format!("{path}[{i}]"), hints);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn child_path(path: &str, key: &str) -> String {
+        if path.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{path}.{key}")
+        }
+    }
+
+    let mut hints = Vec::new();
+    strip(value, "", &mut hints);
+    hints
+}
+
+/// serde loses the path inside the tagged source enum, so parse each hint alone
+/// to find the bad field.
+fn probe_hint_error(hints: &[(String, serde_json::Value)]) -> Option<String> {
+    hints.iter().find_map(|(path, hint)| {
+        serde_path_to_error::deserialize::<_, ProbeHint>(hint)
+            .err()
+            .map(|e| {
+                if e.path().iter().next().is_some() {
+                    format!("{path}.{e}")
+                } else {
+                    format!("{path}: {e}")
+                }
+            })
+    })
 }
 
 pub fn parse_playout_filename(file_stem: &str) -> Option<(OffsetDateTime, OffsetDateTime)> {
@@ -574,7 +802,19 @@ mod tests {
             tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
                 .await
                 .unwrap();
-            let loaded = from_file(path.to_str().unwrap()).await.unwrap().playout;
+            let loaded = from_file(path.to_str().unwrap()).await.unwrap();
+            assert!(loaded.issues.is_empty());
+            let loaded = Playout {
+                version: loaded.version,
+                items: loaded
+                    .items
+                    .into_iter()
+                    .map(|i| match i {
+                        LoadedItem::Valid(item) => *item,
+                        LoadedItem::Invalid(item) => panic!("unexpected invalid item {item:?}"),
+                    })
+                    .collect(),
+            };
             assert_eq!(serde_json::to_value(loaded).unwrap(), value);
         }
     }
@@ -609,6 +849,222 @@ mod tests {
                 assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.7");
             }
             other => panic!("expected Unsupported, got {:?}", other.err()),
+        }
+    }
+
+    fn timed_item(id: &str, minute: u32) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "start": format!("2026-08-14T00:{minute:02}:00Z"),
+            "finish": format!("2026-08-14T00:{:02}:00Z", minute + 1),
+            "source": { "source_type": "local", "path": format!("/media/{id}.mkv") }
+        })
+    }
+
+    fn video_hint() -> serde_json::Value {
+        serde_json::json!({
+            "codec": "h264",
+            "width": 1920,
+            "height": 1080,
+            "pix_fmt": "yuv420p",
+            "stream_index": 0
+        })
+    }
+
+    async fn load_items(items: Vec<serde_json::Value>) -> Result<PlayoutLoadResult, PlayoutError> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playout.json");
+        let value = serde_json::json!({ "version": SCHEMA.uri(), "items": items });
+        tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
+            .await
+            .unwrap();
+        from_file(path.to_str().unwrap()).await
+    }
+
+    fn ids(result: &PlayoutLoadResult) -> Vec<&str> {
+        result.items.iter().map(LoadedItem::id).collect()
+    }
+
+    #[tokio::test]
+    async fn bad_probe_hint_is_dropped_and_item_still_plays() {
+        let mut bad = timed_item("bad", 1);
+        let mut hint = video_hint();
+        hint.as_object_mut().unwrap().remove("codec");
+        bad["source"]["probe_hint"] = serde_json::json!({
+            "video": [hint],
+            "audio": [{ "codec": "aac", "channels": 2, "stream_index": 1 }]
+        });
+        let mut track_hint = timed_item("track", 2);
+        track_hint["tracks"] = serde_json::json!({
+            "audio": {
+                "source": {
+                    "source_type": "local",
+                    "path": "/media/audio.mka",
+                    "probe_hint": { "audio": [{ "channels": 2, "stream_index": 0 }] }
+                }
+            }
+        });
+
+        let result = load_items(vec![timed_item("a", 0), bad, track_hint])
+            .await
+            .unwrap();
+
+        assert_eq!(ids(&result), ["a", "bad", "track"]);
+        assert!(
+            result
+                .valid_items()
+                .all(|i| i.source.as_ref().unwrap().probe_hint().is_none())
+        );
+        let tracks = result
+            .valid_items()
+            .nth(2)
+            .unwrap()
+            .tracks
+            .as_ref()
+            .unwrap();
+        assert!(
+            tracks
+                .audio
+                .as_ref()
+                .unwrap()
+                .source
+                .as_ref()
+                .unwrap()
+                .probe_hint()
+                .is_none()
+        );
+
+        assert_eq!(result.issues.len(), 2);
+        let issue = &result.issues[0];
+        assert_eq!(issue.index, 1);
+        assert_eq!(issue.id.as_deref(), Some("bad"));
+        assert_eq!(issue.kind, ItemIssueKind::ProbeHintDropped);
+        assert!(
+            issue.error.starts_with("source.probe_hint.video[0]")
+                && issue.error.contains("missing field `codec`"),
+            "{}",
+            issue.error
+        );
+        assert_eq!(result.issues[1].kind, ItemIssueKind::ProbeHintDropped);
+        assert_eq!(
+            result.issues[1].error,
+            "tracks.audio.source.probe_hint.audio[0]: missing field `codec`"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_item_keeps_its_slot_in_file_order() {
+        let mut bad = timed_item("bad", 1);
+        bad["source"] = serde_json::json!({ "source_type": "carrier_pigeon" });
+
+        let result = load_items(vec![timed_item("a", 0), bad, timed_item("c", 2)])
+            .await
+            .unwrap();
+
+        assert_eq!(ids(&result), ["a", "bad", "c"]);
+        let LoadedItem::Invalid(invalid) = &result.items[1] else {
+            panic!("expected invalid item");
+        };
+        assert_eq!(invalid.start, result.items[0].finish());
+        assert_eq!(invalid.finish, result.items[2].start());
+        assert!(
+            invalid.error.contains("carrier_pigeon"),
+            "{}",
+            invalid.error
+        );
+        assert_eq!(result.issues.len(), 1);
+        assert_eq!(result.issues[0].kind, ItemIssueKind::Invalid);
+        assert_eq!(result.issues[0].error, invalid.error);
+    }
+
+    #[tokio::test]
+    async fn invalid_item_reports_the_error_left_after_dropping_hints() {
+        let mut bad = timed_item("bad", 1);
+        bad["source"]["probe_hint"] = serde_json::json!({ "video": [{}] });
+        bad["source"].as_object_mut().unwrap().remove("path");
+
+        let result = load_items(vec![bad]).await.unwrap();
+
+        let LoadedItem::Invalid(invalid) = &result.items[0] else {
+            panic!("expected invalid item");
+        };
+        assert!(
+            invalid.error.contains("missing field `path`"),
+            "{}",
+            invalid.error
+        );
+    }
+
+    #[tokio::test]
+    async fn item_without_a_readable_slot_is_dropped() {
+        let mut bad = timed_item("bad", 1);
+        bad["start"] = serde_json::json!("yesterday");
+
+        let result = load_items(vec![timed_item("a", 0), bad, timed_item("c", 2)])
+            .await
+            .unwrap();
+
+        assert_eq!(ids(&result), ["a", "c"]);
+        assert_eq!(
+            result.issues,
+            [ItemIssue {
+                index: 1,
+                id: None,
+                kind: ItemIssueKind::Dropped,
+                error: result.issues[0].error.clone(),
+            }]
+        );
+        assert!(
+            result.issues[0].error.starts_with("start"),
+            "{}",
+            result.issues[0].error
+        );
+    }
+
+    #[tokio::test]
+    async fn out_of_range_number_fails_only_its_item() {
+        let mut bad = timed_item("bad", 1);
+        bad["source"]["probe_hint"] = serde_json::json!({ "duration_ms": 123456789 });
+        let items = vec![timed_item("a", 0), bad, timed_item("c", 2)];
+        let contents = serde_json::json!({ "version": SCHEMA.uri(), "items": items })
+            .to_string()
+            .replace("123456789", "1e400");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playout.json");
+        tokio::fs::write(&path, contents).await.unwrap();
+
+        let result = from_file(path.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(ids(&result), ["a", "bad", "c"]);
+        let LoadedItem::Invalid(invalid) = &result.items[1] else {
+            panic!("expected invalid item");
+        };
+        assert!(
+            invalid.error.contains("number out of range"),
+            "{}",
+            invalid.error
+        );
+        assert_eq!(result.issues.len(), 1);
+        assert_eq!(result.issues[0].kind, ItemIssueKind::Invalid);
+    }
+
+    #[tokio::test]
+    async fn envelope_errors_still_fail_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playout.json");
+        for contents in [
+            serde_json::json!({ "version": SCHEMA.uri() }).to_string(),
+            serde_json::json!({ "version": SCHEMA.uri(), "items": {} }).to_string(),
+            String::from("{ \"version\": "),
+        ] {
+            tokio::fs::write(&path, &contents).await.unwrap();
+            assert!(
+                matches!(
+                    from_file(path.to_str().unwrap()).await,
+                    Err(PlayoutError::PlayoutJsonLoadError(_))
+                ),
+                "{contents}"
+            );
         }
     }
 }
