@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use rand::RngExt;
 use reqwest::header::HeaderMap;
-use serde::de::DeserializeOwned;
 use tokio::time::Instant;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -60,12 +59,12 @@ impl From<reqwest::Error> for AttemptError {
     }
 }
 
-pub async fn get_json<T: DeserializeOwned>(
+pub async fn get_text(
     client: &reqwest::Client,
     uri: &str,
     headers: &HeaderMap,
     timeout: Duration,
-) -> Result<T, AttemptError> {
+) -> Result<String, AttemptError> {
     Ok(client
         .get(uri)
         .headers(headers.clone())
@@ -73,7 +72,7 @@ pub async fn get_json<T: DeserializeOwned>(
         .send()
         .await?
         .error_for_status()?
-        .json()
+        .text()
         .await?)
 }
 
@@ -129,7 +128,6 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::{IntoResponse, Response};
     use axum::routing::get;
-    use serde_json::{Value, json};
 
     use super::*;
 
@@ -155,13 +153,10 @@ mod tests {
         (format!("http://{addr}/"), hits)
     }
 
-    async fn fetch(uri: &str, policy: RetryPolicy) -> Result<Value, String> {
+    async fn fetch(uri: &str, policy: RetryPolicy) -> Result<String, String> {
         let client = reqwest::Client::new();
         let headers = HeaderMap::new();
-        with_retry(&policy, |timeout| {
-            get_json::<Value>(&client, uri, &headers, timeout)
-        })
-        .await
+        with_retry(&policy, |timeout| get_text(&client, uri, &headers, timeout)).await
     }
 
     fn policy(timeout_ms: u64, budget_ms: u64, backoff_ms: u64) -> RetryPolicy {
@@ -211,7 +206,7 @@ mod tests {
         ])
         .await;
         let value = fetch(&uri, policy(1000, 5000, 10)).await.unwrap();
-        assert_eq!(value, json!({"ok": true}));
+        assert_eq!(value, OK.1);
         assert_eq!(hits.load(Ordering::SeqCst), 3);
     }
 
@@ -228,13 +223,6 @@ mod tests {
             assert!(err.contains("after 1 attempt)"), "{status}: {err}");
             assert_eq!(hits.load(Ordering::SeqCst), 1, "{status}");
         }
-    }
-
-    #[tokio::test]
-    async fn does_not_retry_invalid_body() {
-        let (uri, hits) = serve(vec![(StatusCode::OK, "not json"), OK]).await;
-        fetch(&uri, policy(1000, 5000, 10)).await.unwrap_err();
-        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

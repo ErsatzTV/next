@@ -61,6 +61,13 @@
           "description": "Channel config schema version. Configs and overlays load when their `breaking` matches and\ntheir `compatible` is not newer.",
           "$ref": "#/$defs/SchemaInfo"
         },
+        "dynamic_callback_headers": {
+          "description": "Headers sent on every dynamic source request. `DynamicSource` in the playout schema\ndefines them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "keyframe_seconds": {
           "description": "Keyframe interval in seconds.",
           "type": "integer",
@@ -87,7 +94,8 @@
         "channel_config_schema",
         "output_files",
         "segment_seconds",
-        "keyframe_seconds"
+        "keyframe_seconds",
+        "dynamic_callback_headers"
       ]
     },
     "OutputFiles": {

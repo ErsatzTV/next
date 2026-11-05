@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::{AudioCopyFormat, AudioFormat, HardwareAccel, SubtitleMode, VideoFormat};
+use crate::dynamic::CALLBACK_HEADERS;
 
 /// Bump when removing, renaming or changing a field; not when adding one.
 pub const DESCRIBE_VERSION: u32 = 1;
@@ -54,6 +55,9 @@ pub struct Contract {
     pub segment_seconds: u32,
     /// Keyframe interval in seconds.
     pub keyframe_seconds: u32,
+    /// Headers sent on every dynamic source request. `DynamicSource` in the playout schema
+    /// defines them.
+    pub dynamic_callback_headers: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema, PartialEq)]
@@ -128,6 +132,7 @@ impl Describe {
                 },
                 segment_seconds: SEGMENT_SECONDS,
                 keyframe_seconds: KEYFRAME_INTERVAL_SECONDS,
+                dynamic_callback_headers: CALLBACK_HEADERS.map(String::from).to_vec(),
             },
             schema_capability: SchemaCapability {
                 video_formats: enum_values::<VideoFormat>(),

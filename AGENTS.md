@@ -320,6 +320,22 @@ maintainer handles the legacy side. Your job is to call it out explicitly in the
 | `channel.json` field | `ErsatzTV.Core/Next/Config/ChannelConfig.cs` (regenerated from `schema/channel_config.json`; see below) |
 | User-visible config or behavior | `ErsatzTV.org/docs-next/` |
 | `describe` output (`describe.rs`) | none in legacy yet; `ErsatzTV.org/docs-next/`. Adding a field is compatible; removing, renaming or changing one bumps `DESCRIBE_VERSION` and is `### Breaking` |
+| Dynamic source callback (`crates/ersatztv-channel/src/dynamic.rs`) | legacy's fallback filler resolver (`GetFallbackPlayoutJson` in `ErsatzTV/Controllers/InternalController.cs`) and every other resolver, e.g. Tunarr's. Bump the playout schema per "Dynamic source callback" below |
+
+### Dynamic source callback
+
+The request a channel sends to resolve a `dynamic` source and the response it accepts are part of the playout
+schema: they are documented in the `DynamicSource` description in `schema/playout.json` and pinned by
+`crates/ersatztv-channel/tests/dynamic_contract.rs`. There is no separate callback version; resolvers read the
+channel's version from the `x-etv-playout-schema` header or from `describe`. When that test fails, update the
+description and bump the playout schema:
+
+- **breaking**: removing or renaming a header, changing a header value's format or meaning, refusing a response that
+  loads today, or changing the `start`/`finish` rewrite, the retry rules or how the returned `id` is used;
+- **compatible**: a new header, or accepting a response that is refused today.
+
+Changing the playout model changes the response too: `deny_unknown_fields` on `PlayoutItem` would be breaking for
+resolvers as well as for playout files.
 
 ### Regenerating legacy's C# models
 
