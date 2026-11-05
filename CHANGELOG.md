@@ -12,9 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Playout and channel config schema versions it accepts
   - Output file names, segment and keyframe lengths
   - Video/audio formats, accels and subtitle modes the channel config accepts
+  - Headers sent to dynamic source resolvers
+- Dynamic source requests send `x-etv-playout-schema`, the newest playout schema version the channel accepts (playout schema `0.0.8`)
 
 ### Changed
 - Require ErsatzTV-ffmpeg `8.1.2-4089c130-develop` or later
+- A dynamic source response with an invalid `probe_hint` plays without its hints, as a playout file item does, instead of showing the fallback
 
 ### Fixed
 - Fix QSV streams failing about 10 s in with `Can't allocate a surface` or `Failed to query an output frame` on pre-Tiger Lake Intel GPUs (regression in 0.2.4)

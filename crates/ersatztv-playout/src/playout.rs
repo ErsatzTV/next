@@ -14,7 +14,7 @@ pub const DATE_FORMAT: Iso8601<DATE_CONFIG> = Iso8601::<DATE_CONFIG>;
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 0,
-    compatible: 7,
+    compatible: 8,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/playout/version/", SUPPORTED_SCHEMA);
@@ -509,6 +509,20 @@ pub async fn from_file(path: &str) -> Result<PlayoutLoadResult, PlayoutError> {
     })
 }
 
+/// Loads one item as a playout file does: a bad probe hint is dropped and returned as the issue.
+pub fn item_from_str(raw: &str) -> Result<(PlayoutItem, Option<ItemIssue>), String> {
+    if let Ok(item) = serde_json::from_str::<PlayoutItem>(raw) {
+        return Ok((item, None));
+    }
+
+    let mut issues = Vec::new();
+    match load_item(0, raw, &mut issues) {
+        Some(LoadedItem::Valid(item)) => Ok((*item, issues.pop())),
+        Some(LoadedItem::Invalid(item)) => Err(item.error),
+        None => Err(issues.pop().map(|i| i.error).unwrap_or_default()),
+    }
+}
+
 #[derive(Deserialize)]
 struct ItemSlot {
     id: String,
@@ -834,7 +848,7 @@ mod tests {
     async fn newer_schema_is_rejected_with_supported_version() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("playout.json");
-        let newer = "https://ersatztv.org/playout/version/0.0.8";
+        let newer = "https://ersatztv.org/playout/version/0.0.9";
         let value = serde_json::json!({ "version": newer, "items": [] });
         tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
             .await
@@ -846,7 +860,7 @@ mod tests {
                 supported,
             })) => {
                 assert_eq!(found, newer);
-                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.7");
+                assert_eq!(supported, "https://ersatztv.org/playout/version/0.0.8");
             }
             other => panic!("expected Unsupported, got {:?}", other.err()),
         }
