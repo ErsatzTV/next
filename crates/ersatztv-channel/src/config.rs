@@ -882,7 +882,8 @@ impl ChannelConfig {
             ersatztv_core::deep_merge(&mut config_value, v);
         }
 
-        let mut channel_config: ChannelConfig = serde_json::from_value(config_value)
+        // the path names the field; the merged value can't say which source lacked it
+        let mut channel_config: ChannelConfig = serde_path_to_error::deserialize(config_value)
             .map_err(|e| ChannelError::ChannelConfigFailure(e.to_string()))?;
         channel_config.version = Some(SCHEMA.uri());
 
@@ -1060,6 +1061,24 @@ mod tests {
             }
             other => panic!("expected ChannelConfigSchemaVersion, got {:?}", other.err()),
         }
+    }
+
+    #[tokio::test]
+    async fn error_names_the_field() {
+        let mut missing = base();
+        missing["normalization"] = json!({ "video": {} });
+        assert_eq!(
+            config_error(load(&[missing]).await),
+            "normalization: missing field `audio`"
+        );
+
+        let mut invalid = base();
+        invalid["normalization"]["video"]["bit_depth"] = json!("ten");
+        let message = config_error(load(&[invalid]).await);
+        assert!(
+            message.starts_with("normalization.video.bit_depth: "),
+            "{message}"
+        );
     }
 
     #[tokio::test]
