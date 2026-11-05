@@ -19,7 +19,15 @@
       "minimum": 0
     },
     "runtime_capability": {
-      "description": "Probed capabilities of this machine and ffmpeg build. Always `null` for now."
+      "description": "What this machine and the config's ffmpeg build can do, from `describe --probe <config>`;\n`null` without `--probe`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeCapability"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "schema_capability": {
       "description": "Values the channel config accepts. A value listed here may still be unavailable on this\nmachine or ffmpeg build.",
@@ -33,6 +41,78 @@
     "schema_capability"
   ],
   "$defs": {
+    "AccelRuntime": {
+      "title": "AccelRuntime",
+      "type": "object",
+      "properties": {
+        "accel": {
+          "description": "The `normalization.video.accel` value.",
+          "type": "string"
+        },
+        "configured": {
+          "description": "Whether this is the accel, device and driver the channel config selects.",
+          "type": "boolean"
+        },
+        "decode": {
+          "description": "Source codecs the channel decodes in hardware. Each codec was checked with a typical profile\nfor each pixel format; a stream's actual profile or interlacing can still make it decode in\nsoftware. A codec or pixel format not listed decodes in software.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecodeSupport"
+          }
+        },
+        "device": {
+          "description": "The device probed: the VAAPI render node, or the AMF adapter (`<index>: <description>`, or\nthe configured index when the probe failed). `null` for other accels.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "driver": {
+          "description": "The VAAPI driver probed, as a `normalization.video.vaapi_driver` value; `null` when libva\nselected it, and for other accels.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "encode": {
+          "description": "`normalization.video.format` values the channel encodes in hardware, by\n`normalization.video.bit_depth`. Anything not listed encodes in software.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EncodeSupport"
+          }
+        },
+        "error": {
+          "description": "Why the accel isn't available, or `null`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Whether the channel can use this accel. `decode` and `encode` are empty unless it is\n`available`.",
+          "$ref": "#/$defs/AccelStatus"
+        }
+      },
+      "required": [
+        "accel",
+        "configured",
+        "status",
+        "decode",
+        "encode"
+      ]
+    },
+    "AccelStatus": {
+      "title": "AccelStatus",
+      "description": "`available`: the channel uses this accel. `ffmpeg_missing`: the ffmpeg build lacks its hwaccel,\nso the channel uses software. `probe_failed`: the device or driver couldn't be opened (see\n`error`). `timeout`: the probe didn't finish. `skipped`: not probed, because an earlier probe of\nthe same accel didn't finish.",
+      "type": "string",
+      "enum": [
+        "available",
+        "ffmpeg_missing",
+        "probe_failed",
+        "timeout",
+        "skipped"
+      ]
+    },
     "BinaryInfo": {
       "title": "BinaryInfo",
       "type": "object",
@@ -98,6 +178,79 @@
         "dynamic_callback_headers"
       ]
     },
+    "DecodeSupport": {
+      "title": "DecodeSupport",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Codec name as ffprobe reports it (`codec_name`), e.g. `hevc`.",
+          "type": "string"
+        },
+        "pixel_formats": {
+          "description": "Pixel formats as ffprobe reports them (`pix_fmt`), e.g. `yuv420p10le`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "pixel_formats"
+      ]
+    },
+    "EncodeSupport": {
+      "title": "EncodeSupport",
+      "type": "object",
+      "properties": {
+        "bit_depths": {
+          "description": "`normalization.video.bit_depth` values.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        },
+        "format": {
+          "description": "A `normalization.video.format` value.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "bit_depths"
+      ]
+    },
+    "FfmpegRuntime": {
+      "title": "FfmpegRuntime",
+      "type": "object",
+      "properties": {
+        "hwaccels": {
+          "description": "Hardware accels the ffmpeg build lists (`ffmpeg -hwaccels`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "Path from the channel config, or `ffmpeg` (found on `PATH`) when it sets none.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Version from `ffmpeg -version`, e.g. `n8.1.2-etv.4`, or `null` when it couldn't be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "hwaccels"
+      ]
+    },
     "OutputFiles": {
       "title": "OutputFiles",
       "type": "object",
@@ -129,6 +282,28 @@
         "segment_template",
         "ready",
         "heartbeat"
+      ]
+    },
+    "RuntimeCapability": {
+      "title": "RuntimeCapability",
+      "description": "What this machine and ffmpeg build can do with a channel config.",
+      "type": "object",
+      "properties": {
+        "accels": {
+          "description": "One entry per probe of every accel this build can probe here, selected or not. VAAPI appears\nonce per render node and driver; the others once. `configured` marks the config's entry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccelRuntime"
+          }
+        },
+        "ffmpeg": {
+          "description": "The ffmpeg build the channel config selects.",
+          "$ref": "#/$defs/FfmpegRuntime"
+        }
+      },
+      "required": [
+        "ffmpeg",
+        "accels"
       ]
     },
     "SchemaCapability": {

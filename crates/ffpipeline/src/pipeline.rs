@@ -321,7 +321,7 @@ impl PixelFormat {
         }
     }
 
-    pub(crate) fn sampling(&self) -> Sampling {
+    pub fn sampling(&self) -> Sampling {
         match self {
             PixelFormat::Bgra | PixelFormat::Rgba => Sampling::Rgb,
             PixelFormat::Yuv420p

@@ -4,6 +4,9 @@ use serde::Serialize;
 
 use crate::pipeline::{PixelFormat, Sampling, VideoFormat};
 
+/// `false` where the backend below is a stub.
+pub const HAS_PROBE: bool = cfg!(all(target_os = "linux", target_arch = "aarch64"));
+
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 pub(crate) mod probe;
 

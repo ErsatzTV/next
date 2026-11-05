@@ -118,6 +118,9 @@ pub enum ChannelError {
 
     #[error("probe hint failure")]
     ProbeHintFailure,
+
+    #[error("describe probe failed: {0}")]
+    DescribeProbe(String),
 }
 
 fn format_stderr_tail(stderr_tail: &[String]) -> String {
