@@ -12,6 +12,13 @@ pub enum FallbackReason {
     /// no playout item could be selected (missing or invalid playout JSON, dynamic item failed, ...)
     ItemSelectionFailed(ChannelError),
 
+    InvalidItem {
+        item_id: String,
+        start: OffsetDateTime,
+        finish: OffsetDateTime,
+        error: String,
+    },
+
     /// the playout item was selected but could not be transcoded
     TranscodeFailed {
         item_id: String,
@@ -34,6 +41,17 @@ impl FallbackReason {
             ChannelError::PlayoutJsonNoItem { next_start } => {
                 FallbackReason::ScheduledGap { next_start }
             }
+            ChannelError::PlayoutItemInvalid {
+                item_id,
+                start,
+                finish,
+                error,
+            } => FallbackReason::InvalidItem {
+                item_id,
+                start,
+                finish,
+                error,
+            },
             other => FallbackReason::ItemSelectionFailed(other),
         }
     }
@@ -63,6 +81,7 @@ impl FallbackReason {
         match self {
             FallbackReason::ScheduledGap { next_start } => *next_start,
             FallbackReason::ItemSelectionFailed(_) => None,
+            FallbackReason::InvalidItem { finish, .. } => Some(*finish),
             FallbackReason::TranscodeFailed { finish, .. } => Some(*finish),
             FallbackReason::SourceEnded { finish, .. } => Some(*finish),
         }
@@ -75,6 +94,17 @@ impl FallbackReason {
                 ChannelError::PlayoutJsonNoItem { next_start }
             }
             FallbackReason::ItemSelectionFailed(error) => error,
+            FallbackReason::InvalidItem {
+                item_id,
+                start,
+                finish,
+                error,
+            } => ChannelError::PlayoutItemInvalid {
+                item_id,
+                start,
+                finish,
+                error,
+            },
             FallbackReason::TranscodeFailed { error, .. } => error,
             FallbackReason::SourceEnded {
                 item_id, reached, ..
@@ -91,6 +121,14 @@ impl FallbackReason {
             FallbackReason::ItemSelectionFailed(error) => {
                 log::error!("no item could be selected for {now}, replacing with fallback: {error}")
             }
+            FallbackReason::InvalidItem {
+                item_id,
+                start,
+                finish,
+                error,
+            } => log::error!(
+                "item {item_id} ({start} .. {finish}) is invalid, replacing with fallback: {error}"
+            ),
             FallbackReason::TranscodeFailed {
                 item_id,
                 start,
@@ -123,6 +161,9 @@ impl Display for FallbackReason {
             }
             FallbackReason::ItemSelectionFailed(error) => {
                 write!(f, "unable to select playout item: {error}")
+            }
+            FallbackReason::InvalidItem { item_id, error, .. } => {
+                write!(f, "playout item {item_id} is invalid: {error}")
             }
             FallbackReason::TranscodeFailed { item_id, error, .. } => {
                 write!(f, "playout item {item_id} failed to transcode: {error}")
@@ -217,6 +258,27 @@ mod tests {
             FallbackReason::SourceEnded { reached, .. } if reached == item.start
         ));
         assert_eq!(reason.fallback_until(), Some(item.finish));
+    }
+
+    #[test]
+    fn invalid_item_falls_back_until_its_finish() {
+        let finish = datetime!(2026-01-01 12:30 UTC);
+        let reason = FallbackReason::from_selection_error(ChannelError::PlayoutItemInvalid {
+            item_id: String::from("bad"),
+            start: datetime!(2026-01-01 12:00 UTC),
+            finish,
+            error: String::from("source: unknown variant `carrier_pigeon`"),
+        });
+
+        assert_eq!(reason.fallback_until(), Some(finish));
+        assert_eq!(
+            reason.to_string(),
+            "playout item bad is invalid: source: unknown variant `carrier_pigeon`"
+        );
+        assert!(matches!(
+            reason.into_error(),
+            ChannelError::PlayoutItemInvalid { item_id, finish: f, .. } if item_id == "bad" && f == finish
+        ));
     }
 
     #[test]

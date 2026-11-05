@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Fix QSV, VAAPI and CUDA items failing when the source's color tags change mid-stream
 - Fix 4:2:2, 4:4:4 and 12-bit sources (such as ProRes, or HEVC/H.264 from cameras)
   - Hardware decode is no longer attempted; they are converted to 4:2:0 after deinterlacing and scaling
+- Fix one invalid playout item failing the whole playout file, so the channel showed `failed to load playout JSON file` for every item
+  - An invalid item now shows the fallback (and error card, if `fallback.show_error` is on) for its own time only, naming the item and the invalid field
+  - An item with an invalid `probe_hint` plays without its hints instead, with a warning in the log
+  - An item without a readable `id`, `start` and `finish` is skipped, and its time is treated as a gap
 
 ## [0.2.4] - 2026-10-31
 ### Added

@@ -53,6 +53,14 @@ pub enum ChannelError {
     #[error("unable to find current item in playout JSON")]
     PlayoutJsonNoItem { next_start: Option<OffsetDateTime> },
 
+    #[error("playout item {item_id} is invalid: {error}")]
+    PlayoutItemInvalid {
+        item_id: String,
+        start: OffsetDateTime,
+        finish: OffsetDateTime,
+        error: String,
+    },
+
     // This value got pushed down into another module (pipeline)
     // See if there is a way to port this over
     // #[error("local source is invalid for playout item")]

@@ -7,7 +7,8 @@ edition = "2024"
 [dependencies]
 ersatztv-core = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+serde_path_to_error = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
