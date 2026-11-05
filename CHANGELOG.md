@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A dynamic source response with an invalid `probe_hint` plays without its hints, as a playout file item does, instead of showing the fallback
 
 ### Fixed
+- Vulkan: fix hardware decode being chosen for formats the driver can't decode, such as H.264 10-bit on Intel GPUs on Windows
+  - Vulkan support is now checked the way ffmpeg checks it, including whether the driver has an image format for it
+- Vulkan: never select a CPU (llvmpipe) Vulkan device
 - Channel config errors name the field, e.g. `normalization: missing field audio` instead of `missing field audio`
 - Fix QSV streams failing about 10 s in with `Can't allocate a surface` or `Failed to query an output frame` on pre-Tiger Lake Intel GPUs (regression in 0.2.4)
 - Fix NVENC failing to start (`Gop Length should be greater than number of B frames + 1`) on very low frame rate sources, such as 1 fps slideshows
