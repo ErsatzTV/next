@@ -8,18 +8,23 @@ use std::ffi::{CStr, c_void};
 use std::ptr;
 
 use libvulkan_sys::{
-    STD_VIDEO_AV1_PROFILE_MAIN, STD_VIDEO_H264_PROFILE_IDC_HIGH, STD_VIDEO_H265_PROFILE_IDC_MAIN,
+    STD_VIDEO_AV1_PROFILE_MAIN, STD_VIDEO_H264_PROFILE_IDC_HIGH,
+    STD_VIDEO_H264_PROFILE_IDC_HIGH_10, STD_VIDEO_H265_PROFILE_IDC_MAIN,
     STD_VIDEO_H265_PROFILE_IDC_MAIN_10, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
     VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,
-    VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME, VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
-    VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME,
-    VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
+    VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR, VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR,
+    VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+    VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
+    VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,
+    VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME, VK_KHR_VIDEO_ENCODE_H265_EXTENSION_NAME,
+    VK_PHYSICAL_DEVICE_TYPE_CPU, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
     VK_STRUCTURE_TYPE_APPLICATION_INFO, VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES,
-    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR,
-    VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR,
+    VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR, VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PROFILE_INFO_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
     VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR,
@@ -33,17 +38,20 @@ use libvulkan_sys::{
     VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PROFILE_INFO_KHR,
     VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_CAPABILITIES_KHR,
     VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_PROFILE_INFO_KHR, VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR,
-    VK_SUCCESS, VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR,
-    VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-    VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR, VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR,
-    VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR, VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR,
-    VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
-    VkApplicationInfo, VkExtensionProperties, VkInstanceCreateInfo, VkLib, VkPhysicalDevice,
+    VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, VK_SUCCESS,
+    VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
+    VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR, VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR,
+    VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR, VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+    VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR, VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+    VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+    VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR, VkApplicationInfo,
+    VkExtensionProperties, VkInstanceCreateInfo, VkLib, VkPhysicalDevice,
     VkPhysicalDeviceDrmPropertiesEXT, VkPhysicalDeviceIDProperties, VkPhysicalDeviceProperties2,
-    VkResult, VkVideoCapabilitiesKHR, VkVideoDecodeAV1ProfileInfoKHR,
-    VkVideoDecodeH264ProfileInfoKHR, VkVideoDecodeH265ProfileInfoKHR,
-    VkVideoEncodeAV1ProfileInfoKHR, VkVideoEncodeH264ProfileInfoKHR,
-    VkVideoEncodeH265ProfileInfoKHR, VkVideoProfileInfoKHR, vk_make_api_version,
+    VkPhysicalDeviceVideoFormatInfoKHR, VkResult, VkVideoCapabilitiesKHR,
+    VkVideoDecodeAV1ProfileInfoKHR, VkVideoDecodeH264ProfileInfoKHR,
+    VkVideoDecodeH265ProfileInfoKHR, VkVideoEncodeAV1ProfileInfoKHR,
+    VkVideoEncodeH264ProfileInfoKHR, VkVideoEncodeH265ProfileInfoKHR, VkVideoProfileInfoKHR,
+    VkVideoProfileListInfoKHR, vk_make_api_version,
 };
 
 use crate::capabilities::vaapi::VaapiCapabilities;
@@ -56,6 +64,20 @@ type PfnGetVideoCapabilities = unsafe extern "C" fn(
     *const VkVideoProfileInfoKHR,
     *mut VkVideoCapabilitiesKHR,
 ) -> VkResult;
+
+type PfnGetVideoFormatProperties = unsafe extern "C" fn(
+    VkPhysicalDevice,
+    *const VkPhysicalDeviceVideoFormatInfoKHR,
+    *mut u32,
+    *mut c_void,
+) -> VkResult;
+
+#[derive(Clone, Copy)]
+struct VideoFns {
+    capabilities: PfnGetVideoCapabilities,
+    /// `None` skips the format check
+    format_properties: Option<PfnGetVideoFormatProperties>,
+}
 
 const VIDEO_EXTENSIONS: &[&str] = &[
     VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME,
@@ -104,6 +126,11 @@ struct DeviceIdentity {
 }
 
 impl CapsBuf {
+    /// `flags` of a `VkVideoDecodeCapabilitiesKHR`, the first member after `sType` and `pNext`
+    fn decode_flags(&self) -> u32 {
+        u32::from_ne_bytes([self._data[0], self._data[1], self._data[2], self._data[3]])
+    }
+
     fn new(s_type: u32) -> Self {
         Self {
             s_type,
@@ -333,6 +360,10 @@ fn select_device(
             let mut best: Option<(usize, i32)> = None;
 
             for (i, (identity, ext_names)) in identities.iter().zip(extensions).enumerate() {
+                // llvmpipe: Vulkan on the CPU is no accel
+                if identity.device_type == VK_PHYSICAL_DEVICE_TYPE_CPU {
+                    continue;
+                }
                 let score = score(identity, ext_names);
                 if best.is_none_or(|(_, best_score)| score > best_score) {
                     best = Some((i, score));
@@ -340,7 +371,7 @@ fn select_device(
             }
 
             best.map(|(i, _)| i).ok_or_else(|| {
-                FFPipelineError::VulkanCapabilitiesError("no Vulkan physical devices found".into())
+                FFPipelineError::VulkanCapabilitiesError("no Vulkan GPU found".into())
             })
         }
         DeviceTarget::Nvidia(uuid) => identities
@@ -487,20 +518,22 @@ unsafe fn probe_with_instance(
         let mut supported_encoders = HashMap::new();
 
         if let Some(fn_ptr) = get_video_caps {
-            let get_video_caps: PfnGetVideoCapabilities = std::mem::transmute(fn_ptr);
+            let capabilities: PfnGetVideoCapabilities = std::mem::transmute(fn_ptr);
+            let format_properties = (vk.vkGetInstanceProcAddr)(
+                instance,
+                c"vkGetPhysicalDeviceVideoFormatPropertiesKHR".as_ptr(),
+            )
+            .map(|f| {
+                let f: PfnGetVideoFormatProperties = std::mem::transmute(f);
+                f
+            });
+            let fns = VideoFns {
+                capabilities,
+                format_properties,
+            };
 
-            probe_decoders(
-                physical_device,
-                ext_names,
-                get_video_caps,
-                &mut supported_decoders,
-            );
-            probe_encoders(
-                physical_device,
-                ext_names,
-                get_video_caps,
-                &mut supported_encoders,
-            );
+            probe_decoders(physical_device, ext_names, fns, &mut supported_decoders);
+            probe_encoders(physical_device, ext_names, fns, &mut supported_encoders);
         } else {
             log::warn!(
                 "[vulkan] vkGetPhysicalDeviceVideoCapabilitiesKHR not available; \
@@ -542,26 +575,43 @@ unsafe fn probe_with_instance(
 unsafe fn probe_decoders(
     device: VkPhysicalDevice,
     ext_names: &HashSet<String>,
-    get_video_caps: PfnGetVideoCapabilities,
+    fns: VideoFns,
     out: &mut HashMap<VideoFormat, Vec<u8>>,
 ) {
     unsafe {
-        // H.264: same profile (High) for all bit depths
+        // H.264: High for 8-bit, High 10 for 10-bit, as ffmpeg asks for a stream's own profile
         if ext_names.contains(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME) {
-            let profile_info = VkVideoDecodeH264ProfileInfoKHR {
-                s_type: VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR,
-                p_next: ptr::null(),
-                std_profile_idc: STD_VIDEO_H264_PROFILE_IDC_HIGH,
-                picture_layout: 0,
-            };
-            let depths = probe_bit_depths(
-                device,
-                VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
-                get_video_caps,
-                &profile_info as *const _ as *const c_void,
-                VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
-                VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR,
-            );
+            let mut depths = Vec::new();
+            for (flag, depth, profile_idc) in [
+                (
+                    VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                    8,
+                    STD_VIDEO_H264_PROFILE_IDC_HIGH,
+                ),
+                (
+                    VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+                    10,
+                    STD_VIDEO_H264_PROFILE_IDC_HIGH_10,
+                ),
+            ] {
+                let profile_info = VkVideoDecodeH264ProfileInfoKHR {
+                    s_type: VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR,
+                    p_next: ptr::null(),
+                    std_profile_idc: profile_idc,
+                    picture_layout: 0,
+                };
+                if try_profile(
+                    device,
+                    VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR,
+                    flag,
+                    &profile_info as *const _ as *const c_void,
+                    VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
+                    VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR,
+                    fns,
+                ) {
+                    depths.push(depth);
+                }
+            }
             if !depths.is_empty() {
                 out.insert(VideoFormat::H264, depths);
             }
@@ -583,7 +633,7 @@ unsafe fn probe_decoders(
                 &profile_8 as *const _ as *const c_void,
                 VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
                 VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR,
-                get_video_caps,
+                fns,
             ) {
                 depths.push(8);
             }
@@ -600,7 +650,7 @@ unsafe fn probe_decoders(
                 &profile_10 as *const _ as *const c_void,
                 VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
                 VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR,
-                get_video_caps,
+                fns,
             ) {
                 depths.push(10);
             }
@@ -621,7 +671,7 @@ unsafe fn probe_decoders(
             let depths = probe_bit_depths(
                 device,
                 VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR,
-                get_video_caps,
+                fns,
                 &profile_info as *const _ as *const c_void,
                 VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR,
                 VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR,
@@ -636,25 +686,42 @@ unsafe fn probe_decoders(
 unsafe fn probe_encoders(
     device: VkPhysicalDevice,
     ext_names: &HashSet<String>,
-    get_video_caps: PfnGetVideoCapabilities,
+    fns: VideoFns,
     out: &mut HashMap<VideoFormat, Vec<u8>>,
 ) {
     unsafe {
-        // H.264 encode: High profile
+        // H.264 encode: High / High 10
         if ext_names.contains(VK_KHR_VIDEO_ENCODE_H264_EXTENSION_NAME) {
-            let profile_info = VkVideoEncodeH264ProfileInfoKHR {
-                s_type: VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PROFILE_INFO_KHR,
-                p_next: ptr::null(),
-                std_profile_idc: STD_VIDEO_H264_PROFILE_IDC_HIGH,
-            };
-            let depths = probe_bit_depths(
-                device,
-                VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
-                get_video_caps,
-                &profile_info as *const _ as *const c_void,
-                VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR,
-                VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR,
-            );
+            let mut depths = Vec::new();
+            for (flag, depth, profile_idc) in [
+                (
+                    VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR,
+                    8,
+                    STD_VIDEO_H264_PROFILE_IDC_HIGH,
+                ),
+                (
+                    VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR,
+                    10,
+                    STD_VIDEO_H264_PROFILE_IDC_HIGH_10,
+                ),
+            ] {
+                let profile_info = VkVideoEncodeH264ProfileInfoKHR {
+                    s_type: VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_PROFILE_INFO_KHR,
+                    p_next: ptr::null(),
+                    std_profile_idc: profile_idc,
+                };
+                if try_profile(
+                    device,
+                    VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR,
+                    flag,
+                    &profile_info as *const _ as *const c_void,
+                    VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR,
+                    VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR,
+                    fns,
+                ) {
+                    depths.push(depth);
+                }
+            }
             if !depths.is_empty() {
                 out.insert(VideoFormat::H264, depths);
             }
@@ -676,7 +743,7 @@ unsafe fn probe_encoders(
                 &profile_8 as *const _ as *const c_void,
                 VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR,
                 VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_CAPABILITIES_KHR,
-                get_video_caps,
+                fns,
             ) {
                 depths.push(8);
             }
@@ -693,7 +760,7 @@ unsafe fn probe_encoders(
                 &profile_10 as *const _ as *const c_void,
                 VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR,
                 VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_CAPABILITIES_KHR,
-                get_video_caps,
+                fns,
             ) {
                 depths.push(10);
             }
@@ -713,7 +780,7 @@ unsafe fn probe_encoders(
             let depths = probe_bit_depths(
                 device,
                 VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR,
-                get_video_caps,
+                fns,
                 &profile_info as *const _ as *const c_void,
                 VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR,
                 VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_CAPABILITIES_KHR,
@@ -782,7 +849,7 @@ unsafe fn try_profile(
     profile_p_next: *const c_void,
     decode_or_encode_caps_stype: u32,
     codec_caps_stype: u32,
-    get_video_caps: PfnGetVideoCapabilities,
+    fns: VideoFns,
 ) -> bool {
     unsafe {
         let profile = VkVideoProfileInfoKHR {
@@ -802,7 +869,7 @@ unsafe fn try_profile(
         caps.s_type = VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR;
         caps.p_next = &mut dec_enc_caps as *mut _ as *mut c_void;
 
-        let result = get_video_caps(physical_device, &profile, &mut caps);
+        let result = (fns.capabilities)(physical_device, &profile, &mut caps);
         if result != VK_SUCCESS {
             log::debug!(
                 "[vulkan]   codec_op=0x{:08x} bit_depth_flag=0x{:02x}: returned {}",
@@ -810,15 +877,68 @@ unsafe fn try_profile(
                 bit_depth_flag,
                 result,
             );
+            return false;
         }
-        result == VK_SUCCESS
+
+        let Some(format_properties) = fns.format_properties else {
+            return true;
+        };
+
+        // the image usage ffmpeg asks for (vulkan_decode.c, vulkan_encode.c); some drivers accept
+        // the profile but have no image format for it
+        let image_usage =
+            if decode_or_encode_caps_stype == VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR {
+                if dec_enc_caps.decode_flags()
+                    & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR
+                    != 0
+                {
+                    VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR
+                        | VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                        | VK_IMAGE_USAGE_SAMPLED_BIT
+                } else {
+                    VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR
+                }
+            } else {
+                VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR
+            };
+
+        let profile_list = VkVideoProfileListInfoKHR {
+            s_type: VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR,
+            p_next: ptr::null(),
+            profile_count: 1,
+            p_profiles: &profile,
+        };
+        let format_info = VkPhysicalDeviceVideoFormatInfoKHR {
+            s_type: VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR,
+            p_next: &profile_list as *const _ as *const c_void,
+            image_usage,
+        };
+        let mut format_count = 0u32;
+        let result = format_properties(
+            physical_device,
+            &format_info,
+            &mut format_count,
+            ptr::null_mut(),
+        );
+        if result != VK_SUCCESS || format_count == 0 {
+            log::debug!(
+                "[vulkan]   codec_op=0x{:08x} bit_depth_flag=0x{:02x}: no video format (returned {}, {} formats)",
+                codec_op,
+                bit_depth_flag,
+                result,
+                format_count,
+            );
+            return false;
+        }
+        true
     }
 }
 
 unsafe fn probe_bit_depths(
     physical_device: VkPhysicalDevice,
     codec_op: u32,
-    get_video_caps: PfnGetVideoCapabilities,
+    fns: VideoFns,
     profile_p_next: *const c_void,
     decode_or_encode_caps_stype: u32,
     codec_caps_stype: u32,
@@ -833,11 +953,64 @@ unsafe fn probe_bit_depths(
                 profile_p_next,
                 decode_or_encode_caps_stype,
                 codec_caps_stype,
-                get_video_caps,
+                fns,
             )
         } {
             bit_depths.push(value);
         }
     }
     bit_depths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const INTEGRATED: u32 = 1;
+
+    fn identity(name: &str, device_type: u32) -> DeviceIdentity {
+        DeviceIdentity {
+            name: name.into(),
+            device_type,
+            vendor_id: 0,
+            pci_device_id: 0,
+            device_uuid: None,
+            device_luid: None,
+            drm_nodes: Vec::new(),
+        }
+    }
+
+    fn video_extensions() -> HashSet<String> {
+        [VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME.to_string()].into()
+    }
+
+    #[test]
+    fn best_skips_cpu_devices() {
+        let identities = [
+            identity("llvmpipe", VK_PHYSICAL_DEVICE_TYPE_CPU),
+            identity("igpu", INTEGRATED),
+        ];
+        let extensions = [HashSet::new(), HashSet::new()];
+        assert_eq!(
+            select_device(DeviceTarget::Best, &identities, &extensions).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn best_prefers_video_extensions() {
+        let identities = [identity("a", INTEGRATED), identity("b", INTEGRATED)];
+        let extensions = [HashSet::new(), video_extensions()];
+        assert_eq!(
+            select_device(DeviceTarget::Best, &identities, &extensions).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn best_fails_with_only_cpu_devices() {
+        let identities = [identity("llvmpipe", VK_PHYSICAL_DEVICE_TYPE_CPU)];
+        let extensions = [video_extensions()];
+        assert!(select_device(DeviceTarget::Best, &identities, &extensions).is_err());
+    }
 }

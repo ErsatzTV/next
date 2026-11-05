@@ -10,6 +10,7 @@ pub const VK_SUCCESS: VkResult = 0;
 
 // Physical device types
 pub const VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: u32 = 2;
+pub const VK_PHYSICAL_DEVICE_TYPE_CPU: u32 = 4;
 
 // Structure types
 pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: u32 = 0;
@@ -18,6 +19,8 @@ pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2: u32 = 1000059001;
 pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES: u32 = 1000071004;
 pub const VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR: u32 = 1000023000;
 pub const VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR: u32 = 1000023001;
+pub const VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR: u32 = 1000023013;
+pub const VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR: u32 = 1000023014;
 pub const VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR: u32 = 1000024001;
 pub const VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR: u32 = 1000038000;
 pub const VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_CAPABILITIES_KHR: u32 = 1000039000;
@@ -36,6 +39,16 @@ pub const VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR: u32 = 0x00010000;
 pub const VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR: u32 = 0x00020000;
 pub const VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR: u32 = 0x00040000;
 
+// Image usage flags
+pub const VK_IMAGE_USAGE_TRANSFER_SRC_BIT: u32 = 0x00000001;
+pub const VK_IMAGE_USAGE_SAMPLED_BIT: u32 = 0x00000004;
+pub const VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR: u32 = 0x00000400;
+pub const VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR: u32 = 0x00001000;
+pub const VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR: u32 = 0x00008000;
+
+// Video decode capability flags
+pub const VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR: u32 = 0x00000001;
+
 // Chroma subsampling
 pub const VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR: u32 = 0x02;
 
@@ -53,6 +66,7 @@ pub const VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PROFILE_INFO_KHR: u32 = 1000513005;
 
 // H.264 profile IDCs (StdVideoH264ProfileIdc)
 pub const STD_VIDEO_H264_PROFILE_IDC_HIGH: u32 = 100;
+pub const STD_VIDEO_H264_PROFILE_IDC_HIGH_10: u32 = 110;
 
 // H.265 profile IDCs (StdVideoH265ProfileIdc)
 pub const STD_VIDEO_H265_PROFILE_IDC_MAIN: u32 = 1;
@@ -220,6 +234,21 @@ pub struct VkVideoProfileInfoKHR {
     pub chroma_subsampling: u32,
     pub luma_bit_depth: u32,
     pub chroma_bit_depth: u32,
+}
+
+#[repr(C)]
+pub struct VkVideoProfileListInfoKHR {
+    pub s_type: u32,
+    pub p_next: *const c_void,
+    pub profile_count: u32,
+    pub p_profiles: *const VkVideoProfileInfoKHR,
+}
+
+#[repr(C)]
+pub struct VkPhysicalDeviceVideoFormatInfoKHR {
+    pub s_type: u32,
+    pub p_next: *const c_void,
+    pub image_usage: u32,
 }
 
 #[repr(C)]
