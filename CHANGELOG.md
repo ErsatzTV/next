@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Dynamic source requests send `x-etv-playout-schema`, the newest playout schema version the channel accepts (playout schema `0.0.8`)
 
 ### Changed
-- Require ErsatzTV-ffmpeg `8.1.2-4089c130-develop` or later
+- Require ErsatzTV-ffmpeg `8.1.2-8`
 - A dynamic source response with an invalid `probe_hint` plays without its hints, as a playout file item does, instead of showing the fallback
 
 ### Fixed
@@ -39,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - An invalid item now shows the fallback (and error card, if `fallback.show_error` is on) for its own time only, naming the item and the invalid field
   - An item with an invalid `probe_hint` plays without its hints instead, with a warning in the log
   - An item without a readable `id`, `start` and `finish` is skipped, and its time is treated as a gap
+
+### Known issues
+- VAAPI on Intel Meteor Lake and Arrow Lake with the free `intel-media-va-driver` package (Debian, Ubuntu): channels with a watermark run far below realtime
+  - Install `intel-media-va-driver-non-free`, or set `ffmpeg.disabled_filters` to `["overlay_vaapi"]` in the channel config
+  - The docker image is not affected
 
 ## [0.2.4] - 2026-10-31
 ### Added
