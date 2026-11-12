@@ -1,12 +1,12 @@
-name: Problem running next directly
-description: next run on its own, outside of ErsatzTV Legacy
+name: Problem with next in another application or run directly
+description: next run on its own or by an application other than ErsatzTV Legacy
 type: Bug
 labels: ["host:standalone"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form when you run next yourself. If your channel is managed by ErsatzTV Legacy, use the ErsatzTV Legacy form instead.
+        Use this form when you run next yourself, or when another application runs it for you. Only report problems with next here; problems with that application's scheduling, guide or UI belong in its own project. If your channel is managed by ErsatzTV Legacy, use the ErsatzTV Legacy form instead.
   - type: checkboxes
     id: before-posting
     attributes:

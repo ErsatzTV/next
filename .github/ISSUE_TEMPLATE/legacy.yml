@@ -1,17 +1,30 @@
-name: Streaming problem in ErsatzTV Legacy
-description: A channel using the next streaming engine in ErsatzTV Legacy doesn't play correctly
+name: Playback problem in ErsatzTV Legacy
+description: A channel or item in ErsatzTV Legacy doesn't play correctly (video, audio, subtitles, graphics)
 type: Bug
 labels: ["host:ersatztv-legacy"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form for channels set to the **Next** streaming engine in ErsatzTV Legacy. If you run next on its own, use the standalone form instead.
+        **This form is only for playback problems in ErsatzTV Legacy.** This repository is ErsatzTV Next, the streaming engine that ErsatzTV Legacy uses to turn a scheduled item into a stream. Next doesn't build schedules or playouts, and ErsatzTV Legacy itself isn't developed here.
+
+        | Report here | Don't report here |
+        |---|---|
+        | A stream doesn't start, stops or stutters | Playout build errors, wrong or missing items in a schedule |
+        | Broken or missing video, audio or subtitles | Guide (EPG) or time zone problems |
+        | Watermarks or graphics render incorrectly | Media libraries, scanning, metadata |
+        | Hardware acceleration errors during playback | Settings, the web UI, installation, upgrades |
+
+        For anything in the right column, ask the ErsatzTV Legacy community via [Contact](https://ersatztv.org/contact). Issues about those topics are closed here without investigation.
+
+        If you run next on its own or through another application, use the standalone form instead.
   - type: checkboxes
     id: before-posting
     attributes:
       label: "This issue respects the following points:"
       options:
+        - label: This is a **playback** problem (see the table above), not an ErsatzTV Legacy scheduling, playout build, guide, library, settings or UI problem. I understand other issues are closed without investigation.
+          required: true
         - label: This issue is **not** already reported on [GitHub](https://github.com/ErsatzTV/next/issues?q=is%3Aopen+is%3Aissue) _(I've searched it)_.
           required: true
         - label: I'm using an up-to-date version of ErsatzTV (full release or develop release).
@@ -38,19 +51,14 @@ body:
     id: legacy-engine
     attributes:
       label: Does this channel play correctly with the legacy streaming engine?
+      description: The legacy streaming engine was removed in ErsatzTV v26.12.
       options:
         - "Yes"
         - "No"
         - I didn't try
+        - Not available (v26.12 or newer)
     validations:
       required: true
-  - type: dropdown
-    id: switched-back
-    attributes:
-      label: Did you switch this channel back to the legacy streaming engine because of this problem?
-      options:
-        - "Yes"
-        - "No"
   - type: input
     id: client
     attributes:
