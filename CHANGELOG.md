@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Added
+- `session.idle_timeout_seconds` in `channel.json`: seconds without a `.heartbeat` touch before the channel stops (default 90); `0` keeps the channel running without viewers (channel config schema `0.1.4`)
+- `session.ready_segment_count` in `channel.json`: segments the playlist must hold before `.ready` is written, from 1 to 10 (default 3)
+
+### Changed
+- `.ready` is written after 3 segments instead of 4. ffmpeg, mpv and hls.js start 3 segments from the live edge, so they now start at the first segment, sooner and with the same buffer
 
 ## [0.2.5] - 2026-11-06
 ### Added

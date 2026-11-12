@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ersatztv_core::{SchemaVersion, VersionedSchema};
+use ersatztv_core::{HEARTBEAT_FILE_TIMEOUT, SchemaVersion, VersionedSchema};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -14,7 +14,7 @@ use crate::error::{ChannelError, IoContext};
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 1,
-    compatible: 3,
+    compatible: 4,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
@@ -29,6 +29,10 @@ pub const PATH_FIELDS: &[&str] = &[
 ];
 
 pub(crate) const DEFAULT_VAAPI_DEVICE: &str = "/dev/dri/renderD128";
+
+/// Most segments the published playlist holds.
+pub const PLAYLIST_WINDOW_SEGMENTS: usize = 10;
+const DEFAULT_READY_SEGMENT_COUNT: usize = 3;
 
 /// Settings for one channel: where its playout is, which ffmpeg to use, and the output format.
 /// A relative path in any of these settings is relative to the file that sets it.
@@ -47,6 +51,9 @@ pub struct ChannelConfig {
     /// What plays when nothing is scheduled or an item fails.
     #[serde(default)]
     pub fallback: FallbackConfig,
+    /// When the channel is ready to serve and when it stops without viewers.
+    #[serde(default)]
+    pub session: SessionConfig,
 
     #[serde(skip)]
     expanded_playout_folder: PathBuf,
@@ -114,6 +121,37 @@ impl FallbackConfig {
         self.duration_seconds.map_or(Duration::from_mins(1), |s| {
             Duration::from_secs(s.get().into())
         })
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
+pub struct SessionConfig {
+    /// Seconds without a `.heartbeat` touch before the channel stops. Default 90. `0` never
+    /// stops the channel for being idle; it runs until it is terminated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_seconds: Option<u32>,
+    /// Segments the playlist must hold before `.ready` is written, from 1 to 10. Default 3, so
+    /// players that start 3 segments from the live edge start at the first segment. The playlist
+    /// publishes only 12 seconds ahead of real time, so each segment above 4 delays `.ready` by
+    /// about 4 seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 10))]
+    pub ready_segment_count: Option<u8>,
+}
+
+impl SessionConfig {
+    /// `None` never times out.
+    pub fn idle_timeout(&self) -> Option<Duration> {
+        match self.idle_timeout_seconds {
+            None => Some(HEARTBEAT_FILE_TIMEOUT),
+            Some(0) => None,
+            Some(s) => Some(Duration::from_secs(s.into())),
+        }
+    }
+
+    pub fn ready_segment_count(&self) -> usize {
+        self.ready_segment_count
+            .map_or(DEFAULT_READY_SEGMENT_COUNT, usize::from)
     }
 }
 
@@ -900,6 +938,14 @@ impl ChannelConfig {
             )));
         }
 
+        if let Some(count) = self.session.ready_segment_count
+            && !(1..=PLAYLIST_WINDOW_SEGMENTS).contains(&usize::from(count))
+        {
+            return Err(ChannelError::ChannelConfigFailure(format!(
+                "session.ready_segment_count must be from 1 to {PLAYLIST_WINDOW_SEGMENTS}"
+            )));
+        }
+
         self.expanded_playout_folder = PathBuf::from(&self.playout.folder);
 
         // expand output folder
@@ -1079,6 +1125,31 @@ mod tests {
             message.starts_with("normalization.video.bit_depth: "),
             "{message}"
         );
+    }
+
+    #[tokio::test]
+    async fn session_defaults_and_never_idle() {
+        let config = load(&[base()]).await.unwrap();
+        assert_eq!(config.session.idle_timeout(), Some(HEARTBEAT_FILE_TIMEOUT));
+        assert_eq!(config.session.ready_segment_count(), 3);
+
+        let mut never = base();
+        never["session"] = json!({ "idle_timeout_seconds": 0, "ready_segment_count": 2 });
+        let config = load(&[never]).await.unwrap();
+        assert_eq!(config.session.idle_timeout(), None);
+        assert_eq!(config.session.ready_segment_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn ready_segment_count_is_bounded() {
+        for count in [0, PLAYLIST_WINDOW_SEGMENTS + 1] {
+            let mut config = base();
+            config["session"] = json!({ "ready_segment_count": count });
+            assert_eq!(
+                config_error(load(&[config]).await),
+                "session.ready_segment_count must be from 1 to 10"
+            );
+        }
     }
 
     #[tokio::test]

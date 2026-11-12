@@ -3,14 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ersatztv_channel::config::{PLAYLIST_WINDOW_SEGMENTS, SessionConfig};
 use ersatztv_channel::error::{ChannelError, IoContext};
-use ersatztv_core::{HEARTBEAT_FILE_NAME, HEARTBEAT_FILE_TIMEOUT};
+use ersatztv_core::HEARTBEAT_FILE_NAME;
 use ffpipeline::pipeline::PtsOffset;
 use ffpipeline::web_vtt::{Cue, format_vtt_ts};
 use time::OffsetDateTime;
 use time::macros::format_description;
-
-const MIN_SEGMENTS: usize = 4;
 
 // 12s
 const PUBLISH_LEAD: Duration =
@@ -62,6 +61,8 @@ pub struct PlaylistManager {
     ffmpeg_playlist_file: String,
     ready: bool,
     ready_at: Option<Instant>,
+    ready_segment_count: usize,
+    idle_timeout: Option<Duration>,
 
     segments: VecDeque<Segment>,
     discontinuity_before: HashSet<String>,
@@ -102,6 +103,7 @@ impl PlaylistManager {
         output_folder: PathBuf,
         ready_file: PathBuf,
         output_files: PlaylistManagerOutputFiles,
+        session: &SessionConfig,
     ) -> PlaylistManager {
         let heartbeat_file = output_folder.join(HEARTBEAT_FILE_NAME);
 
@@ -114,6 +116,8 @@ impl PlaylistManager {
             generated_subtitle_playlist_file: output_files.generated_subtitle_playlist_file,
             ready: false,
             ready_at: None,
+            ready_segment_count: session.ready_segment_count(),
+            idle_timeout: session.idle_timeout(),
 
             segments: VecDeque::new(),
             discontinuity_before: HashSet::new(),
@@ -309,15 +313,21 @@ impl PlaylistManager {
             }
         }
 
-        let playlist_segment_count = self.write_playlists(Some(10), false).await?;
+        let playlist_segment_count = self
+            .write_playlists(Some(PLAYLIST_WINDOW_SEGMENTS), false)
+            .await?;
 
-        if !self.ready && playlist_segment_count >= MIN_SEGMENTS {
+        if !self.ready && playlist_segment_count >= self.ready_segment_count {
             tokio::fs::write(&self.ready_file, b"")
                 .await
                 .io_context("publish the ready signal", &self.ready_file)?;
             self.ready = true;
             self.ready_at = Some(Instant::now());
         }
+
+        let Some(idle_timeout) = self.idle_timeout else {
+            return Ok(());
+        };
 
         let idle = match tokio::fs::metadata(&self.heartbeat_file).await {
             Ok(metadata) => Some(
@@ -336,7 +346,7 @@ impl PlaylistManager {
             }
             Err(e) => return Err(e).io_context("stat the heartbeat file", &self.heartbeat_file),
         };
-        self.timeout = idle.is_some_and(|i| i > HEARTBEAT_FILE_TIMEOUT);
+        self.timeout = idle.is_some_and(|i| i > idle_timeout);
 
         Ok(())
     }
@@ -584,9 +594,19 @@ fn render_subtitle_segment(
 
 #[cfg(test)]
 mod tests {
+    use ersatztv_core::HEARTBEAT_FILE_TIMEOUT;
+
     use super::*;
 
     fn playlist_manager(folder: &Path, channel_start_time: OffsetDateTime) -> PlaylistManager {
+        playlist_manager_with(folder, channel_start_time, &SessionConfig::default())
+    }
+
+    fn playlist_manager_with(
+        folder: &Path,
+        channel_start_time: OffsetDateTime,
+        session: &SessionConfig,
+    ) -> PlaylistManager {
         let file = |name: &str| folder.join(name).to_string_lossy().into_owned();
         PlaylistManager::new(
             channel_start_time,
@@ -598,6 +618,7 @@ mod tests {
                 ffmpeg_playlist_file: file("ffmpeg.m3u8"),
                 generated_subtitle_playlist_file: file("live_sub.m3u8"),
             },
+            session,
         )
     }
 
@@ -644,6 +665,53 @@ mod tests {
             .unwrap();
         pm.update().await.unwrap();
         assert!(!pm.timeout);
+    }
+
+    #[tokio::test]
+    async fn zero_idle_timeout_never_times_out() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+        let session = SessionConfig {
+            idle_timeout_seconds: Some(0),
+            ready_segment_count: None,
+        };
+
+        let mut pm = playlist_manager_with(folder.path(), now - Duration::from_mins(1), &session);
+        write_ffmpeg_segments(
+            folder.path(),
+            &[
+                "live000000.ts",
+                "live000001.ts",
+                "live000002.ts",
+                "live000003.ts",
+            ],
+        )
+        .await;
+        pm.update().await.unwrap();
+        assert!(pm.ready);
+
+        pm.ready_at = Instant::now().checked_sub(HEARTBEAT_FILE_TIMEOUT * 10);
+        pm.update().await.unwrap();
+        assert!(!pm.timeout);
+    }
+
+    #[tokio::test]
+    async fn ready_waits_for_configured_segment_count() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = OffsetDateTime::now_utc();
+        let session = SessionConfig {
+            idle_timeout_seconds: None,
+            ready_segment_count: Some(2),
+        };
+
+        let mut pm = playlist_manager_with(folder.path(), now - Duration::from_mins(1), &session);
+        write_ffmpeg_segments(folder.path(), &["live000000.ts"]).await;
+        pm.update().await.unwrap();
+        assert!(!pm.ready);
+
+        write_ffmpeg_segments(folder.path(), &["live000000.ts", "live000001.ts"]).await;
+        pm.update().await.unwrap();
+        assert!(pm.ready);
     }
 
     #[tokio::test]
