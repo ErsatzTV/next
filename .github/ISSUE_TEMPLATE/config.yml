@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Contact
+  - name: Other ErsatzTV Legacy problems (scheduling, playouts, guide, libraries, UI)
     url: https://ersatztv.org/contact
-    about: Chat Options
+    about: This repository is the next streaming engine and only handles playback problems. Ask the ErsatzTV Legacy community about anything else.
