@@ -9,8 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 - `session.idle_timeout_seconds` in `channel.json`: seconds without a `.heartbeat` touch before the channel stops (default 90); `0` keeps the channel running without viewers (channel config schema `0.1.4`)
 - `session.ready_segment_count` in `channel.json`: segments the playlist must hold before `.ready` is written, from 1 to 10 (default 3)
+- `cache.folder` and `cache.max_unused_days` in `channel.json`: where rendered still-image graphics are kept (default an `ersatztv-next` folder in the system temp folder) and how many days an unused one is kept (default 30) (channel config schema `0.1.5`)
 
 ### Changed
+- Still-image graphics are rendered once at their overlay size, opacity and pixel format into the cache folder and looped from there, instead of being decoded and scaled for every output frame
+  - A large logo on a slow CPU no longer drops the stream below realtime
+  - If rendering fails, the full-size image is used as before
 - `.ready` is written after 3 segments instead of 4. ffmpeg, mpv and hls.js start 3 segments from the live edge, so they now start at the first segment, sooner and with the same buffer
 
 ## [0.2.5] - 2026-11-06

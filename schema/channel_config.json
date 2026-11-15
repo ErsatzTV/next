@@ -1,10 +1,15 @@
 {
-  "$id": "https://ersatztv.org/channel/version/0.1.4",
+  "$id": "https://ersatztv.org/channel/version/0.1.5",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ChannelConfig",
   "description": "Settings for one channel: where its playout is, which ffmpeg to use, and the output format.\nA relative path in any of these settings is relative to the file that sets it.",
   "type": "object",
   "properties": {
+    "cache": {
+      "description": "Files rendered once and reused across items and channels.",
+      "$ref": "#/$defs/CacheConfig",
+      "default": {}
+    },
     "fallback": {
       "description": "What plays when nothing is scheduled or an item fails.",
       "$ref": "#/$defs/FallbackConfig",
@@ -221,6 +226,27 @@
         }
       },
       "additionalProperties": false
+    },
+    "CacheConfig": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "description": "Folder for cached files, e.g. still images scaled to their overlay size. Channels can\nshare it. Each kind of file has its own subfolder, e.g. `still-images`; only files there\nare deleted. Unset uses `ersatztv-next` in the system temp folder.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_unused_days": {
+          "description": "Days a cached file can go unused before it is deleted. Default 30.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      }
     },
     "DeinterlaceQsvOptions": {
       "type": "object",

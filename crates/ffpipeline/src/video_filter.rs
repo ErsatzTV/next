@@ -50,6 +50,7 @@ pub enum VideoFilter {
     Scale(ScaleFilter),
     Pad(PadFilter),
     Loop(LoopFilter),
+    StillImageBoundary(StillImageBoundaryFilter),
     Fps(FpsFilter),
     Format(FormatFilter),
     NormalizeChroma(NormalizeChromaFilter),
@@ -294,6 +295,26 @@ impl VideoFilterOp for PadFilter {
         self.size
             .as_ref()
             .map(|size| format!("pad={}:{}:-1:-1:color=black", size.width, size.height))
+    }
+}
+
+/// Ends a looped still image's static filters, which are rendered once. Emits nothing.
+#[derive(Debug, Clone)]
+pub struct StillImageBoundaryFilter;
+
+impl VideoFilterOp for StillImageBoundaryFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        Some(self.clone().into())
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {}
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        None
     }
 }
 

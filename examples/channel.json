@@ -1,5 +1,5 @@
 {
-  "version": "https://ersatztv.org/channel/version/0.1.4",
+  "version": "https://ersatztv.org/channel/version/0.1.5",
   "playout": {
     "folder": "./playout"
   },
