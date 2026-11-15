@@ -39,6 +39,7 @@ use ffpipeline::probe::{
     CodecType, ProbeResult, ProbeResultAudioStream, ProbeResultColorParams, ProbeResultStream,
     ProbeResultVideoStream, Probeable,
 };
+use ffpipeline::still_image_cache::StillImageCache;
 use ffpipeline::web_vtt::Cue;
 use ffpipeline::{pipeline, probe};
 use futures_util::future::try_join_all;
@@ -133,6 +134,7 @@ pub struct ChannelSession {
     ended_item_id: Option<String>,
     input_starts: HashMap<(String, u32), Option<InputStart>>,
     dynamic_http_client: reqwest::Client,
+    still_image_cache: StillImageCache,
     // after one failure, fallbacks use black so the fallback itself can't keep failing
     background_image_failed: bool,
 }
@@ -224,7 +226,13 @@ impl ChannelSession {
             .build()
             .map_err(|e| ChannelError::ChannelStartup(format!("http client: {e}")))?;
 
+        let still_image_cache = StillImageCache::new(
+            &channel_config.cache.folder(),
+            channel_config.cache.max_unused(),
+        );
+
         Ok(ChannelSession {
+            still_image_cache,
             channel_config,
             playout_loader,
             pts_scanner,
@@ -827,6 +835,13 @@ impl ChannelSession {
         let mut pipeline_result =
             pipeline::generate_pipeline(&self.ffmpeg_info, input_settings, output_settings)?;
         pipeline_result.optimize();
+        crate::still_image::prescale_still_images(
+            &mut pipeline_result,
+            &self.still_image_cache,
+            &self.ffmpeg_path,
+            &self.dynamic_http_client,
+        )
+        .await;
         let args = pipeline_result.args();
         let envs = pipeline_result.envs();
         log::debug!("optimized pipeline: {}", args.join(" "));

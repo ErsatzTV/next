@@ -22,7 +22,7 @@ use crate::global_option::{GlobalOption, LogLevel};
 use crate::hw_accel::{HardwareAccel, HwAccel};
 use crate::input::{
     CanvasLayout, FfmpegInputArgs, FfmpegInputRequestContext, GraphicsInput, GraphicsKind,
-    InputSettings, InputSource, ProbedInput,
+    InputSettings, InputSource, LocalInputSource, ProbedInput,
 };
 use crate::output_format::gop_frames;
 use crate::output_option::OutputOption;
@@ -39,8 +39,8 @@ use crate::video_filter::{
     ClipFilter, ColorChannelMixerFilter, CropFilter, DeinterlaceFilter, Dv5WorkaroundFilter,
     EnsureAlphaFilter, FadeFilter, FormatFilter, FpsFilter, LoopFilter, NormalizeChromaFilter,
     PadFilter, ScaleFilter, SetSarFilter, SoftwareDeinterlaceFilter, SoftwareDeinterlaceOptions,
-    SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter, TransposeDir, TransposeFilter,
-    VideoFilter,
+    StillImageBoundaryFilter, SubtitleImageScaleFilter, SubtitlesFilter, ToneMapFilter,
+    TransposeDir, TransposeFilter, VideoFilter, VideoFilterOp,
 };
 
 pub const KEYFRAME_INTERVAL_SECONDS: u32 = 2;
@@ -601,6 +601,16 @@ impl PipelineInput {
             PipelineInput::Graphics { layer_index, .. } => 3 + *layer_index,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct StillImageBake {
+    pub layer_index: usize,
+    pub input_source: InputSource,
+    pub stream_index: u32,
+    pub filter: String,
+    pub pixel_format: PixelFormat,
+    pub size: FrameSize,
 }
 
 #[derive(Debug, Clone)]
@@ -1238,7 +1248,7 @@ impl Pipeline {
                 }
                 filters
             } else {
-                vec![
+                let mut filters = vec![
                     ensure_alpha_filter,
                     ColorChannelMixerFilter { alpha: opacity }.into(),
                     ScaleFilter {
@@ -1248,7 +1258,11 @@ impl Pipeline {
                         flags: video_transcode.filter_options.scale.flags.clone(),
                     }
                     .into(),
-                ]
+                ];
+                if graphics_stream.is_still_image() {
+                    filters.push(StillImageBoundaryFilter.into());
+                }
+                filters
             };
 
             secondary_filters.extend(fade_filters.iter().map(|f| f.clone().into()));
@@ -1568,6 +1582,102 @@ impl Pipeline {
                 })
             )
         })
+    }
+
+    /// Call after [`Pipeline::optimize`]: bakes are read from the resolved overlay chain.
+    pub fn still_image_bakes(&self) -> Vec<StillImageBake> {
+        self.filter_chain
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                PipelineFilter::Overlay(overlay) => self.still_image_bake(overlay),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn still_image_bake(&self, overlay: &OverlayFilter) -> Option<StillImageBake> {
+        let OverlaySource::Graphics(layer_index) = overlay.secondary_source else {
+            return None;
+        };
+        let boundary = overlay
+            .secondary
+            .iter()
+            .position(|f| matches!(f, VideoFilter::StillImageBoundary(_)))?;
+        let PipelineInput::Graphics { input, index, .. } = self.inputs.iter().find(
+            |i| matches!(i, PipelineInput::Graphics { layer_index: l, .. } if *l == layer_index),
+        )?
+        else {
+            return None;
+        };
+
+        let mut state = overlay.secondary_initial_state.clone();
+        let mut filters = Vec::new();
+        for filter in &overlay.secondary[..boundary] {
+            filter.apply_to(&mut state);
+            filters.extend(filter.as_arg());
+        }
+        if state.surface != FrameSurface::System || state.pixel_format == PixelFormat::Unknown {
+            return None;
+        }
+
+        Some(StillImageBake {
+            layer_index,
+            input_source: input.input_source.clone(),
+            stream_index: *index,
+            filter: if filters.is_empty() {
+                String::from("null")
+            } else {
+                filters.join(",")
+            },
+            pixel_format: state.pixel_format,
+            size: state.size,
+        })
+    }
+
+    pub fn use_baked_still_image(&mut self, bake: &StillImageBake, path: &str) {
+        for filter in &mut self.filter_chain.filters {
+            if let PipelineFilter::Overlay(overlay) = filter
+                && overlay.secondary_source == OverlaySource::Graphics(bake.layer_index)
+                && let Some(boundary) = overlay
+                    .secondary
+                    .iter()
+                    .position(|f| matches!(f, VideoFilter::StillImageBoundary(_)))
+            {
+                overlay.secondary.drain(..=boundary);
+                overlay.secondary_initial_state.size = bake.size;
+                overlay.secondary_initial_state.pixel_format = bake.pixel_format;
+            }
+        }
+
+        for input in &mut self.inputs {
+            if let PipelineInput::Graphics {
+                input,
+                layer_index,
+                index,
+                path: input_path,
+                extra_input_args,
+            } = input
+                && *layer_index == bake.layer_index
+            {
+                input.input_source = InputSource::Local(LocalInputSource {
+                    path: path.to_owned(),
+                });
+                *index = 0;
+                *input_path = path.to_owned();
+                if bake.pixel_format.sampling() != Sampling::Rgb {
+                    extra_input_args.extend(args!["-color_range", "tv"]);
+                }
+                extra_input_args.extend(args![
+                    "-f",
+                    "image2",
+                    "-pixel_format",
+                    bake.pixel_format.as_arg().to_owned(),
+                    "-video_size",
+                    format!("{}x{}", bake.size.width, bake.size.height)
+                ]);
+            }
+        }
     }
 
     pub fn args(&self) -> ArgVec {
@@ -3208,6 +3318,184 @@ mod tests {
             ]
         );
         assert!(!filter_complex(&args).contains("loop="), "{args:?}");
+    }
+
+    fn still_watermark_pipeline(
+        opacity_percent: f32,
+        fade_ms: Option<u64>,
+        accel: Option<HardwareAccel>,
+        ffmpeg_info: &FfmpegInfo,
+    ) -> Pipeline {
+        let mut input = multichannel_ac3_input("main.mkv");
+        let mut watermark = canvas_input(InputSource::Http(crate::input::HttpInputSource {
+            uri: "http://localhost/watermark.png".to_owned(),
+            options: Default::default(),
+        }));
+        watermark.kind = GraphicsKind::Media(crate::input::MediaGraphicsOptions {
+            location: crate::input::GraphicsLocation::BottomRight,
+            width_percent: Some(10.0),
+            within_source_content: Some(true),
+            horizontal_margin_percent: Some(5.0),
+            vertical_margin_percent: Some(5.0),
+            opacity_percent: Some(opacity_percent),
+            timing: fade_ms.map(|fade_ms| {
+                crate::input::GraphicsTiming::Periodic(crate::input::PeriodicTiming {
+                    clock: crate::input::PeriodicClock::Content,
+                    frequency_ms: 10000,
+                    phase_offset_ms: None,
+                    disable_after_ms: None,
+                    fade_ms: Some(fade_ms),
+                    hold_ms: 2000,
+                })
+            }),
+        });
+        watermark.probe_result.format_name = Some("image2".to_owned());
+        watermark.probe_result.path = "http://localhost/watermark.png".to_owned();
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut watermark.probe_result.streams[0]
+        {
+            video.codec = "png".to_owned();
+            video.pix_fmt = "rgba".to_owned();
+            video.stream_index = 1;
+        }
+        input.graphics_inputs.push(watermark);
+        let mut output = stereo_output();
+        output.accel = accel;
+        let mut pipeline = Pipeline::full(ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        pipeline
+    }
+
+    fn watermark_secondary(args: &ArgVec) -> String {
+        let filter = filter_complex(args);
+        filter
+            .split(';')
+            .find(|chain| chain.ends_with("[v_s0]"))
+            .expect(&filter)
+            .to_owned()
+    }
+
+    #[test]
+    fn still_image_bake_renders_static_filters_once() {
+        let mut pipeline = still_watermark_pipeline(50.0, None, None, &FfmpegInfo::default());
+        let bakes = pipeline.still_image_bakes();
+        assert_eq!(bakes.len(), 1, "{bakes:?}");
+        let bake = &bakes[0];
+        assert_eq!(bake.stream_index, 1);
+        assert!(matches!(bake.input_source, InputSource::Http(_)));
+        assert!(
+            bake.filter.contains("colorchannelmixer=aa=0.5"),
+            "{}",
+            bake.filter
+        );
+        assert!(bake.filter.contains("scale="), "{}", bake.filter);
+
+        let before = watermark_secondary(&pipeline.args());
+        assert!(before.contains("colorchannelmixer"), "{before}");
+
+        pipeline.use_baked_still_image(bake, "cache/baked.raw");
+        let args = pipeline.args();
+        let image = args.iter().position(|a| a == "cache/baked.raw").unwrap();
+        assert_eq!(
+            args[image - 15..image]
+                .iter()
+                .map(|a| a.as_ref())
+                .collect::<Vec<_>>(),
+            [
+                "-loop",
+                "1",
+                "-framerate",
+                "30000/1001",
+                "-t",
+                "30000ms",
+                "-color_range",
+                "tv",
+                "-f",
+                "image2",
+                "-pixel_format",
+                bake.pixel_format.as_arg(),
+                "-video_size",
+                &format!("{}x{}", bake.size.width, bake.size.height),
+                "-i"
+            ]
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.contains("http://localhost/watermark.png")),
+            "{args:?}"
+        );
+        let filter = filter_complex(&args);
+        assert!(filter.contains("[v_m0][1:0]overlay="), "{filter}");
+        assert!(!filter.contains("colorchannelmixer"), "{filter}");
+        assert!(pipeline.still_image_bakes().is_empty());
+    }
+
+    #[test]
+    fn still_image_bake_keeps_fades_in_the_graph() {
+        let mut pipeline =
+            still_watermark_pipeline(100.0, Some(1000), None, &FfmpegInfo::default());
+        let bake = pipeline.still_image_bakes().remove(0);
+        assert!(!bake.filter.contains("fade="), "{}", bake.filter);
+        assert!(bake.pixel_format.has_alpha(), "{bake:?}");
+
+        pipeline.use_baked_still_image(&bake, "baked.raw");
+        let after = watermark_secondary(&pipeline.args());
+        assert!(after.contains("fade="), "{after}");
+        assert!(!after.contains("scale="), "{after}");
+    }
+
+    #[test]
+    fn still_image_bake_renders_qsv_upload_format() {
+        let mut accel = qsv_with_runtime((2, 9));
+        if let HardwareAccel::Qsv(qsv) = &mut accel {
+            qsv.capabilities.upload_formats = [crate::capabilities::qsv::QsvFourCC(
+                libvpl_sys::MFX_FOURCC_RGB4,
+            )]
+            .into();
+        }
+        let ffmpeg_info = FfmpegInfo {
+            hwaccels: [crate::ffmpeg_info::KnownHardwareAccel::Qsv.to_string()].into(),
+            video_filters: [crate::ffmpeg_info::KnownVideoFilter::OverlayQsv.to_string()].into(),
+            ..FfmpegInfo::default()
+        };
+        for fade_ms in [None, Some(1000)] {
+            let mut pipeline =
+                still_watermark_pipeline(50.0, fade_ms, Some(accel.clone()), &ffmpeg_info);
+            let bake = pipeline.still_image_bakes().remove(0);
+            assert_eq!(bake.pixel_format, PixelFormat::Bgra, "{bake:?}");
+
+            pipeline.use_baked_still_image(&bake, "baked.raw");
+            let after = watermark_secondary(&pipeline.args());
+            assert!(!after.contains("format="), "{after}");
+            assert!(after.contains("hwupload"), "{after}");
+        }
+    }
+
+    #[test]
+    fn animated_graphics_are_not_baked() {
+        let mut input = multichannel_ac3_input("main.mkv");
+        let mut watermark = canvas_input(InputSource::Local(crate::input::LocalInputSource {
+            path: "watermark.gif".to_owned(),
+        }));
+        watermark.kind = GraphicsKind::Media(crate::input::MediaGraphicsOptions {
+            location: crate::input::GraphicsLocation::BottomRight,
+            width_percent: Some(10.0),
+            within_source_content: Some(true),
+            horizontal_margin_percent: None,
+            vertical_margin_percent: None,
+            opacity_percent: Some(50.0),
+            timing: None,
+        });
+        if let crate::probe::ProbeResultStream::Video(video) =
+            &mut watermark.probe_result.streams[0]
+        {
+            video.codec = "gif".to_owned();
+        }
+        input.graphics_inputs.push(watermark);
+        let mut pipeline = Pipeline::full(&FfmpegInfo::default(), input, stereo_output()).unwrap();
+        pipeline.optimize();
+        assert!(pipeline.still_image_bakes().is_empty());
     }
 
     fn qsv_h264_args(runtime_api: (u16, u16), size: FrameSize) -> ArgVec {

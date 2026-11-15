@@ -272,7 +272,7 @@ impl FilterChain {
                     // ensure secondary input matches overlay required surface, pixel format
                     let sec_req = best.kind.secondary_input_state(&current_state);
                     let mut sec = FilterChain::new(
-                        Self::convert_before_loop(&best.secondary, &sec_req, accel)
+                        Self::convert_before_still_image_boundary(&best.secondary, &sec_req, accel)
                             .into_iter()
                             .map(PipelineFilter::Video)
                             .collect(),
@@ -399,7 +399,8 @@ impl FilterChain {
 
     /// convert a still image to the overlay's secondary format before it is looped, so the
     /// conversion runs once instead of on every repeated frame
-    fn convert_before_loop(
+    /// so the upload format is rendered once with the still image
+    fn convert_before_still_image_boundary(
         secondary: &[VideoFilter],
         sec_req: &FrameState,
         accel: &Option<HardwareAccel>,
@@ -407,12 +408,12 @@ impl FilterChain {
         let mut filters = secondary.to_vec();
         let Some(loop_index) = filters
             .iter()
-            .position(|f| matches!(f, VideoFilter::Loop(l) if l.is_still_image))
+            .position(|f| matches!(f, VideoFilter::StillImageBoundary(_)))
         else {
             return filters;
         };
 
-        // fade is the only filter known to accept and preserve an alpha format after the loop
+        // only fade is known to keep an alpha format after the boundary
         let format = sec_req.pixel_format;
         let safe_after_loop = format.has_alpha()
             && filters[loop_index + 1..]
@@ -933,8 +934,8 @@ mod tests {
     use crate::overlay_filter::{OverlayFilter, OverlaySource, SoftwareOverlay};
     use crate::pipeline::{HdrFormat, HwPixelFormat, VideoFormat};
     use crate::video_filter::{
-        FadeFilter, FormatFilter, HwMapFilter, HwUploadFilter, LoopFilter, PadFilter, ScaleFilter,
-        ToneMapFilter,
+        FadeFilter, FormatFilter, HwMapFilter, HwUploadFilter, PadFilter, ScaleFilter,
+        StillImageBoundaryFilter, ToneMapFilter,
     };
 
     #[rstest::rstest]
@@ -1184,11 +1185,7 @@ mod tests {
                 flags: None,
             }
             .into(),
-            LoopFilter {
-                is_still_image: true,
-                loops: None,
-            }
-            .into(),
+            StillImageBoundaryFilter.into(),
         ];
         secondary.extend(fades.into_iter().map(VideoFilter::from));
         secondary.extend(after_loop);
@@ -1235,7 +1232,7 @@ mod tests {
     }
 
     #[test]
-    fn software_overlay_converts_still_image_before_loop() {
+    fn software_overlay_converts_still_image_before_boundary() {
         let sec = secondary_chain(
             periodic_watermark(Vec::new()),
             None,
@@ -1244,14 +1241,14 @@ mod tests {
         );
 
         assert!(
-            sec.contains("setsar=1,format=yuva420p,loop=-1:1,fade="),
+            sec.contains("setsar=1,format=yuva420p,fade="),
             "unexpected secondary: {sec}"
         );
         assert_eq!(sec.matches("format=").count(), 1, "{sec}");
     }
 
     #[test]
-    fn vaapi_overlay_converts_still_image_before_loop_and_only_uploads_after() {
+    fn vaapi_overlay_converts_still_image_before_boundary_and_only_uploads_after() {
         let accel = HardwareAccel::Vaapi(Vaapi {
             capabilities: VaapiCapabilities {
                 vpp_pixel_formats: HashSet::from([
@@ -1272,7 +1269,7 @@ mod tests {
         );
 
         assert!(
-            sec.contains("setsar=1,format=bgra,loop=-1:1,fade="),
+            sec.contains("setsar=1,format=bgra,fade="),
             "unexpected secondary: {sec}"
         );
         assert!(
@@ -1283,7 +1280,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_filter_after_loop_keeps_conversion_at_the_end() {
+    fn unknown_filter_after_boundary_keeps_conversion_at_the_end() {
         let after_loop = ScaleFilter {
             size: Some(FrameSize {
                 width: 96,
@@ -1301,7 +1298,7 @@ mod tests {
             sdr_state(FrameSurface::System, PixelFormat::Yuv420p),
         );
 
-        assert!(sec.contains("setsar=1,loop=-1:1,fade="), "{sec}");
+        assert!(sec.contains("setsar=1,fade="), "{sec}");
         assert!(sec.ends_with("setsar=1,format=yuva420p[v_s0]"), "{sec}");
     }
 

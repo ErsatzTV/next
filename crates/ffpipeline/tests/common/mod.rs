@@ -270,6 +270,7 @@ pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<S
         "unexpected copy decisions"
     );
     pipeline.optimize();
+    prescale_still_images(test_env, &mut pipeline, &dir.path().join("cache")).await;
     let args: Vec<String> = pipeline.args().iter().map(|a| a.to_string()).collect();
     assert_stream_copy(&args, "-vcodec", video_copied);
     assert_stream_copy(&args, "-acodec", audio_copied);
@@ -1479,6 +1480,116 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
         subtitle_force_style: params.subtitle_force_style,
         reports_folder: None,
         report_id: None,
+    }
+}
+
+/// The default top-left watermark at 10% width fits in the top-left 20% x 30% crop.
+pub async fn run_prescaled_watermark_matches(
+    test_env: &TestEnv,
+    accel: Option<HardwareAccel>,
+    make_case: impl Fn() -> TestCase,
+) {
+    let mut outputs = Vec::new();
+    for prescale in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut test_case = make_case();
+        test_case.params.accel = accel.clone();
+        let source = fixture_path(test_case.fixture_name);
+        let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+        let watermark = build_watermark_input(
+            test_env,
+            test_case.params.watermark.as_ref().expect("no watermark"),
+        )
+        .await;
+        let input = build_input(&source, probe, test_case.params.duration, Some(watermark));
+        let output = build_output(dir.path(), test_case.params);
+        let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        assert_eq!(
+            pipeline.still_image_bakes().len(),
+            1,
+            "watermark is not baked"
+        );
+        if prescale {
+            prescale_still_images(test_env, &mut pipeline, &dir.path().join("cache")).await;
+            assert!(pipeline.still_image_bakes().is_empty());
+        }
+        let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
+        assert!(success, "ffmpeg failed (prescale {prescale}):\n{stderr}");
+        outputs.push(dir);
+    }
+
+    let concat = |dir: &tempfile::TempDir| {
+        let segments: Vec<String> = find_segments(dir.path())
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        format!("concat:{}", segments.join("|"))
+    };
+    let stats = outputs[0].path().join("ssim.log");
+    let stats_arg = stats
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace(':', "\\:");
+    let output = tokio::time::timeout(
+        Duration::from_secs(120),
+        ersatztv_core::process::command(&test_env.ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i", &concat(&outputs[0])])
+            .args(["-i", &concat(&outputs[1])])
+            .arg("-lavfi")
+            .arg(format!(
+                "[0:v]setpts=N,crop=iw/5:ih*3/10:0:0[a];[1:v]setpts=N,crop=iw/5:ih*3/10:0:0[b];\
+                 [a][b]ssim=stats_file={stats_arg}"
+            ))
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("ssim timed out")
+    .expect("failed to run ssim");
+    assert!(
+        output.status.success(),
+        "ssim failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let scores: Vec<f64> = std::fs::read_to_string(&stats)
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.split("All:").nth(1))
+        .filter_map(|v| v.split_whitespace().next()?.parse().ok())
+        .collect();
+    assert!(!scores.is_empty(), "no ssim frames");
+    let min = scores.iter().copied().fold(f64::INFINITY, f64::min);
+    let mean = scores.iter().sum::<f64>() / scores.len() as f64;
+    log::info!(
+        "prescaled watermark ssim over {} frames: min {min:.5}, mean {mean:.5}",
+        scores.len()
+    );
+    assert!(
+        min >= 0.99,
+        "prescaled watermark differs: min ssim {min:.5}, mean {mean:.5} over {} frames",
+        scores.len()
+    );
+}
+
+/// Unlike the channel, a render failure fails the test.
+pub async fn prescale_still_images(
+    test_env: &TestEnv,
+    pipeline: &mut Pipeline,
+    cache_folder: &Path,
+) {
+    let cache =
+        ffpipeline::still_image_cache::StillImageCache::new(cache_folder, Duration::from_hours(1));
+    for bake in pipeline.still_image_bakes() {
+        let ffpipeline::input::InputSource::Local(local) = &bake.input_source else {
+            panic!("unexpected still image source {:?}", bake.input_source);
+        };
+        let path = cache
+            .render(&test_env.ffmpeg, &bake, Path::new(&local.path))
+            .await
+            .unwrap_or_else(|e| panic!("still image render failed: {e}"));
+        pipeline.use_baked_still_image(&bake, &path.to_string_lossy());
     }
 }
 

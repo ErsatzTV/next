@@ -30,7 +30,7 @@ pub struct FramePoint {
     pub y: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OverlaySource {
     Subtitle,
     Graphics(usize),

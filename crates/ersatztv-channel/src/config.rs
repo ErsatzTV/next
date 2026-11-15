@@ -14,7 +14,7 @@ use crate::error::{ChannelError, IoContext};
 
 pub const SUPPORTED_SCHEMA: SchemaVersion = SchemaVersion {
     breaking: 1,
-    compatible: 4,
+    compatible: 5,
 };
 pub const SCHEMA: VersionedSchema =
     VersionedSchema::new("https://ersatztv.org/channel/version/", SUPPORTED_SCHEMA);
@@ -26,6 +26,7 @@ pub const PATH_FIELDS: &[&str] = &[
     "/ffmpeg/reports_folder",
     "/fallback/background_image",
     "/normalization/subtitle/fonts_folder",
+    "/cache/folder",
 ];
 
 pub(crate) const DEFAULT_VAAPI_DEVICE: &str = "/dev/dri/renderD128";
@@ -54,6 +55,9 @@ pub struct ChannelConfig {
     /// When the channel is ready to serve and when it stops without viewers.
     #[serde(default)]
     pub session: SessionConfig,
+    /// Files rendered once and reused across items and channels.
+    #[serde(default)]
+    pub cache: CacheConfig,
 
     #[serde(skip)]
     expanded_playout_folder: PathBuf,
@@ -121,6 +125,32 @@ impl FallbackConfig {
         self.duration_seconds.map_or(Duration::from_mins(1), |s| {
             Duration::from_secs(s.get().into())
         })
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
+pub struct CacheConfig {
+    /// Folder for cached files, e.g. still images scaled to their overlay size. Channels can
+    /// share it. Each kind of file has its own subfolder, e.g. `still-images`; only files there
+    /// are deleted. Unset uses `ersatztv-next` in the system temp folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Days a cached file can go unused before it is deleted. Default 30.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_unused_days: Option<NonZeroU32>,
+}
+
+impl CacheConfig {
+    pub fn folder(&self) -> PathBuf {
+        self.folder
+            .as_deref()
+            .filter(|f| !f.is_empty())
+            .map_or_else(|| std::env::temp_dir().join("ersatztv-next"), PathBuf::from)
+    }
+
+    pub fn max_unused(&self) -> Duration {
+        let days = self.max_unused_days.map_or(30, NonZeroU32::get);
+        Duration::from_hours(24 * u64::from(days))
     }
 }
 

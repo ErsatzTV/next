@@ -6,6 +6,7 @@ mod logging;
 mod playlist_manager;
 mod playout_loader;
 mod pts_scanner;
+mod still_image;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
