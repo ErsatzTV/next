@@ -1484,6 +1484,8 @@ pub fn build_output(dir: &Path, params: TestOutputParams) -> OutputSettings {
 }
 
 /// The default top-left watermark at 10% width fits in the top-left 20% x 30% crop.
+/// No fades: a fading frame can meet a different main frame from run to run, so even two runs
+/// without pre-rendering differ.
 pub async fn run_prescaled_watermark_matches(
     test_env: &TestEnv,
     accel: Option<HardwareAccel>,
@@ -1526,21 +1528,16 @@ pub async fn run_prescaled_watermark_matches(
             .collect();
         format!("concat:{}", segments.join("|"))
     };
-    let stats = outputs[0].path().join("ssim.log");
-    let stats_arg = stats
-        .to_string_lossy()
-        .replace('\\', "/")
-        .replace(':', "\\:");
     let output = tokio::time::timeout(
         Duration::from_secs(120),
         ersatztv_core::process::command(&test_env.ffmpeg)
             .args(["-nostdin", "-v", "error", "-i", &concat(&outputs[0])])
             .args(["-i", &concat(&outputs[1])])
             .arg("-lavfi")
-            .arg(format!(
+            .arg(
                 "[0:v]setpts=N,crop=iw/5:ih*3/10:0:0[a];[1:v]setpts=N,crop=iw/5:ih*3/10:0:0[b];\
-                 [a][b]ssim=stats_file={stats_arg}"
-            ))
+                 [a][b]ssim=stats_file=-",
+            )
             .args(["-f", "null", "-"])
             .output(),
     )
@@ -1553,8 +1550,7 @@ pub async fn run_prescaled_watermark_matches(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let scores: Vec<f64> = std::fs::read_to_string(&stats)
-        .unwrap()
+    let scores: Vec<f64> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|l| l.split("All:").nth(1))
         .filter_map(|v| v.split_whitespace().next()?.parse().ok())

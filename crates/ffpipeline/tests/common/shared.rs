@@ -800,7 +800,6 @@ macro_rules! shared_tests {
         #[::rstest::rstest]
         #[case::default($crate::common::TestWatermark::default())]
         #[case::no_alpha($crate::common::shared::no_alpha_watermark())]
-        #[case::periodic($crate::common::shared::periodic_watermark())]
         #[::tokio::test]
         #[ignore]
         async fn watermark_prescaled_matches_full_size(
