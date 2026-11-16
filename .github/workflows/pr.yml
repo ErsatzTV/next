@@ -37,6 +37,13 @@ jobs:
       - name: Lint
         run: cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.21.0
+      - name: Check Advisories
+        run: cargo deny --locked check advisories
+
   build:
     name: Build
     runs-on: ${{ matrix.os }}
