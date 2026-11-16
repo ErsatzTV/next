@@ -101,18 +101,18 @@ fn read_existing_programmes(
             .map_err(std::io::Error::other)?
         {
             Event::Eof => break,
-            Event::Start(e) if e.name().as_ref() == b"programme" => {
+            Event::Start(e) if e.name().as_ref() == "programme" => {
                 let (mut start_s, mut stop_s) = (None, None);
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"start" => {
+                        "start" => {
                             start_s = Some(
                                 attr.normalized_value(XmlVersion::Implicit1_0)
                                     .map_err(std::io::Error::other)?
                                     .into_owned(),
                             )
                         }
-                        b"stop" => {
+                        "stop" => {
                             stop_s = Some(
                                 attr.normalized_value(XmlVersion::Implicit1_0)
                                     .map_err(std::io::Error::other)?
@@ -137,17 +137,17 @@ fn read_existing_programmes(
                         .read_event_into(&mut inner_buf)
                         .map_err(std::io::Error::other)?
                     {
-                        Event::Start(t) if t.name().as_ref() == b"title" => {
+                        Event::Start(t) if t.name().as_ref() == "title" => {
                             let mut text_buf = Vec::new();
                             let text_event = reader
                                 .read_text_into(t.name(), &mut text_buf)
                                 .map_err(std::io::Error::other)?;
-                            let text = text_event.decode().map_err(std::io::Error::other)?;
+                            let text = text_event.into_inner();
                             title = quick_xml::escape::unescape(&text)
                                 .map_err(std::io::Error::other)?
                                 .into_owned();
                         }
-                        Event::End(t) if t.name().as_ref() == b"programme" => break,
+                        Event::End(t) if t.name().as_ref() == "programme" => break,
                         Event::Eof => break,
                         _ => {}
                     }
@@ -173,5 +173,32 @@ fn parse_title(playout_item: &PlayoutItem) -> String {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone()),
         _ => playout_item.id.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use time::macros::datetime;
+
+    use super::*;
+
+    #[test]
+    fn read_existing_programmes_unescapes_titles_once() {
+        let input = br#"<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <programme start="20260630153000 -0600" stop="20260630160000 -0600" channel="tv.1">
+    <title>Mister Rogers&#39; Neighborhood &amp;amp; Friends</title>
+  </programme>
+  <programme channel="tv.1">
+    <title>missing times</title>
+  </programme>
+</tv>"#;
+
+        let out = read_existing_programmes(input, datetime!(2026-06-30 00:00 -6), None).unwrap();
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].start, datetime!(2026-06-30 15:30 -6));
+        assert_eq!(out[0].stop, datetime!(2026-06-30 16:00 -6));
+        assert_eq!(out[0].title, "Mister Rogers' Neighborhood &amp; Friends");
     }
 }
