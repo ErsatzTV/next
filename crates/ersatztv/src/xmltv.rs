@@ -106,7 +106,7 @@ fn copy_programmes<R: BufRead, W: Write>(
     let mut depth = 0u32;
     loop {
         match reader.read_event_into(buf).map_err(std::io::Error::other)? {
-            Event::Start(e) if e.name().as_ref() == b"programme" || depth > 0 => {
+            Event::Start(e) if e.name().as_ref() == "programme" || depth > 0 => {
                 depth += 1;
                 writer.write_event(Event::Start(e))?;
             }
@@ -114,7 +114,7 @@ fn copy_programmes<R: BufRead, W: Write>(
                 depth -= 1;
                 writer.write_event(Event::End(e))?;
             }
-            Event::Empty(e) if e.name().as_ref() == b"programme" || depth > 0 => {
+            Event::Empty(e) if e.name().as_ref() == "programme" || depth > 0 => {
                 writer.write_event(Event::Empty(e))?
             }
             Event::Eof => return Ok(()),
