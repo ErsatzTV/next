@@ -57,6 +57,9 @@ cargo run --bin gen-describe-schema > schema/describe.json
 # Lint (CI also sets RUSTFLAGS=-Dwarnings, so warnings fail the build)
 RUSTFLAGS=-Dwarnings cargo clippy --locked --workspace --all-features --all-targets -- -D clippy::all
 
+# RustSec advisory check (CI runs this; config in deny.toml)
+cargo deny --locked check advisories
+
 # Format
 cargo fmt --all
 
