@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # keep equal to .github/ffmpeg.json (.github/scripts/ffmpeg-pin.sh check)
-ARG FFMPEG_IMAGE=ghcr.io/ersatztv/ersatztv-ffmpeg-develop:8.1.2-41c82b12-develop@sha256:cd5b126c7e4bad32bbb1d30762b227b1bf035ad405961ff9fde920a91c816d64
+ARG FFMPEG_IMAGE=ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2-9@sha256:689c158305c2456a230f002539b47499841cee0d237975ed30ee6a9b119bb9a5
 
 # Build on BUILDPLATFORM so the compiler does not run under QEMU.
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS chef
