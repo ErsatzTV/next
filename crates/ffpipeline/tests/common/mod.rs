@@ -1569,6 +1569,91 @@ pub async fn run_prescaled_watermark_matches(
     );
 }
 
+async fn luma_levels(test_env: &TestEnv, dir: &tempfile::TempDir, crop: &str) -> (f64, f64) {
+    let segments: Vec<String> = find_segments(dir.path())
+        .iter()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
+    let output = tokio::time::timeout(
+        Duration::from_secs(120),
+        ersatztv_core::process::command(&test_env.ffmpeg)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(format!("concat:{}", segments.join("|")))
+            .arg("-vf")
+            .arg(format!("{crop},signalstats,metadata=print:file=-"))
+            .args(["-f", "null", "-"])
+            .output(),
+    )
+    .await
+    .expect("signalstats timed out")
+    .expect("failed to run signalstats");
+    assert!(
+        output.status.success(),
+        "signalstats failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mean = |key: &str| {
+        let values: Vec<f64> = stdout
+            .lines()
+            .filter_map(|l| l.strip_prefix(key)?.parse().ok())
+            .collect();
+        assert!(!values.is_empty(), "no {key} in signalstats output");
+        values.iter().sum::<f64>() / values.len() as f64
+    };
+    (
+        mean("lavfi.signalstats.YLOW="),
+        mean("lavfi.signalstats.YHIGH="),
+    )
+}
+
+/// Luma levels, not SSIM: the watermark changes the encoder's bit spend, which alone costs
+/// ~0.01 SSIM.
+pub async fn run_watermark_keeps_main_range(
+    test_env: &TestEnv,
+    accel: Option<HardwareAccel>,
+    make_case: impl Fn() -> TestCase,
+) {
+    let mut levels = Vec::new();
+    for with_watermark in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut test_case = make_case();
+        test_case.params.accel = accel.clone();
+        let source = fixture_path(test_case.fixture_name);
+        let probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
+        let watermark = test_case.params.watermark.as_ref().expect("no watermark");
+        let watermark = if with_watermark {
+            Some(build_watermark_input(test_env, watermark).await)
+        } else {
+            None
+        };
+        let input = build_input(&source, probe, test_case.params.duration, watermark);
+        let output = build_output(dir.path(), test_case.params);
+        let mut pipeline = generate_pipeline(&test_env.ffmpeg_info, input, output).unwrap();
+        pipeline.optimize();
+        let (success, stderr) = run_ffmpeg_pipeline(&test_env.ffmpeg, &pipeline).await;
+        assert!(
+            success,
+            "ffmpeg failed (watermark {with_watermark}):\n{stderr}"
+        );
+        // default watermark is top-left; right half is main only
+        levels.push(luma_levels(test_env, &dir, "crop=iw/2:ih:iw/2:0").await);
+    }
+
+    let [(low, high), (wm_low, wm_high)] = levels[..] else {
+        unreachable!()
+    };
+    log::info!(
+        "main luma outside watermark: low {low:.1} -> {wm_low:.1}, high {high:.1} -> {wm_high:.1}"
+    );
+    assert!(
+        (wm_low - low).abs() <= 3.0 && (wm_high - high).abs() <= 3.0,
+        "watermark changed the main video's levels: low {low:.1} -> {wm_low:.1}, \
+         high {high:.1} -> {wm_high:.1}"
+    );
+}
+
 /// Unlike the channel, a render failure fails the test.
 pub async fn prescale_still_images(
     test_env: &TestEnv,

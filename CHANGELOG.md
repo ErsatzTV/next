@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - If rendering fails, the full-size image is used as before
 - `.ready` is written after 3 segments instead of 4. ffmpeg, mpv and hls.js start 3 segments from the live edge, so they now start at the first segment, sooner and with the same buffer
 
+### Fixed
+- A JPEG (full-range) watermark no longer stretches the main video to full range, which crushed blacks and raised contrast, when the video is scaled or converted before a software overlay (e.g. any scaled source, or VideoToolbox)
+
 ## [0.2.5] - 2026-11-06
 ### Added
 - `ersatztv-channel describe` prints a JSON document describing the binary; its schema is `schema/describe.json` and it includes:

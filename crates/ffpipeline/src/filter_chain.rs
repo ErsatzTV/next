@@ -7,7 +7,8 @@ use crate::output_settings::VideoFilterOptions;
 use crate::overlay_filter::{OverlayFilter, OverlayKind, OverlayKindOp, OverlaySource};
 use crate::pipeline::{FrameState, FrameSurface, HdrFormat, PixelFormat, SurfaceSet};
 use crate::video_filter::{
-    FormatFilter, HwDownloadFilter, HwUploadFilter, PadFilter, VideoFilter, VideoFilterOp,
+    FormatFilter, HwDownloadFilter, HwUploadFilter, LimitedRangeFilter, PadFilter, VideoFilter,
+    VideoFilterOp,
 };
 
 /// what the encoder takes as input
@@ -305,6 +306,9 @@ impl FilterChain {
                             _ => None,
                         })
                         .collect();
+                    if matches!(best.kind, OverlayKind::Software(_)) {
+                        Self::pin_limited_range(&mut best.secondary, sec_req.pixel_format);
+                    }
 
                     // track all secondary surfaces
                     surfaces.extend(sec.surfaces.iter().copied());
@@ -430,6 +434,16 @@ impl FilterChain {
             filters.insert(loop_index, FormatFilter { format }.into());
         }
         filters
+    }
+
+    /// After the overlay format conversion, so a still image bakes it in; on an earlier RGB
+    /// link it would not reach the overlay input.
+    fn pin_limited_range(secondary: &mut Vec<VideoFilter>, format: PixelFormat) {
+        let index = secondary
+            .iter()
+            .rposition(|f| matches!(f, VideoFilter::Format(f) if f.format == format))
+            .map_or(secondary.len(), |i| i + 1);
+        secondary.insert(index, LimitedRangeFilter.into());
     }
 
     fn transfer_surface(
@@ -1241,10 +1255,10 @@ mod tests {
         );
 
         assert!(
-            sec.contains("setsar=1,format=yuva420p,fade="),
+            sec.contains("setsar=1,format=yuva420p,format=color_ranges=tv,fade="),
             "unexpected secondary: {sec}"
         );
-        assert_eq!(sec.matches("format=").count(), 1, "{sec}");
+        assert_eq!(sec.matches("format=").count(), 2, "{sec}");
     }
 
     #[test]
@@ -1299,7 +1313,10 @@ mod tests {
         );
 
         assert!(sec.contains("setsar=1,fade="), "{sec}");
-        assert!(sec.ends_with("setsar=1,format=yuva420p[v_s0]"), "{sec}");
+        assert!(
+            sec.ends_with("setsar=1,format=yuva420p,format=color_ranges=tv[v_s0]"),
+            "{sec}"
+        );
     }
 
     fn vaapi_accel_with_tonemap(

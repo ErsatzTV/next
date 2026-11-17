@@ -818,6 +818,25 @@ macro_rules! shared_tests {
             }
         }
 
+        #[::rstest::rstest]
+        #[::tokio::test]
+        #[ignore]
+        async fn watermark_full_range_keeps_main_range(
+            #[values("1080p_h264.ts", "720p_h264.ts")] src: &'static str,
+        ) {
+            if let Some(env) = $crate::common::test_env().await {
+                $crate::common::run_watermark_keeps_main_range(env, $accel().await, || {
+                    $crate::common::shared::watermark(
+                        src,
+                        "1920x1080".parse().unwrap(),
+                        ("h264", 8),
+                        $crate::common::shared::no_alpha_watermark(),
+                    )
+                })
+                .await;
+            }
+        }
+
         /// The item ends with the audio, 101 ms after the video and off a frame boundary. With an
         /// endless fade loop, overlay_vaapi kept emitting frames at the last main pts after main
         /// EOF; the encoder dropped them all and ffmpeg never reached -t.
