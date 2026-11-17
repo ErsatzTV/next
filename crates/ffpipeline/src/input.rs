@@ -31,6 +31,14 @@ pub struct InputSettings {
 }
 
 impl InputSettings {
+    /// The pipeline's output duration (`-t`)
+    pub fn duration(&self) -> Duration {
+        std::cmp::min(
+            self.audio_input.out_point - self.audio_input.in_point,
+            self.video_input.out_point - self.video_input.in_point,
+        )
+    }
+
     pub fn select_video_stream(&self) -> Result<&ProbeResultVideoStream, FFPipelineError> {
         let mut all_video_streams: Vec<&Box<ProbeResultVideoStream>> = self
             .video_input

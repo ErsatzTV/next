@@ -668,10 +668,7 @@ impl Pipeline {
             video_transcode.bit_depth = 8;
         }
 
-        let mut duration = std::cmp::min(
-            input_settings.audio_input.out_point - input_settings.audio_input.in_point,
-            input_settings.video_input.out_point - input_settings.video_input.in_point,
-        );
+        let mut duration = input_settings.duration();
 
         let video_stream = input_settings.select_video_stream()?;
         let audio_stream = input_settings.select_audio_stream()?;

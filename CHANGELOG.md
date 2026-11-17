@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 ### Fixed
-- A playout item, fallback or gap with less than one output frame left (e.g. a 33ms filler remainder at the end of a fixed-start block) is skipped instead of starting ffmpeg, which crashed with VAAPI encoding and could stop the channel
+- Fix ffmpeg crashes (and stopped channels) with VAAPI when less than one frame of an item is left
 
 ## [0.2.6] - 2026-11-16
 ### Added

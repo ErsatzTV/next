@@ -780,14 +780,7 @@ impl ChannelSession {
             video_copy_blockers: Vec::new(),
         };
 
-        let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
-        let effective_now = if start_at_zero {
-            current_item.start
-        } else {
-            self.transcoded_until
-        };
-        let window =
-            Duration::from_millis((finish - effective_now).whole_milliseconds().max(0) as u64);
+        let window = input_settings.duration();
         let output_frame_rate = output_settings.frame_rate.clone().or_else(|| {
             input_settings
                 .select_video_stream()
@@ -804,7 +797,20 @@ impl ChannelSession {
                 window.as_millis(),
                 frame_rate.r_frame_rate
             );
-            return Ok((finish, true));
+            // same outcome as a pass that produced nothing
+            let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
+            if let Some(reached) =
+                shortfall_end(self.transcoded_until, finish, time::Duration::ZERO)
+            {
+                return Err(ChannelError::SourceEnded {
+                    item_id: current_item.id.clone(),
+                    reached,
+                });
+            }
+            return Ok((
+                finish,
+                is_live || (audio_timing.is_complete && video_timing.is_complete),
+            ));
         }
 
         let copy_timing = if output_settings.video.copy.is_some()
