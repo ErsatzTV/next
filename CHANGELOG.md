@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+
+## [0.2.6] - 2026-11-16
 ### Added
 - `session.idle_timeout_seconds` in `channel.json`: seconds without a `.heartbeat` touch before the channel stops (default 90); `0` keeps the channel running without viewers (channel config schema `0.1.4`)
 - `session.ready_segment_count` in `channel.json`: segments the playlist must hold before `.ready` is written, from 1 to 10 (default 3)
@@ -177,7 +179,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - First versioned release; earlier builds report `0.1.0-<commit>`
 - Release notes list the config versions each build reads and the [ErsatzTV-ffmpeg](https://github.com/ErsatzTV/ErsatzTV-ffmpeg) build it ships with
 
-[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/ErsatzTV/next/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/ErsatzTV/next/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ErsatzTV/next/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ErsatzTV/next/compare/v0.2.2...v0.2.3
