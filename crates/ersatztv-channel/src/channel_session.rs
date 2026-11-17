@@ -780,6 +780,33 @@ impl ChannelSession {
             video_copy_blockers: Vec::new(),
         };
 
+        let finish = std::cmp::min(audio_timing.finish, video_timing.finish);
+        let effective_now = if start_at_zero {
+            current_item.start
+        } else {
+            self.transcoded_until
+        };
+        let window =
+            Duration::from_millis((finish - effective_now).whole_milliseconds().max(0) as u64);
+        let output_frame_rate = output_settings.frame_rate.clone().or_else(|| {
+            input_settings
+                .select_video_stream()
+                .ok()
+                .map(|v| v.frame_rate.clone())
+        });
+        if let Some(frame_rate) = output_frame_rate
+            && is_sub_frame(window, &frame_rate)
+        {
+            // with -shortest, h264_vaapi segfaults when -t is under one frame
+            log::debug!(
+                "item {} has {}ms left, less than one frame at {}; skipping",
+                current_item.id,
+                window.as_millis(),
+                frame_rate.r_frame_rate
+            );
+            return Ok((finish, true));
+        }
+
         let copy_timing = if output_settings.video.copy.is_some()
             && !is_live
             && audio_source_is_video_source
@@ -1958,6 +1985,10 @@ async fn input_start_blocker(
     input_start.map_or(Some(CopyBlocker::NoKeyframes), |s| s.copy_blocker())
 }
 
+fn is_sub_frame(window: Duration, frame_rate: &FrameRate) -> bool {
+    frame_rate.parsed_frame_rate > 0.0 && window.as_secs_f64() * frame_rate.parsed_frame_rate < 1.0
+}
+
 fn shortfall_end(
     start: OffsetDateTime,
     finish: OffsetDateTime,
@@ -2271,6 +2302,20 @@ mod tests {
             args.iter().any(|a| a.contains("subtitles=")),
             "error card is not burned in: {args:?}"
         );
+    }
+
+    #[test]
+    fn windows_under_one_frame_are_sub_frame() {
+        let ntsc = FrameRate::parse("30000/1001");
+        assert!(is_sub_frame(Duration::from_millis(33), &ntsc));
+        assert!(!is_sub_frame(Duration::from_millis(34), &ntsc));
+
+        let film = FrameRate::parse("24");
+        assert!(is_sub_frame(Duration::from_millis(41), &film));
+        assert!(!is_sub_frame(Duration::from_millis(42), &film));
+
+        assert!(is_sub_frame(Duration::ZERO, &film));
+        assert!(!is_sub_frame(Duration::ZERO, &FrameRate::parse("0")));
     }
 
     #[test]
