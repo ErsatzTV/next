@@ -53,6 +53,7 @@ pub enum VideoFilter {
     StillImageBoundary(StillImageBoundaryFilter),
     Fps(FpsFilter),
     Format(FormatFilter),
+    LimitedRange(LimitedRangeFilter),
     NormalizeChroma(NormalizeChromaFilter),
     ToneMap(ToneMapFilter),
     Deinterlace(DeinterlaceFilter),
@@ -400,6 +401,27 @@ impl VideoFilterOp for FormatFilter {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!("format={}", self.format.as_arg()))
+    }
+}
+
+/// Overlay uses one range for both inputs, so a full-range secondary (JPEG) would expand a
+/// main that is converted before the overlay.
+#[derive(Debug, Clone)]
+pub struct LimitedRangeFilter;
+
+impl VideoFilterOp for LimitedRangeFilter {
+    fn evaluate(&self, _state: &FrameState, _ffmpeg_info: &FfmpegInfo) -> Option<VideoFilter> {
+        Some(self.clone().into())
+    }
+
+    fn apply_to(&self, _state: &mut FrameState) {}
+
+    fn required_surface(&self) -> Option<FrameSurface> {
+        Some(FrameSurface::System)
+    }
+
+    fn as_arg(&self) -> Option<String> {
+        Some(String::from("format=color_ranges=tv"))
     }
 }
 
