@@ -59,6 +59,7 @@ pub enum ChannelError {
         start: OffsetDateTime,
         finish: OffsetDateTime,
         error: String,
+        item_json: String,
     },
 
     // This value got pushed down into another module (pipeline)

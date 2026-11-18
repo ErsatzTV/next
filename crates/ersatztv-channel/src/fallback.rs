@@ -17,6 +17,7 @@ pub enum FallbackReason {
         start: OffsetDateTime,
         finish: OffsetDateTime,
         error: String,
+        item_json: String,
     },
 
     /// the playout item was selected but could not be transcoded
@@ -46,11 +47,13 @@ impl FallbackReason {
                 start,
                 finish,
                 error,
+                item_json,
             } => FallbackReason::InvalidItem {
                 item_id,
                 start,
                 finish,
                 error,
+                item_json,
             },
             other => FallbackReason::ItemSelectionFailed(other),
         }
@@ -99,11 +102,13 @@ impl FallbackReason {
                 start,
                 finish,
                 error,
+                item_json,
             } => ChannelError::PlayoutItemInvalid {
                 item_id,
                 start,
                 finish,
                 error,
+                item_json,
             },
             FallbackReason::TranscodeFailed { error, .. } => error,
             FallbackReason::SourceEnded {
@@ -126,6 +131,7 @@ impl FallbackReason {
                 start,
                 finish,
                 error,
+                ..
             } => log::error!(
                 "item {item_id} ({start} .. {finish}) is invalid, replacing with fallback: {error}"
             ),
@@ -268,6 +274,7 @@ mod tests {
             start: datetime!(2026-01-01 12:00 UTC),
             finish,
             error: String::from("source: unknown variant `carrier_pigeon`"),
+            item_json: String::from(r#"{"id":"bad"}"#),
         });
 
         assert_eq!(reason.fallback_until(), Some(finish));
