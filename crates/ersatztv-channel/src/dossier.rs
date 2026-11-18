@@ -158,6 +158,17 @@ impl DossierBuilder {
         self
     }
 
+    /// raw JSON, since the item failed to parse
+    pub fn invalid_item(mut self, item_id: &str, item_json: &str) -> DossierBuilder {
+        self.item_id = Some(item_id.to_owned());
+        self.item_json = Some(
+            serde_json::from_str::<serde_json::Value>(item_json)
+                .and_then(|v| serde_json::to_string_pretty(&v))
+                .unwrap_or_else(|_| item_json.to_owned()),
+        );
+        self
+    }
+
     pub fn stderr(mut self, stderr_tail: Vec<String>) -> DossierBuilder {
         self.stderr_tail = Some(stderr_tail);
         self

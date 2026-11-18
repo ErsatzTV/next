@@ -511,7 +511,13 @@ impl ChannelSession {
             Ok(ok) => ok,
             Err(e @ ChannelError::IdleTimeout(_)) => return Err(e),
             Err(e @ ChannelError::Stalled(_)) => return Err(e),
-            Err(e) if troubleshoot => return Err(e),
+            Err(e) if troubleshoot => {
+                // FfmpegFailed already wrote one, with the report
+                if !matches!(e, ChannelError::FfmpegFailed { .. }) {
+                    self.write_error_dossier(&current_item, &e).await;
+                }
+                return Err(e);
+            }
             Err(e) => {
                 // an ended pass may still output a short tail
                 if let ChannelError::SourceEnded { reached, .. } = &e {
@@ -1596,6 +1602,27 @@ impl ChannelSession {
     async fn write_fallback_dossier(&self, reason: &FallbackReason) {
         let mut builder = DossierBuilder::new(&self.channel_config, &self.ffmpeg_info)
             .outcome(reason.to_string());
+
+        if let Some(accel) = &self.hw_accel {
+            builder = builder.accel(accel);
+        }
+
+        if let FallbackReason::InvalidItem {
+            item_id, item_json, ..
+        } = reason
+        {
+            builder = builder.invalid_item(item_id, item_json);
+        }
+
+        if let Err(err) = builder.build().write().await {
+            log::error!("failed to save dossier: {err}");
+        }
+    }
+
+    async fn write_error_dossier(&self, current_item: &PlayoutItem, error: &ChannelError) {
+        let mut builder = DossierBuilder::new(&self.channel_config, &self.ffmpeg_info)
+            .item(current_item)
+            .outcome(error.to_string());
 
         if let Some(accel) = &self.hw_accel {
             builder = builder.accel(accel);

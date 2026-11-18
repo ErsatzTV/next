@@ -396,6 +396,7 @@ pub struct InvalidPlayoutItem {
     pub start: OffsetDateTime,
     pub finish: OffsetDateTime,
     pub error: String,
+    pub raw: String,
 }
 
 #[derive(Debug)]
@@ -542,7 +543,7 @@ fn load_item(index: usize, raw: &str, issues: &mut Vec<ItemIssue>) -> Option<Loa
             )
             .err()
             .map_or_else(|| e.to_string(), |e| e.to_string());
-            return invalid_or_dropped(index, serde_json::from_str(raw).ok(), error, issues);
+            return invalid_or_dropped(index, raw, serde_json::from_str(raw).ok(), error, issues);
         }
     };
 
@@ -569,11 +570,18 @@ fn load_item(index: usize, raw: &str, issues: &mut Vec<ItemIssue>) -> Option<Loa
         }
     }
 
-    invalid_or_dropped(index, serde_json::from_value(value).ok(), error, issues)
+    invalid_or_dropped(
+        index,
+        raw,
+        serde_json::from_value(value).ok(),
+        error,
+        issues,
+    )
 }
 
 fn invalid_or_dropped(
     index: usize,
+    raw: &str,
     slot: Option<ItemSlot>,
     error: String,
     issues: &mut Vec<ItemIssue>,
@@ -591,6 +599,7 @@ fn invalid_or_dropped(
                 start: slot.start,
                 finish: slot.finish,
                 error,
+                raw: raw.to_owned(),
             }))
         }
         None => {
@@ -971,7 +980,7 @@ mod tests {
         let mut bad = timed_item("bad", 1);
         bad["source"] = serde_json::json!({ "source_type": "carrier_pigeon" });
 
-        let result = load_items(vec![timed_item("a", 0), bad, timed_item("c", 2)])
+        let result = load_items(vec![timed_item("a", 0), bad.clone(), timed_item("c", 2)])
             .await
             .unwrap();
 
@@ -985,6 +994,10 @@ mod tests {
             invalid.error.contains("carrier_pigeon"),
             "{}",
             invalid.error
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&invalid.raw).unwrap(),
+            bad
         );
         assert_eq!(result.issues.len(), 1);
         assert_eq!(result.issues[0].kind, ItemIssueKind::Invalid);

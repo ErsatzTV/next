@@ -57,6 +57,7 @@ impl PlayoutLoader {
                 start: item.start,
                 finish: item.finish,
                 error: item.error,
+                item_json: item.raw,
             }),
             None => Err(ChannelError::PlayoutJsonNoItem { next_start }),
         }
@@ -397,10 +398,12 @@ mod tests {
                 start,
                 finish,
                 error,
+                item_json,
             }) => {
                 assert_eq!(item_id, "bad");
                 assert_eq!((start, finish), (at(10), at(20)));
                 assert!(error.contains("carrier_pigeon"), "{error}");
+                assert!(item_json.contains("carrier_pigeon"), "{item_json}");
             }
             other => panic!("expected PlayoutItemInvalid, got {other:?}"),
         }
