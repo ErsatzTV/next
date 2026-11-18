@@ -103,7 +103,7 @@ jobs:
             exe_ext: ""
             archive_ext: .tar.gz
             should_run_tests: true
-          - os: macos-15
+          - os: macos-26
             target: macos-arm64
             rust_target: aarch64-apple-darwin
             exe_ext: ""

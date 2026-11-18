@@ -71,7 +71,7 @@ jobs:
             target: macos-x64
             rust_target: x86_64-apple-darwin
             should_run_tests: true
-          - os: macos-15
+          - os: macos-26
             target: macos-arm64
             rust_target: aarch64-apple-darwin
             should_run_tests: true
