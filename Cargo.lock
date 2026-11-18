@@ -523,6 +523,7 @@ dependencies = [
  "env_logger",
  "ersatztv-core",
  "libamf-sys",
+ "libc",
  "libcl-sys",
  "libd3d11-sys",
  "libmpp-sys",
@@ -542,6 +543,7 @@ dependencies = [
  "time",
  "tokio",
  "which",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

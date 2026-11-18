@@ -17,9 +17,8 @@ pub struct CuvidDecodeCaps {
     pub e_chroma_format: u32,    // IN
     pub n_bit_depth_minus8: u32, // IN: 0 = 8-bit, 2 = 10-bit
     pub reserved1: [u32; 3],
-    pub b_is_supported: u32, // OUT: 1 if supported
+    pub b_is_supported: u8, // OUT: 1 if supported
     pub n_num_nvdecs: u8,
-    pub _pad: u8,
     pub n_output_format_mask: u16,
     pub n_max_width: u32,
     pub n_max_height: u32,
@@ -29,10 +28,12 @@ pub struct CuvidDecodeCaps {
     pub b_is_histogram_supported: u8,
     pub n_counter_bit_depth: u8,
     pub n_max_histogram_bins: u16,
-    pub reserved3: [u32; 10],
+    pub b_is_decode_stats_supported: u8,
+    pub reserved4: [u8; 3],
+    pub reserved3: [u32; 9],
 }
 
-const _: () = assert!(size_of::<CuvidDecodeCaps>() == 92);
+const _: () = assert!(size_of::<CuvidDecodeCaps>() == 88);
 
 pub struct CuvidLib {
     _lib: Library,

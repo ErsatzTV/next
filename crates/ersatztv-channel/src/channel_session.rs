@@ -262,6 +262,8 @@ impl ChannelSession {
     pub async fn run(&mut self, troubleshoot: bool) -> Result<(), ChannelError> {
         self.prep_output_folder(troubleshoot).await?;
 
+        let hw_accel = probe_hw_accel(&self.channel_config);
+
         self.ffmpeg_info = FfmpegInfo::load(
             &self.ffmpeg_path,
             &self.channel_config.ffmpeg.disabled_filters,
@@ -271,13 +273,7 @@ impl ChannelSession {
 
         log::debug!("ffmpeg info: {:?}", self.ffmpeg_info);
 
-        self.hw_accel = self
-            .channel_config
-            .normalization
-            .video
-            .accel
-            .as_ref()
-            .and_then(|a| a.to_pipeline(&self.channel_config));
+        self.hw_accel = hw_accel.await;
 
         let pm = self.playlist_manager.clone();
         let tn = self.timeout_notify.clone();
@@ -2103,6 +2099,29 @@ fn probe_hint_to_result(hint: &ProbeHint, path: String) -> ProbeResult {
         streams: video.chain(audio).chain(subtitle).collect(),
         duration: hint.duration_ms.map(Duration::from_millis),
         format_name: hint.format_name.clone().or(Some(String::from("mpegts"))),
+    }
+}
+
+/// Runs on a blocking thread to overlap the `ffmpeg` queries, which it doesn't need.
+pub fn probe_hw_accel(
+    channel_config: &ChannelConfig,
+) -> impl Future<Output = Option<ffpipeline::hw_accel::HardwareAccel>> + use<> {
+    let channel_config = channel_config.clone();
+    let span = tracing::Span::current();
+    let task = tokio::task::spawn_blocking(move || {
+        let _span = span.enter();
+        channel_config
+            .normalization
+            .video
+            .accel
+            .as_ref()
+            .and_then(|a| a.to_pipeline(&channel_config))
+    });
+    async move {
+        task.await
+            .inspect_err(|e| log::error!("hardware accel probe failed: {e}"))
+            .ok()
+            .flatten()
     }
 }
 

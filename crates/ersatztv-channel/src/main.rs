@@ -17,6 +17,7 @@ use ersatztv_channel::describe::Describe;
 use ersatztv_channel::error::ChannelError;
 use ersatztv_core::SHUTDOWN_DEADLINE;
 use ersatztv_core::process::{kill_descendants_on_exit, parent_exit, shutdown_signal};
+use ffpipeline::capabilities::nvidia::NvidiaProbeShutdown;
 use ffpipeline::ffmpeg_info::FfmpegInfo;
 
 use crate::channel_session::ChannelSession;
@@ -67,6 +68,7 @@ pub fn main() -> ExitCode {
 
     // clap may exit here; nothing is spawned yet
     let args = Args::parse();
+    let _probe_shutdown = NvidiaProbeShutdown::for_process();
 
     if let Commands::Describe { probe, ffmpeg } = &args.command {
         return describe(probe.as_deref(), ffmpeg.as_deref());
@@ -216,6 +218,8 @@ async fn run(args: Args) -> Result<(), ChannelError> {
                 .ffmpeg_path
                 .as_deref()
                 .unwrap_or(Path::new("ffmpeg"));
+            let hw_accel = channel_session::probe_hw_accel(&channel_config);
+
             let ffmpeg_info = FfmpegInfo::load(
                 ffmpeg_path,
                 &channel_config.ffmpeg.disabled_filters,
@@ -225,9 +229,7 @@ async fn run(args: Args) -> Result<(), ChannelError> {
 
             log::debug!("{:?}", ffmpeg_info);
 
-            if let Some(accel) = &channel_config.normalization.video.accel {
-                let _ = accel.to_pipeline(&channel_config);
-            }
+            hw_accel.await;
 
             Ok(())
         }
