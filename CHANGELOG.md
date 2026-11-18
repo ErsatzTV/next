@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Changed
+- Reduce channel startup latency with `cuda` acceleration
+
 ### Fixed
 - VAAPI: fix ffmpeg crashes (and stopped channels) when less than one frame of an item is left
 

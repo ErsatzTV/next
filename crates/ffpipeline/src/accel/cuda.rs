@@ -3,6 +3,7 @@ use serde::Serialize;
 use crate::ArgVec;
 use crate::capabilities::nvidia::NvidiaCapabilities;
 use crate::capabilities::vulkan::VulkanCapabilities;
+use crate::error::FFPipelineError;
 use crate::ffmpeg_info::{FfmpegInfo, KnownHardwareAccel, KnownVideoFilter};
 use crate::filter_chain::PipelineFilter;
 use crate::frame_size::FrameSize;
@@ -34,6 +35,27 @@ impl Cuda {
             capabilities,
             vulkan_capabilities,
         }
+    }
+
+    /// Vulkan (HDR tone mapping) only needs the device UUID, so it runs alongside the
+    /// slower CUDA probe.
+    pub fn probe() -> Result<Cuda, FFPipelineError> {
+        let vulkan = std::thread::spawn(NvidiaCapabilities::probe_vulkan);
+        let capabilities = NvidiaCapabilities::probe();
+        // join even if CUDA failed, so the thread never outlives this call
+        let vulkan = vulkan.join().unwrap_or_else(|_| {
+            Err(FFPipelineError::VulkanCapabilitiesError(
+                "Vulkan probe panicked".into(),
+            ))
+        });
+
+        let capabilities = capabilities?;
+        log::debug!("detected NVIDIA capabilities: {capabilities:?}");
+        let vulkan_capabilities = vulkan
+            .inspect_err(|e| log::debug!("Vulkan unavailable for CUDA tonemapping: {e}"))
+            .ok();
+
+        Ok(Cuda::new(capabilities, vulkan_capabilities))
     }
 
     fn can_vulkan_decode(&self, video_stream: &ProbeResultVideoStream) -> bool {

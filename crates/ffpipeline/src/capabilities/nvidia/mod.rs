@@ -22,6 +22,24 @@ pub(crate) mod probe;
 )))]
 pub(crate) mod stub;
 
+/// Hold for all of `main`: enables background probe teardown, and dropping it waits for
+/// that teardown so the process never exits while a thread is in the driver.
+#[must_use]
+pub struct NvidiaProbeShutdown(());
+
+impl NvidiaProbeShutdown {
+    pub fn for_process() -> Self {
+        NvidiaCapabilities::enable_background_teardown();
+        Self(())
+    }
+}
+
+impl Drop for NvidiaProbeShutdown {
+    fn drop(&mut self) {
+        NvidiaCapabilities::shutdown_probes();
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderCapability {
     pub bit_depths: Vec<u8>,

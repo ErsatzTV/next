@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use ffpipeline::capabilities::amf::{AmfCapabilities, AmfDeviceTarget};
 use ffpipeline::capabilities::nvidia::NvidiaCapabilities;
+use ffpipeline::capabilities::nvidia::NvidiaProbeShutdown;
 use ffpipeline::capabilities::opencl::OpenCLCapabilities;
 use ffpipeline::capabilities::qsv::QsvCapabilities;
 use ffpipeline::capabilities::rkmpp::RkmppCapabilities;
@@ -119,8 +120,9 @@ fn pixel_format_name(f: &PixelFormat) -> &'static str {
     }
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    let _probe_shutdown = NvidiaProbeShutdown::for_process();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
     let result = match cli.accel {
         Accel::Amf { adapter } => print_amf(adapter),
@@ -134,8 +136,9 @@ fn main() {
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
-        std::process::exit(1);
+        return std::process::ExitCode::FAILURE;
     }
+    std::process::ExitCode::SUCCESS
 }
 
 fn print_amf(adapter: Option<u32>) -> Result<(), String> {

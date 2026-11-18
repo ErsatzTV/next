@@ -11,6 +11,7 @@ enum_dispatch = { workspace = true }
 env_logger = { workspace = true }
 ersatztv-core = { workspace = true }
 libamf-sys = { workspace = true }
+libc = { workspace = true }
 libcl-sys = { workspace = true }
 libd3d11-sys = { workspace = true }
 libmpp-sys = { workspace = true }
@@ -28,6 +29,9 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }

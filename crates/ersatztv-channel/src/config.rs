@@ -684,26 +684,9 @@ impl HardwareAccel {
                     Err(e) => Err(format!("failed to probe AMF capabilities: {e}")),
                 }
             }
-            HardwareAccel::Cuda => {
-                let capabilities = ffpipeline::capabilities::nvidia::NvidiaCapabilities::probe();
-                match capabilities {
-                    Ok(capabilities) => {
-                        log::debug!("detected NVIDIA capabilities: {:?}", capabilities);
-                        let vulkan =
-                            ffpipeline::capabilities::vulkan::VulkanCapabilities::probe_for_nvidia(
-                                capabilities.device_uuid(),
-                            )
-                            .inspect_err(|e| {
-                                log::debug!("Vulkan unavailable for CUDA tonemapping: {e}")
-                            })
-                            .ok();
-                        Ok(ffpipeline::hw_accel::HardwareAccel::Cuda(
-                            ffpipeline::accel::cuda::Cuda::new(capabilities, vulkan),
-                        ))
-                    }
-                    Err(e) => Err(format!("failed to probe NVIDIA capabilities: {e}")),
-                }
-            }
+            HardwareAccel::Cuda => ffpipeline::accel::cuda::Cuda::probe()
+                .map(ffpipeline::hw_accel::HardwareAccel::Cuda)
+                .map_err(|e| format!("failed to probe NVIDIA capabilities: {e}")),
             HardwareAccel::Qsv => {
                 let capabilities = ffpipeline::capabilities::qsv::QsvCapabilities::probe();
                 match capabilities {
