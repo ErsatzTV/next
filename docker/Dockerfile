@@ -127,8 +127,8 @@ RUN groupadd --gid 1000 ersatztv && \
 ENV FONTCONFIG_PATH=/etc/fonts
 RUN fc-cache -f
 
-# the NVIDIA driver caches compiled CUDA kernels here; without a writable location they are recompiled
-# on every ffmpeg launch (about 4 s per channel start with cuda acceleration)
+# HOME (/root) isn't writable by uid 1000;
+# without a writable cache the driver recompiles CUDA kernels on every ffmpeg launch
 ENV CUDA_CACHE_PATH=/config/nvidia-cache
 
 WORKDIR /app
