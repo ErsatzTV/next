@@ -26,6 +26,7 @@ pub mod output_settings;
 pub mod overlay_filter;
 pub mod pipeline;
 pub mod probe;
+pub mod shader_cache;
 pub mod still_image_cache;
 pub mod video_codec;
 pub mod video_decoder;

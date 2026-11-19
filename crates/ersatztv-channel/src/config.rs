@@ -130,12 +130,14 @@ impl FallbackConfig {
 
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema, Default)]
 pub struct CacheConfig {
-    /// Folder for cached files, e.g. still images scaled to their overlay size. Channels can
-    /// share it. Each kind of file has its own subfolder, e.g. `still-images`; only files there
-    /// are deleted. Unset uses `ersatztv-next` in the system temp folder.
+    /// Folder for cached files, e.g. still images scaled to their overlay size and compiled
+    /// libplacebo shaders. Channels can share it. Each kind of file has its own subfolder
+    /// (`still-images`, `libplacebo`); only files there are deleted. Unset uses `ersatztv-next`
+    /// in the system temp folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
-    /// Days a cached file can go unused before it is deleted. Default 30.
+    /// Days a cached file can go unused before it is deleted. Default 30. For compiled shaders,
+    /// days since they were written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_unused_days: Option<NonZeroU32>,
 }
@@ -529,6 +531,8 @@ impl From<VideoFilterOptionsConfig> for ffpipeline::output_settings::VideoFilter
             },
             libplacebo: ffpipeline::output_settings::LibplaceboOptions {
                 tonemapping: value.libplacebo.and_then(|o| o.tonemapping),
+                // set per session from `cache.folder`
+                shader_cache: None,
             },
             scale: ffpipeline::output_settings::ScaleOptions {
                 flags: value.scale.and_then(|o| o.flags),

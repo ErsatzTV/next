@@ -9,7 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Fixed
 - VAAPI: fix ffmpeg crashes (and stopped channels) when less than one frame of an item is left
 - CUDA: reduce channel startup latency
-  - Docker: compiled CUDA kernels are cached in `/config/nvidia-cache`
+- Fix slow channel startup with libplacebo tone mapping
+  - Compiled shaders are cached in `cache.folder`
+- Docker: fix slow channel startup with hardware acceleration
+  - Compiled GPU kernels and shaders are cached in `/config/cache/cuda` and `/config/cache/xdg`
 - Troubleshooting (`run --troubleshoot`): fix missing dossier when an item fails before ffmpeg starts
   - Invalid items are saved to `playout_item.json` as written in the playout file
 
