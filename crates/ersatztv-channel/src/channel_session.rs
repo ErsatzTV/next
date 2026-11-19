@@ -135,6 +135,7 @@ pub struct ChannelSession {
     input_starts: HashMap<(String, u32), Option<InputStart>>,
     dynamic_http_client: reqwest::Client,
     still_image_cache: StillImageCache,
+    libplacebo_shader_cache: Option<PathBuf>,
     // after one failure, fallbacks use black so the fallback itself can't keep failing
     background_image_failed: bool,
 }
@@ -233,6 +234,7 @@ impl ChannelSession {
 
         Ok(ChannelSession {
             still_image_cache,
+            libplacebo_shader_cache: None,
             channel_config,
             playout_loader,
             pts_scanner,
@@ -262,7 +264,14 @@ impl ChannelSession {
     pub async fn run(&mut self, troubleshoot: bool) -> Result<(), ChannelError> {
         self.prep_output_folder(troubleshoot).await?;
 
+        ffpipeline::shader_cache::create_driver_cache_folders().await;
         let hw_accel = probe_hw_accel(&self.channel_config);
+
+        self.libplacebo_shader_cache = ffpipeline::shader_cache::prepare_libplacebo(
+            &self.channel_config.cache.folder(),
+            self.channel_config.cache.max_unused(),
+        )
+        .await;
 
         self.ffmpeg_info = FfmpegInfo::load(
             &self.ffmpeg_path,
@@ -658,7 +667,9 @@ impl ChannelSession {
         // live sources can never seek or work ahead
         let is_live = source_is_live(&video_source) || source_is_live(&audio_source);
 
-        let (audio, video) = stream_output_settings(&self.channel_config.normalization);
+        let (audio, mut video) = stream_output_settings(&self.channel_config.normalization);
+        video.transcode.filter_options.libplacebo.shader_cache =
+            self.libplacebo_shader_cache.clone();
         let output_settings = OutputSettings {
             audio,
             video,

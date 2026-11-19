@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+
+use crate::ffmpeg_info::{FfmpegInfo, KnownVideoFilter};
 use crate::frame_rate::FrameRate;
 use crate::frame_size::FrameSize;
 use crate::hw_accel::HardwareAccel;
@@ -101,6 +104,23 @@ pub struct BwdifCudaOptions {
 #[derive(Debug, Default)]
 pub struct LibplaceboOptions {
     pub tonemapping: Option<String>,
+    pub shader_cache: Option<PathBuf>,
+}
+
+impl LibplaceboOptions {
+    pub(crate) fn shader_cache_arg(&self, ffmpeg_info: &FfmpegInfo) -> Option<String> {
+        let folder = self.shader_cache.as_ref()?;
+        if !ffmpeg_info.has_video_filter_option(&KnownVideoFilter::LibPlacebo, "shader_cache") {
+            return None;
+        }
+
+        // a prefix, not a folder; libplacebo appends each key
+        let prefix = format!("{}/", folder.to_string_lossy());
+        Some(format!(
+            ":shader_cache={}",
+            FfmpegInfo::escape_path(&prefix)
+        ))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -178,4 +198,55 @@ pub enum ScalingMode {
     ScaleAndPad,
     Stretch,
     Crop,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+
+    fn ffmpeg_info(options: &[&str]) -> FfmpegInfo {
+        let name = KnownVideoFilter::LibPlacebo.to_string();
+        FfmpegInfo {
+            video_filters: HashSet::from([name.clone()]),
+            video_filter_options: HashMap::from([(
+                name,
+                options.iter().map(|o| (*o).to_owned()).collect(),
+            )]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn shader_cache_arg_is_an_escaped_folder_prefix() {
+        let options = LibplaceboOptions {
+            shader_cache: Some(PathBuf::from("/config/cache,next/libplacebo")),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            options.shader_cache_arg(&ffmpeg_info(&["shader_cache"])),
+            Some(String::from(
+                ":shader_cache=/config/cache\\,next/libplacebo/"
+            ))
+        );
+    }
+
+    #[test]
+    fn shader_cache_arg_requires_the_option() {
+        let options = LibplaceboOptions {
+            shader_cache: Some(PathBuf::from("/tmp/libplacebo")),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            options.shader_cache_arg(&ffmpeg_info(&["tonemapping"])),
+            None
+        );
+        assert_eq!(
+            LibplaceboOptions::default().shader_cache_arg(&ffmpeg_info(&["shader_cache"])),
+            None
+        );
+    }
 }

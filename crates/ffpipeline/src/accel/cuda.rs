@@ -102,6 +102,7 @@ impl HwAccel for Cuda {
             {
                 LibplaceboCuda {
                     algorithm: filter_options.libplacebo.tonemapping.clone(),
+                    shader_cache: filter_options.libplacebo.shader_cache_arg(ffmpeg_info),
                     format: match format {
                         PixelFormat::Yuv420p10le => PixelFormat::P010,
                         _ => PixelFormat::Nv12,
@@ -434,6 +435,7 @@ impl VideoFilterOp for HwUploadCudaWorkaround {
 pub struct LibplaceboCuda {
     /// algorithm to use for tonemapping
     pub(crate) algorithm: Option<String>,
+    pub(crate) shader_cache: Option<String>,
     pub(crate) format: PixelFormat,
     /// frame size entering the filter, used to decide whether fusing a scale is worthwhile
     pub(crate) input_size: FrameSize,
@@ -478,10 +480,11 @@ impl VideoFilterOp for LibplaceboCuda {
         };
 
         Some(format!(
-            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}{},hwupload_cuda{}{}",
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}{}{},hwupload_cuda{}{}",
             self.algorithm.as_deref().unwrap_or("linear"),
             vulkan_format.as_arg(),
             size,
+            self.shader_cache.as_deref().unwrap_or_default(),
             cuda_format,
             setsar
         ))

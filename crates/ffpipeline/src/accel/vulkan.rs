@@ -38,6 +38,7 @@ impl HwAccel for Vulkan {
                 ..
             }) if ffmpeg_info.has_video_filter(&KnownVideoFilter::LibPlacebo) => LibplaceboVulkan {
                 algorithm: filter_options.libplacebo.tonemapping.clone(),
+                shader_cache: filter_options.libplacebo.shader_cache_arg(ffmpeg_info),
                 format: match format {
                     PixelFormat::Yuv420p10le => PixelFormat::P010,
                     _ => PixelFormat::Nv12,
@@ -157,6 +158,7 @@ impl VideoFilterOp for FormatVulkan {
 #[derive(Debug, Clone)]
 pub struct LibplaceboVulkan {
     pub(crate) algorithm: Option<String>,
+    pub(crate) shader_cache: Option<String>,
     pub(crate) format: PixelFormat,
 }
 
@@ -176,9 +178,10 @@ impl VideoFilterOp for LibplaceboVulkan {
 
     fn as_arg(&self) -> Option<String> {
         Some(format!(
-            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}",
+            "libplacebo=tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format={}{}",
             self.algorithm.as_deref().unwrap_or("linear"),
             self.format.as_arg(),
+            self.shader_cache.as_deref().unwrap_or_default(),
         ))
     }
 }

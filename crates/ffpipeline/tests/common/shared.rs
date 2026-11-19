@@ -1222,6 +1222,7 @@ pub fn tonemap(
     test_case.params.filter_options = VideoFilterOptions {
         libplacebo: LibplaceboOptions {
             tonemapping: Some(String::from("hable")),
+            ..LibplaceboOptions::default()
         },
         tonemap: TonemapOptions {
             tonemap: Some(String::from("hable")),

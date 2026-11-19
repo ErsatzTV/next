@@ -178,6 +178,9 @@ pub async fn hardware_accel(
 /// Returns the pipeline args so accel-specific tests can assert which filters were chosen.
 pub async fn run_test_case(test_env: &TestEnv, mut test_case: TestCase) -> Vec<String> {
     let dir = tempfile::tempdir().unwrap();
+    let shader_cache = dir.path().join("libplacebo");
+    std::fs::create_dir(&shader_cache).unwrap();
+    test_case.params.filter_options.libplacebo.shader_cache = Some(shader_cache);
     let source = fixture_path(test_case.fixture_name);
     let mut probe = probe_file(&test_env.ffmpeg, &test_env.ffprobe, &source).await;
     if let Some(sar) = test_case.params.probe_sar {

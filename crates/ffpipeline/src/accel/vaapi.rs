@@ -137,6 +137,7 @@ impl HwAccel for Vaapi {
                 ..
             }) if self.can_libplacebo_tonemap(ffmpeg_info, format) => LibplaceboVaapi {
                 algorithm: filter_options.libplacebo.tonemapping.clone(),
+                shader_cache: filter_options.libplacebo.shader_cache_arg(ffmpeg_info),
                 pad: None,
             }
             .into(),
@@ -556,6 +557,7 @@ impl VideoFilterOp for TonemapVaapi {
 #[derive(Debug, Clone)]
 pub struct LibplaceboVaapi {
     pub(crate) algorithm: Option<String>,
+    pub(crate) shader_cache: Option<String>,
     pub(crate) pad: Option<LibplaceboPad>,
 }
 
@@ -606,8 +608,9 @@ impl VideoFilterOp for LibplaceboVaapi {
             None => (String::new(), ""),
         };
         Some(format!(
-            "hwmap=derive_device=drm,format=drm_prime,libplacebo={pad}tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=rgba,scale_vulkan=format=nv12:out_range=limited,hwmap=derive_device=vaapi:reverse=1,format=vaapi{setsar}",
+            "hwmap=derive_device=drm,format=drm_prime,libplacebo={pad}tonemapping={}:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=rgba{},scale_vulkan=format=nv12:out_range=limited,hwmap=derive_device=vaapi:reverse=1,format=vaapi{setsar}",
             self.algorithm.as_deref().unwrap_or("linear"),
+            self.shader_cache.as_deref().unwrap_or_default(),
         ))
     }
 }

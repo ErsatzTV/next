@@ -231,14 +231,14 @@
       "type": "object",
       "properties": {
         "folder": {
-          "description": "Folder for cached files, e.g. still images scaled to their overlay size. Channels can\nshare it. Each kind of file has its own subfolder, e.g. `still-images`; only files there\nare deleted. Unset uses `ersatztv-next` in the system temp folder.",
+          "description": "Folder for cached files, e.g. still images scaled to their overlay size and compiled\nlibplacebo shaders. Channels can share it. Each kind of file has its own subfolder\n(`still-images`, `libplacebo`); only files there are deleted. Unset uses `ersatztv-next`\nin the system temp folder.",
           "type": [
             "string",
             "null"
           ]
         },
         "max_unused_days": {
-          "description": "Days a cached file can go unused before it is deleted. Default 30.",
+          "description": "Days a cached file can go unused before it is deleted. Default 30. For compiled shaders,\ndays since they were written.",
           "type": [
             "integer",
             "null"
