@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 - VAAPI: fix ffmpeg crashes (and stopped channels) when less than one frame of an item is left
+- Docker: fix slow channel startup with `cuda` acceleration by giving the NVIDIA compute cache a writable location (`/config/nvidia-cache`)
 - Troubleshooting (`run --troubleshoot`): fix missing dossier when an item fails before ffmpeg starts
   - Invalid items are saved to `playout_item.json` as written in the playout file
 
