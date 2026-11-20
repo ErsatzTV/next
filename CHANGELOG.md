@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+
+## [0.2.7] - 2026-11-20
 ### Fixed
 - VAAPI: fix ffmpeg crashes (and stopped channels) when less than one frame of an item is left
 - CUDA: reduce channel startup latency
@@ -198,7 +200,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - First versioned release; earlier builds report `0.1.0-<commit>`
 - Release notes list the config versions each build reads and the [ErsatzTV-ffmpeg](https://github.com/ErsatzTV/ErsatzTV-ffmpeg) build it ships with
 
-[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/ErsatzTV/next/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/ErsatzTV/next/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/ErsatzTV/next/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ErsatzTV/next/compare/v0.2.3...v0.2.4

@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "ersatztv"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "clap",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "ersatztv-channel"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "axum",
  "clap",
@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "ersatztv-core"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libc",
  "log",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "ersatztv-playout"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "ersatztv-core",
  "serde",
@@ -487,7 +487,7 @@ dependencies = [
 
 [[package]]
 name = "ersatztv-playout-generator"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "clap",
  "env_logger",
@@ -515,7 +515,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "ffpipeline"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "clap",
  "derive_more",
@@ -1034,7 +1034,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "libamf-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
@@ -1047,14 +1047,14 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libcl-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "libd3d11-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
@@ -1071,21 +1071,21 @@ dependencies = [
 
 [[package]]
 name = "libmpp-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "libnvidia-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "libva-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "derive_more",
  "libc",
@@ -1094,21 +1094,21 @@ dependencies = [
 
 [[package]]
 name = "libvpl-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "libvt-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "core-foundation",
 ]
 
 [[package]]
 name = "libvulkan-sys"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "libloading",
 ]
