@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Fixed
 - Video copy: fix frozen video or early fallback after seeking into MKV and MP4 sources
   - This happened when a seek dropped the planned start keyframe (e.g. 23.976 fps B-pyramid or open-GOP HEVC)
+- Docker VAAPI: fix radeonsi h264 encode hang
 
 ## [0.2.7] - 2026-11-20
 ### Fixed
