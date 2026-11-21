@@ -61,6 +61,24 @@ async fn copy_seek(
     .await;
 }
 
+/// FFmpeg guesses a different keyframe dts when it lands on the keyframe than when it demuxes into
+/// it: 1 ms off in MKV (closed GOP), more with open GOP.
+#[rstest]
+#[tokio::test]
+#[ignore]
+async fn copy_seek_hevc_mkv(
+    #[values(false, true)] open_gop: bool,
+    #[values(4.5, 8.5)] join: f64,
+    #[values(false, true)] transcode_ac3: bool,
+) {
+    common::copy_seek::run_copy_seek_hevc_mkv_test(
+        open_gop,
+        std::time::Duration::from_secs_f64(join),
+        transcode_ac3,
+    )
+    .await;
+}
+
 // Fixture tones: FL 250, FR 500, FC 1000, LFE 60, SL/BL 2000, SR/BR 4000. LFE is left out
 // of the downmix lists, so whether a downmix keeps it isn't pinned.
 const DOWNMIX_TONES: &[&[u32]] = &[&[250, 1000, 2000], &[500, 1000, 4000]];

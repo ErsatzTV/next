@@ -11,16 +11,30 @@ use tokio::process::Command;
 
 use crate::copy_decision::CopyBlocker;
 use crate::error::FFPipelineError;
+use crate::global_option::GlobalOption;
 use crate::input::{FfmpegInputArgs, ProbedInput};
 
 /// Output `-ss` drops packets by dts; this puts it just below the keyframe's dts.
-const START_EPSILON: Duration = Duration::from_micros(500);
+const START_EPSILON: Duration = Duration::from_millis(2);
 /// Far enough that every demuxer lands before the keyframe.
 const INPUT_SEEK_MARGIN: Duration = Duration::from_secs(1);
 const LANDING_TOLERANCE: Duration = Duration::from_millis(1);
 const MAX_BACK_OFFS: usize = 9;
+/// Below this many earlier video packets, the dts guess (`pts_buffer`) may not match the copy's.
+const MIN_REORDER_FRAMES: usize = 8;
 /// Limits dry-run reads. Without a keyframe this close, copy would drop the video anyway.
 const KEYFRAME_WINDOW: Duration = Duration::from_secs(60);
+
+/// Uses pts, not dts, so refining the dts can't move the seek. Capped so output `-ss` stays
+/// non-negative.
+fn input_seek_for(keyframe: Keyframe) -> Duration {
+    let start_dts = keyframe.dts().saturating_sub(START_EPSILON);
+    let seek = keyframe
+        .time
+        .saturating_sub(INPUT_SEEK_MARGIN)
+        .min(start_dts);
+    Duration::from_millis(seek.as_millis() as u64)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Keyframe {
@@ -47,7 +61,7 @@ pub(crate) struct CopySeekArgs {
     pub(crate) input_seek: Duration,
     pub(crate) output_seek: Option<Duration>,
     pub(crate) duration: Duration,
-    /// The keyframe's output pts is its reorder delay, not 0.
+    /// The keyframe's output pts, not 0.
     pub(crate) ts_offset_correction: Duration,
 }
 
@@ -56,12 +70,7 @@ impl CopySeek {
     /// `-t` also stops on dts, so a chunk ends half a frame before the end keyframe's dts.
     pub(crate) fn args(&self, scheduled: Duration, frame_duration: Duration) -> CopySeekArgs {
         let start_dts = self.start.map(|k| k.dts().saturating_sub(START_EPSILON));
-        let input_seek = start_dts
-            .map(|dts| {
-                let seek = dts.saturating_sub(INPUT_SEEK_MARGIN);
-                Duration::from_millis(seek.as_millis() as u64)
-            })
-            .unwrap_or_default();
+        let input_seek = self.start.map(input_seek_for).unwrap_or_default();
         let output_seek = start_dts.map(|dts| dts - input_seek);
         let duration = match self.end {
             Some(end) => end
@@ -70,12 +79,17 @@ impl CopySeek {
                 .saturating_sub(start_dts.unwrap_or_default()),
             None => scheduled,
         };
+        let ts_offset_correction = self
+            .start
+            .zip(start_dts)
+            .map(|(k, dts)| k.time.saturating_sub(dts))
+            .unwrap_or_default();
 
         CopySeekArgs {
             input_seek,
             output_seek,
             duration,
-            ts_offset_correction: self.start.map(|k| k.reorder_delay).unwrap_or_default(),
+            ts_offset_correction,
         }
     }
 }
@@ -109,6 +123,9 @@ impl<'a> KeyframeLocator<'a> {
     fn dry_run_command(&self, seek: Duration, limit: &[&str]) -> Command {
         let mut command = process::command(self.ffmpeg_path);
         command.args(["-nostdin", "-hide_banner", "-v", "error"]);
+        for arg in GlobalOption::StandardFormatFlags.as_arg() {
+            command.arg(arg.as_ref());
+        }
         command.args(
             self.input
                 .input_source
@@ -211,12 +228,89 @@ impl<'a> KeyframeLocator<'a> {
             .map(|p| p.keyframe))
     }
 
+    /// FFmpeg guesses dts from the packets before it (`pts_buffer`), so measure from the copy's own
+    /// input seek. Keeps `time` so that seek doesn't change.
+    async fn refine(&self, keyframe: Keyframe) -> Keyframe {
+        if keyframe.dts() <= START_EPSILON {
+            return keyframe;
+        }
+        let seek = input_seek_for(keyframe);
+        match self.measure_dts(keyframe, seek).await {
+            Ok(Some(dts)) => Keyframe {
+                time: keyframe.time,
+                reorder_delay: keyframe.time.saturating_sub(dts),
+            },
+            Ok(None) => {
+                log::debug!(
+                    "refine did not find keyframe at {:?} from seek {seek:?}; keeping {keyframe:?}",
+                    keyframe.time
+                );
+                keyframe
+            }
+            Err(e) => {
+                log::warn!(
+                    "refine failed for keyframe at {:?} from seek {seek:?}: {e}; keeping {keyframe:?}",
+                    keyframe.time
+                );
+                keyframe
+            }
+        }
+    }
+
+    async fn measure_dts(
+        &self,
+        keyframe: Keyframe,
+        seek: Duration,
+    ) -> Result<Option<Duration>, FFPipelineError> {
+        let window = format!(
+            "{:.6}",
+            (keyframe.time.saturating_sub(seek) + Duration::from_secs(1)).as_secs_f64()
+        );
+        let mut child = self
+            .dry_run_command(seek, &["-t", &window])
+            .spawn()
+            .map_err(|e| FFPipelineError::KeyframeSearchFailed(e.to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| FFPipelineError::KeyframeSearchFailed(String::from("no stdout")))?;
+
+        let mut lines = BufReader::new(stdout).lines();
+        let mut parser = FramecrcParser::new(seek);
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .map_err(|e| FFPipelineError::KeyframeSearchFailed(e.to_string()))?
+        {
+            let Some(packet) = parser.line(&line) else {
+                continue;
+            };
+            if packet.is_keyframe
+                && packet.keyframe.time.abs_diff(keyframe.time) <= LANDING_TOLERANCE
+            {
+                // dropping the child kills ffmpeg
+                return Ok(Some(packet.keyframe.dts()));
+            }
+        }
+
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| FFPipelineError::KeyframeSearchFailed(e.to_string()))?;
+        if !status.success() {
+            return Err(FFPipelineError::KeyframeSearchFailed(format!(
+                "ffmpeg exited with {status}"
+            )));
+        }
+        Ok(None)
+    }
+
     /// mpegts lands on the keyframe after `target`, so search back for the last one before it.
     pub async fn at_or_before(&self, target: Duration) -> Result<Keyframe, FFPipelineError> {
         if let Some(landing) = self.land(target).await?
             && (landing.time <= target + LANDING_TOLERANCE || target.is_zero())
         {
-            return Ok(landing);
+            return Ok(self.refine(landing).await);
         }
 
         let mut back_off = Duration::from_secs(1);
@@ -224,14 +318,18 @@ impl<'a> KeyframeLocator<'a> {
             let seek = target.saturating_sub(back_off);
             let window = format!("{:.6}", (target - seek + LANDING_TOLERANCE).as_secs_f64());
             let stdout = self.dry_run(seek, &["-t", &window]).await?;
-            if let Some(keyframe) = parse_framecrc(&stdout, seek)
-                .into_iter()
+            let packets = parse_framecrc(&stdout, seek);
+            if let Some((idx, packet)) = packets
+                .iter()
+                .enumerate()
                 .rev()
-                .filter(|p| p.is_keyframe && p.keyframe.time <= target + LANDING_TOLERANCE)
-                .map(|p| p.keyframe)
-                .next()
+                .find(|(_, p)| p.is_keyframe && p.keyframe.time <= target + LANDING_TOLERANCE)
             {
-                return Ok(keyframe);
+                return Ok(if idx < MIN_REORDER_FRAMES {
+                    self.refine(packet.keyframe).await
+                } else {
+                    packet.keyframe
+                });
             }
             if seek.is_zero() {
                 break;
@@ -247,14 +345,19 @@ impl<'a> KeyframeLocator<'a> {
     pub async fn at_or_after(&self, target: Duration) -> Result<Keyframe, FFPipelineError> {
         let window = format!("{:.6}", KEYFRAME_WINDOW.as_secs_f64());
         let stdout = self.dry_run(target, &["-t", &window]).await?;
-        parse_framecrc(&stdout, target)
-            .into_iter()
-            .filter(|p| p.is_keyframe)
-            .map(|p| p.keyframe)
-            .find(|k| k.time + LANDING_TOLERANCE >= target)
+        let packets = parse_framecrc(&stdout, target);
+        let (idx, packet) = packets
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.is_keyframe && p.keyframe.time + LANDING_TOLERANCE >= target)
             .ok_or_else(|| {
                 FFPipelineError::NoKeyframe(format!("within {KEYFRAME_WINDOW:?} after {target:?}"))
-            })
+            })?;
+        Ok(if idx < MIN_REORDER_FRAMES {
+            self.refine(packet.keyframe).await
+        } else {
+            packet.keyframe
+        })
     }
 }
 
@@ -469,19 +572,39 @@ mod tests {
     }
 
     #[test]
+    fn input_seek_ignores_remeasured_dts() {
+        let args = |delay_ms| {
+            CopySeek {
+                start: Some(keyframe(5_358_228, delay_ms)),
+                end: None,
+            }
+            .args(Duration::from_secs(30), FRAME)
+        };
+        assert_eq!(args(83).input_seek, args(84).input_seek);
+        assert_eq!(args(83).input_seek, args(125).input_seek);
+
+        let deep = args(1_500);
+        assert_eq!(deep.input_seek, Duration::from_millis(5_358_228 - 1_502));
+        assert_eq!(deep.output_seek, Some(Duration::ZERO));
+    }
+
+    #[test]
     fn two_stage_args_start_on_keyframe_dts() {
         let seek = CopySeek {
             start: Some(keyframe(20_020, 67)),
             end: None,
         };
         let args = seek.args(Duration::from_secs(30), FRAME);
-        assert_eq!(args.input_seek, Duration::from_millis(18_952));
+        assert_eq!(args.input_seek, Duration::from_millis(19_020));
         assert_eq!(
             args.input_seek + args.output_seek.unwrap(),
             Duration::from_millis(20_020 - 67) - START_EPSILON
         );
         assert_eq!(args.duration, Duration::from_secs(30));
-        assert_eq!(args.ts_offset_correction, Duration::from_millis(67));
+        assert_eq!(
+            args.ts_offset_correction,
+            Duration::from_millis(67) + START_EPSILON
+        );
     }
 
     #[test]
