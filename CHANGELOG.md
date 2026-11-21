@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+### Fixed
+- Video copy: fix frozen video or early fallback after seeking into MKV and MP4 sources
+  - This happened when a seek dropped the planned start keyframe (e.g. 23.976 fps B-pyramid or open-GOP HEVC)
 
 ## [0.2.7] - 2026-11-20
 ### Fixed
