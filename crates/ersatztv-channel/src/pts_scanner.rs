@@ -4,10 +4,9 @@ use std::time::Duration;
 use ersatztv_channel::config::ChannelConfig;
 use ersatztv_channel::error::{ChannelError, IoContext};
 use ersatztv_core::process;
+use ffpipeline::pipeline::PtsOffset;
 
-pub struct PtsTime {
-    pub duration: Duration,
-}
+const MPEGTS_TICKS_PER_SECOND: u64 = 90_000;
 
 pub struct PtsScanner {
     output_folder: PathBuf,
@@ -22,10 +21,8 @@ impl PtsScanner {
         }
     }
 
-    pub async fn get_last_pts(&self) -> Result<PtsTime, ChannelError> {
-        let mut pts_time = PtsTime {
-            duration: Duration::ZERO,
-        };
+    pub async fn get_last_pts(&self) -> Result<PtsOffset, ChannelError> {
+        let mut pts_time = PtsOffset::default();
 
         // find last segment file in output folder
         let mut entries = Vec::new();
@@ -57,11 +54,8 @@ impl PtsScanner {
                 .args([
                     "-v",
                     "-0",
-                    // audio can end after video; the next video must start where this video ends
-                    "-select_streams",
-                    "v:0",
                     "-show_entries",
-                    "packet=pts_time,duration_time",
+                    "packet=codec_type,pts,duration",
                     "-of",
                     "compact=p=0:nk=1",
                     &path,
@@ -70,24 +64,78 @@ impl PtsScanner {
                 .await
                 .io_context("run ffprobe on the last segment", &path)?;
 
-            // parse output line by line for largest pts time
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let split: Vec<&str> = line.trim().split('|').collect();
-                if let Ok(seconds) = split[0].parse::<f64>() {
-                    let mut total_seconds = seconds;
-                    if let Ok(seconds) = split[1].parse::<f64>() {
-                        total_seconds += seconds;
-                    }
-
-                    let duration = Duration::from_secs_f64(total_seconds);
-                    if duration > pts_time.duration {
-                        pts_time.duration = duration
-                    }
-                }
-            }
+            pts_time = parse_stream_ends(&String::from_utf8_lossy(&output.stdout));
         }
 
         Ok(pts_time)
+    }
+}
+
+fn parse_stream_ends(stdout: &str) -> PtsOffset {
+    let mut video_end = 0;
+    let mut audio_end = None;
+    for line in stdout.lines() {
+        let mut fields = line.trim().split('|');
+        let (Some(codec_type), Some(Ok(pts))) =
+            (fields.next(), fields.next().map(str::parse::<u64>))
+        else {
+            continue;
+        };
+        let end = pts
+            + fields
+                .next()
+                .and_then(|d| d.parse::<u64>().ok())
+                .unwrap_or(0);
+        match codec_type {
+            "video" => video_end = video_end.max(end),
+            "audio" => audio_end = Some(audio_end.unwrap_or(0).max(end)),
+            _ => {}
+        }
+    }
+
+    PtsOffset {
+        duration: ticks_to_duration(video_end),
+        audio_end: audio_end.map(ticks_to_duration),
+    }
+}
+
+fn ticks_to_duration(ticks: u64) -> Duration {
+    Duration::from_nanos((ticks * 1_000_000_000).div_ceil(MPEGTS_TICKS_PER_SECOND))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracks_audio_past_the_last_video_packet() {
+        let ends = parse_stream_ends(
+            "video|430800|3000\naudio|433680|1920\naudio|435600|1920\nvideo|432600|3000\n",
+        );
+
+        assert_eq!(ends.duration, ticks_to_duration(435600));
+        assert_eq!(ends.audio_end, Some(ticks_to_duration(437520)));
+    }
+
+    #[test]
+    fn uses_the_latest_end_rather_than_the_last_packet() {
+        // B-frames: packets are not in pts order
+        let ends = parse_stream_ends("video|9000|3000\nvideo|3000|3000\n");
+
+        assert_eq!(ends.duration, ticks_to_duration(12000));
+        assert_eq!(ends.audio_end, None);
+    }
+
+    #[test]
+    fn skips_packets_without_a_pts() {
+        let ends = parse_stream_ends("video|6000|3000\nvideo|N/A|3000\naudio|N/A|1920\n");
+
+        assert_eq!(ends.duration, ticks_to_duration(9000));
+        assert_eq!(ends.audio_end, None);
+    }
+
+    #[test]
+    fn rounds_ticks_up() {
+        assert_eq!(ticks_to_duration(1), Duration::from_nanos(11_112));
     }
 }

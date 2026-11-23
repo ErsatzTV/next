@@ -17,4 +17,13 @@ impl AudioCodec {
 
         args!["-acodec", codec]
     }
+
+    /// ffmpeg encoder `initial_padding`
+    pub(crate) fn priming_samples(&self) -> u64 {
+        match self {
+            AudioCodec::Copy => 0,
+            AudioCodec::Aac => 1024,
+            AudioCodec::Ac3 => 256,
+        }
+    }
 }

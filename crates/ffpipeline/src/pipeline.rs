@@ -101,16 +101,17 @@ impl From<EncodeFormat> for VideoFormat {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct PtsOffset {
     pub duration: Duration,
+    pub audio_end: Option<Duration>,
 }
 
-impl Default for PtsOffset {
-    fn default() -> Self {
-        PtsOffset {
-            duration: Duration::ZERO,
-        }
+impl PtsOffset {
+    /// Never overlap previous audio (sample-continuous players drift); video skips ahead instead.
+    pub fn start(&self, audio_lead: Duration) -> Duration {
+        self.audio_end
+            .map_or(self.duration, |end| self.duration.max(end + audio_lead))
     }
 }
 
@@ -634,6 +635,7 @@ pub struct Pipeline {
 
     input_request_context: FfmpegInputRequestContext,
     output_context: OutputContext,
+    stream_start: Option<Duration>,
 }
 
 impl Pipeline {
@@ -721,7 +723,22 @@ impl Pipeline {
             }
         };
 
-        let mut pts_offset = final_output_settings.pts_offset;
+        // source rate is not probed; 48 kHz matches loudnorm
+        let sample_rate = final_output_settings
+            .audio
+            .transcode
+            .sample_rate
+            .map_or(48_000, |hz| u64::from(hz.0));
+        let audio_lead = Duration::from_nanos(
+            (audio_codec.priming_samples() * 1_000_000_000).div_ceil(sample_rate),
+        );
+        let stream_start = final_output_settings
+            .pts_offset
+            .map(|offset| offset.start(audio_lead));
+        let mut pts_offset = stream_start.map(|duration| PtsOffset {
+            duration,
+            audio_end: None,
+        });
         let mut video_seek = input_settings.video_input.in_point;
         let mut copy_output_options = Vec::new();
         if video_encoder == VideoEncoder::Copy {
@@ -1375,11 +1392,16 @@ impl Pipeline {
             input_request_context,
             output_context,
             env_vars,
+            stream_start,
         })
     }
 
     pub fn copy_decisions(&self) -> &CopyDecisions {
         &self.copy_decisions
+    }
+
+    pub fn stream_start(&self) -> Option<Duration> {
+        self.stream_start
     }
 
     pub fn optimize(&mut self) {
@@ -2174,6 +2196,69 @@ mod tests {
             reports_folder: None,
             report_id: None,
         }
+    }
+
+    fn continued_output(format: AudioFormat, video_end_ms: u64, audio_end_ms: u64) -> Pipeline {
+        let mut output = stereo_output();
+        output.audio.transcode.format = format;
+        output.pts_offset = Some(PtsOffset {
+            duration: Duration::from_millis(video_end_ms),
+            audio_end: Some(Duration::from_millis(audio_end_ms)),
+        });
+        Pipeline::full(
+            &FfmpegInfo::default(),
+            multichannel_ac3_input("main.mkv"),
+            output,
+        )
+        .unwrap()
+    }
+
+    fn ts_offset_arg(pipeline: &Pipeline) -> String {
+        let args = pipeline.args();
+        let i = args
+            .iter()
+            .position(|a| a == "-output_ts_offset")
+            .expect("no -output_ts_offset");
+        args[i + 1].to_string()
+    }
+
+    #[test]
+    fn aac_starts_after_previous_audio_plus_priming() {
+        let pipeline = continued_output(AudioFormat::Aac, 10_000, 10_027);
+
+        assert_eq!(ts_offset_arg(&pipeline), "10048334us");
+        assert_eq!(
+            pipeline.stream_start(),
+            Some(Duration::from_nanos(10_048_333_334))
+        );
+    }
+
+    #[test]
+    fn ac3_starts_after_previous_audio_plus_priming() {
+        let pipeline = continued_output(AudioFormat::Ac3, 10_000, 10_027);
+
+        assert_eq!(ts_offset_arg(&pipeline), "10032334us");
+    }
+
+    #[test]
+    fn video_end_wins_when_audio_ends_well_before_it() {
+        let pipeline = continued_output(AudioFormat::Aac, 10_000, 9_950);
+
+        assert_eq!(ts_offset_arg(&pipeline), "10000000us");
+        assert_eq!(pipeline.stream_start(), Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn pts_offset_without_audio_starts_at_video_end() {
+        let offset = PtsOffset {
+            duration: Duration::from_secs(10),
+            audio_end: None,
+        };
+
+        assert_eq!(
+            offset.start(Duration::from_millis(21)),
+            Duration::from_secs(10)
+        );
     }
 
     #[test]
