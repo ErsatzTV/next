@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 (`0.B.C`, the same rule as the [config versions](https://ersatztv.org/next-docs/configuration/versions)).
 
 ## [Unreleased]
+
+## [0.2.8] - 2026-11-25
 ### Fixed
 - Video copy: fix frozen video or early fallback after seeking into MKV and MP4 sources
   - This happened when a seek dropped the planned start keyframe (e.g. 23.976 fps B-pyramid or open-GOP HEVC)
@@ -206,7 +208,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - First versioned release; earlier builds report `0.1.0-<commit>`
 - Release notes list the config versions each build reads and the [ErsatzTV-ffmpeg](https://github.com/ErsatzTV/ErsatzTV-ffmpeg) build it ships with
 
-[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/ErsatzTV/next/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/ErsatzTV/next/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/ErsatzTV/next/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/ErsatzTV/next/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/ErsatzTV/next/compare/v0.2.4...v0.2.5
